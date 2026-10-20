@@ -64,6 +64,9 @@ function resolveMaterial(role, accentColor, presetKey){
   if(role === 'accent'){
     return { name:'强调色', color:accentColor, metal:0.45, rough:0.40, emissive:0.12, alpha:1, pattern:'none' };
   }
+  // 容错：如果 role 其实是材质名（历史上误用过），直接用该材质，避免静默回退
+  if(!ROLE_MAT[role] && MATERIALS[role]) return MATERIALS[role];
+
   const preset = MATERIAL_PRESETS[presetKey] || MATERIAL_PRESETS.industrial;
   const key = preset.map[role] || ROLE_MAT[role] || 'steel';
   const base = MATERIALS[key] || MATERIALS.steel;
@@ -229,7 +232,7 @@ function buildMachineParts(m, presetKey){
       cone(0, y0 + 2.24, 0, br*0.30, br*0.58, 0.22, 'dark', null, 24);
 
       // 炉腰加强箍
-      tor(0, y0 + 1.30, 0, br*0.84, br*0.045, 'steelLite');
+      tor(0, y0 + 1.30, 0, br*0.84, br*0.045, 'light');
 
       // 环形风管（bustle pipe）+ 风口
       tor(0, y0 + 1.02, 0, br*1.02, br*0.055, 'dark');
@@ -250,8 +253,8 @@ function buildMachineParts(m, presetKey){
       const chx = br*1.15, chz = br*0.55;
       const chH = 1.35;
       cyl(chx, y0 + 2.10 + chH/2, chz, br*0.19, chH, 'dark', null, 20);
-      tor(chx, y0 + 2.30, chz, br*0.21, br*0.035, 'steelLite');
-      tor(chx, y0 + 2.30 + chH*0.55, chz, br*0.21, br*0.035, 'steelLite');
+      tor(chx, y0 + 2.30, chz, br*0.21, br*0.035, 'light');
+      tor(chx, y0 + 2.30 + chH*0.55, chz, br*0.21, br*0.035, 'light');
       cone(chx, y0 + 2.10 + chH + 0.12, chz, br*0.26, br*0.19, 0.24, 'dark', null, 20);
       // 烟囱从炉顶引出
       pipe([br*0.30, y0 + 2.34, br*0.20], [chx, y0 + 2.34, chz], br*0.10, 'dark');
@@ -261,8 +264,8 @@ function buildMachineParts(m, presetKey){
       pipe([-br*1.20, y0 + 1.85, -br*0.30], [-br*1.20, y0 + 1.85, 0], br*0.075, 'dark');
 
       // 检修平台
-      tor(0, y0 + 1.95, 0, br*0.70, br*0.03, 'steelLite');
-      tor(0, y0 + 1.05, 0, br*1.30, br*0.025, 'steelLite');
+      tor(0, y0 + 1.95, 0, br*0.70, br*0.03, 'light');
+      tor(0, y0 + 1.05, 0, br*1.30, br*0.025, 'light');
 
       particles = {
         kind:'ember', origin:[0, y0 + 0.30, br*1.14], rate:26, spread:br*0.30,
@@ -343,7 +346,7 @@ function buildMachineParts(m, presetKey){
       pipe([specs[2].x, y0 + 1.02, specs[2].z], [specs[2].x, y0 + 1.40, specs[2].z], R*0.045, 'dark');
       pipe([sx, y0 + sr + 0.30, sz], [sx, y0 + 1.20, sz], R*0.045, 'dark');
       // 法兰
-      tor(specs[0].x + R*0.12, y0 + 1.02, specs[0].z, R*0.075, R*0.02, 'steelLite');
+      tor(specs[0].x + R*0.12, y0 + 1.02, specs[0].z, R*0.075, R*0.02, 'light');
       // 压力表（小圆盘）
       torV(specs[2].x + specs[2].r + 0.10, y0 + 0.95, specs[2].z, R*0.07, R*0.02, 'accent');
       // 检修梯
@@ -360,8 +363,8 @@ function buildMachineParts(m, presetKey){
       // 床身
       box(0, y0 + 0.16, 0, W*0.72, 0.32, D*0.48, 'body');
       // 导轨
-      box(-W*0.16, y0 + 0.34, 0, W*0.10, 0.05, D*0.44, 'steelLite');
-      box( W*0.16, y0 + 0.34, 0, W*0.10, 0.05, D*0.44, 'steelLite');
+      box(-W*0.16, y0 + 0.34, 0, W*0.10, 0.05, D*0.44, 'light');
+      box( W*0.16, y0 + 0.34, 0, W*0.10, 0.05, D*0.44, 'light');
 
       // 两根立柱
       cyl(-W*0.30, y0 + 0.60, -D*0.20, R*0.075, 0.80, 'dark', null, 12);
@@ -408,7 +411,7 @@ function buildMachineParts(m, presetKey){
       // 卷帘门
       box(0, y0 + hh*0.26, D*0.43, W*0.26, hh*0.48, 0.04, 'dark');
       // 门口雨棚
-      box(0, y0 + hh*0.52, D*0.47, W*0.30, 0.05, D*0.12, 'steelLite');
+      box(0, y0 + hh*0.52, D*0.47, W*0.30, 0.05, D*0.12, 'light');
 
       // 屋顶行车导轨 + 行车（横向移动）
       box(0, y0 + hh - 0.06, 0, W*0.80, 0.05, 0.06, 'dark');
@@ -455,10 +458,10 @@ function buildMachineParts(m, presetKey){
       pipe([px, y0 + 1.95, pz], [px*1.7, y0 + 1.95, pz*1.6], R*0.075, 'dark');
       // 滤网（细密圆环）
       for(let i=0;i<3;i++){
-        tor(px, y0 + 1.45 + i*0.18, pz, R*0.095, R*0.012, 'steelLite');
+        tor(px, y0 + 1.45 + i*0.18, pz, R*0.095, R*0.012, 'light');
       }
       // 检修平台
-      tor(0, y0 + 1.02, 0, R*0.36, R*0.022, 'steelLite');
+      tor(0, y0 + 1.02, 0, R*0.36, R*0.022, 'light');
       // 底部出渣口
       cyl(-R*0.34, y0 + 0.24, 0, R*0.09, 0.16, 'glow',
           anim('pulse', {speed:1.2, min:0.3, max:1.6}), 10);
@@ -692,7 +695,7 @@ function createViewer3D(canvas, machine){
       mesh.receiveShadow = true;
       group.add(mesh);
       meshes.push({
-        mesh: mesh, part: p,
+        mesh: mesh, part: p, role: p.role,
         base: {
           pos: mesh.position.clone(),
           rot: mesh.rotation.clone(),
@@ -702,6 +705,29 @@ function createViewer3D(canvas, machine){
     });
   }
   buildMeshes();
+
+  /**
+   * 适配占地：模型不能超出 footprint。
+   * 否则 3×3 的建筑在 UE 里会覆盖到相邻格子，铺排时互相穿插。
+   * 做法是整体等比缩放（保持比例），代价是高度略降。
+   */
+  function fitToFootprint(){
+    group.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(group);
+    const size = new THREE.Vector3(); bb.getSize(size);
+    if(size.x < 1e-6 || size.z < 1e-6) return 1;
+    const k = Math.min(1, geo.W / size.x, geo.D / size.z);
+    group.scale.setScalar(k);
+    // 贴地：包围盒底部对齐 y=0，保证 UE 里 pivot 在底面
+    group.updateMatrixWorld(true);
+    const bb2 = new THREE.Box3().setFromObject(group);
+    if(Math.abs(bb2.min.y) > 1e-4){
+      group.position.y -= bb2.min.y;
+      group.updateMatrixWorld(true);
+    }
+    return k;
+  }
+  const fitScale = fitToFootprint();
 
   /* ---------- 粒子 ---------- */
   const MAX_P = 300;
@@ -981,24 +1007,114 @@ function createViewer3D(canvas, machine){
     },
     redraw: function(){ renderer.render(scene, camera); },
     toPNG: function(){ renderer.render(scene, camera); return renderer.domElement.toDataURL('image/png'); },
+    /**
+     * 导出 GLB（面向 UE 的静态网格）
+     *
+     * 关键处理：把 N 个部件按「材质角色」合并成 **1 个网格 + N 个材质槽**。
+     * 不合并的话，UE 会把每个方块/圆柱都当成独立 StaticMesh 资产，
+     * 一个建筑就变成 30 个资产，根本没法用。
+     */
     toGLB: function(onDone){
       if(!THREE.GLTFExporter){ onDone(null, new Error('GLTFExporter 未加载')); return; }
-      const exporter = new THREE.GLTFExporter();
-      const wasGround = ground.visible, wasEdge = edgeLine.visible;
-      const pe = emberPoints ? emberPoints.visible : false;
-      const ps = smokePoints ? smokePoints.visible : false;
-      ground.visible = false; edgeLine.visible = false;
-      if(emberPoints) emberPoints.visible = false;
-      if(smokePoints) smokePoints.visible = false;
-      const restore = function(){
-        ground.visible = wasGround; edgeLine.visible = wasEdge;
-        if(emberPoints) emberPoints.visible = pe;
-        if(smokePoints) smokePoints.visible = ps;
+      const MergeUtils = THREE.BufferGeometryUtils;
+      if(!MergeUtils || !MergeUtils.mergeBufferGeometries){
+        onDone(null, new Error('BufferGeometryUtils 未加载，无法合并网格'));
+        return;
+      }
+
+      // 1. 按 role 分桶（同 role = 同材质）
+      const buckets = {};
+      const order = [];
+      for(let i=0;i<meshes.length;i++){
+        const m = meshes[i];
+        const role = m.role || 'body';
+        if(!buckets[role]){ buckets[role] = { mat: m.mesh.material, geos: [] }; order.push(role); }
+        m.mesh.updateWorldMatrix(true, false);
+        const g = m.mesh.geometry.clone();
+        g.applyMatrix4(m.mesh.matrixWorld);
+        // 统一去掉多余属性，保证可合并
+        if(g.attributes.uv2) g.deleteAttribute('uv2');
+        buckets[role].geos.push(g);
+      }
+
+      // 2. 每个桶先合并，再整体按 group 合并
+      const perMat = [];
+      const materials = [];
+      order.forEach(function(role){
+        const b = buckets[role];
+        let g;
+        if(b.geos.length === 1){
+          g = b.geos[0];
+        }else{
+          g = MergeUtils.mergeBufferGeometries(b.geos, false);
+          b.geos.forEach(function(x){ x.dispose(); });
+        }
+        if(!g) return;
+        perMat.push(g);
+        const m = b.mat.clone();
+        m.name = 'M_' + role;              // UE 里的材质槽名
+        materials.push(m);
+      });
+
+      let finalGeo;
+      if(perMat.length === 1){
+        finalGeo = perMat[0];
+      }else{
+        finalGeo = MergeUtils.mergeBufferGeometries(perMat, true);   // useGroups = true
+        perMat.forEach(function(x){ x.dispose(); });
+      }
+      if(!finalGeo){ onDone(null, new Error('几何合并失败')); return; }
+
+      finalGeo.computeBoundingBox();
+      const bb = finalGeo.boundingBox;
+      const size = new THREE.Vector3();
+      bb.getSize(size);
+
+      const out = new THREE.Mesh(finalGeo, materials);
+      out.name = machine.id;               // UE 里的静态网格资产名
+
+      // 把动画意图与元数据写进 glTF extras，UE 侧可读到
+      // （GLB 本身是静态网格，动画需在 UE 里重建，这里给出参数）
+      const animSpec = [];
+      meshes.forEach(function(m){
+        if(!m.part.anim) return;
+        animSpec.push({
+          part: m.part.kind || 'box',
+          role: m.part.role,
+          kind: m.part.anim.kind,
+          params: Object.assign({}, m.part.anim, { kind: undefined }),
+        });
+      });
+      out.userData = {
+        forgeworks: {
+          generator: 'Forgeworks',
+          id: machine.id,
+          name: machine.name,
+          category: machine.cat,
+          footprint: machine.footprint,
+          tier: machine.tier,
+          unit: 'meter (1 unit = 1 grid)',
+          pivot: 'bottom-center',
+          materialSlots: materials.map(function(mm){ return mm.name; }),
+          animations: animSpec,
+        },
       };
-      exporter.parse(group, function(result){
-        restore();
-        onDone(result, null);
-      }, function(err){ restore(); onDone(null, err); }, { binary:true });
+
+      const exporter = new THREE.GLTFExporter();
+      exporter.parse(out, function(result){
+        const meta = {
+          materials: materials.length,
+          vertices: finalGeo.attributes.position ? finalGeo.attributes.position.count : 0,
+          sizeM: [ +size.x.toFixed(3), +size.y.toFixed(3), +size.z.toFixed(3) ],
+          sizeCm: [ Math.round(size.x*100), Math.round(size.y*100), Math.round(size.z*100) ],
+        };
+        finalGeo.dispose();
+        materials.forEach(function(m){ m.dispose(); });
+        onDone(result, null, meta);
+      }, function(err){
+        finalGeo.dispose();
+        onDone(null, err);
+      }, { binary: true, onlyVisible: false });
     },
     _advance: function(seconds, step){
       const s = step || 0.016;
@@ -1009,9 +1125,18 @@ function createViewer3D(canvas, machine){
     _debug: function(){
       const kinds = {};
       meshes.forEach(function(m){ const k = m.part.kind || 'box'; kinds[k] = (kinds[k]||0)+1; });
+      group.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(group);
+      const sz = new THREE.Vector3(); bb.getSize(sz);
       return {
         time: state.time, particles: state.particles.length, preset: state.preset,
         meshes: meshes.length, playing: state.playing, kinds: kinds,
+        footprint: [geo.W, geo.D],
+        fitScale: +fitScale.toFixed(4),
+        bbox: {
+          min: [ +bb.min.x.toFixed(3), +bb.min.y.toFixed(3), +bb.min.z.toFixed(3) ],
+          size: [ +sz.x.toFixed(3), +sz.y.toFixed(3), +sz.z.toFixed(3) ],
+        },
       };
     },
   };
@@ -1125,7 +1250,7 @@ function open3DViewer(machineId){
   document.getElementById('v3Glb').onclick = function(e){
     e.target.disabled = true;
     e.target.textContent = '导出中…';
-    V.toGLB(function(buffer, err){
+    V.toGLB(function(buffer, err, meta){
       e.target.disabled = false;
       e.target.textContent = '导出 GLB';
       if(err || !buffer){ toast('导出失败：' + (err ? err.message : '无数据')); return; }
@@ -1135,7 +1260,10 @@ function open3DViewer(machineId){
       a.download = m.id + '.glb';
       document.body.appendChild(a); a.click();
       setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 200);
-      toast('已导出 ' + m.id + '.glb');
+      const info = meta
+        ? ' · 1 网格 / ' + meta.materials + ' 材质槽 · ' + meta.sizeCm.join('×') + ' cm'
+        : '';
+      toast('已导出 ' + m.id + '.glb' + info);
     });
   };
   document.getElementById('v3CopyPrompt').onclick = function(){

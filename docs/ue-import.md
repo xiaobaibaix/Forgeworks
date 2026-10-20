@@ -228,3 +228,87 @@ Forgeworks（浏览器，localStorage）
                   DT_ItemDef / DT_MachineDef / DT_RecipeDef
                   DT_TechDef / DT_ElementDef  (+ 图集贴图)
 ```
+
+---
+
+# 3D 体块 → UE（GLB 导入）
+
+## 一、导出
+
+在「美术需求」页点任意建筑的「3D 查看」，弹窗右下角 **导出 GLB**。
+
+导出后的结构经过专门处理，**为 UE 优化**：
+
+| 处理 | 为什么 |
+|---|---|
+| **合并成 1 个网格** | 不合并的话，30 个部件会变成 30 个独立 StaticMesh 资产，根本没法用 |
+| **按材质角色分槽** | 1 个网格 + N 个材质槽（通常 4~6 个），和 UE 的多材质槽模型一致 |
+| **材质命名 `M_body` / `M_glow`** | 导入 UE 后材质实例名可读，不是 `Material_0` |
+| **节点名 = 机器 ID** | 静态网格资产直接叫 `MC_ARC` |
+| **等比缩放到占地内** | 3×3 的建筑严格不超过 3×3 米，铺排时不会互相穿插 |
+| **底部对齐 y=0** | 轴心在底面中心，拖进关卡直接落地 |
+| **extras 写入动画参数** | GLB 是静态网格，动画需在 UE 重建，这里把参数一起带过去 |
+
+`extras` 里的数据结构：
+
+```json
+{
+  "forgeworks": {
+    "id": "MC_ARC", "name": "电弧熔炉",
+    "category": "冶炼", "footprint": "3×3", "tier": 0,
+    "unit": "meter (1 unit = 1 grid)",
+    "pivot": "bottom-center",
+    "materialSlots": ["M_base","M_dark","M_body","M_light","M_glow"],
+    "animations": [
+      { "part":"cyl", "role":"glow", "kind":"pulse", "params":{"speed":1.7,"min":0.6,"max":2.4} }
+    ]
+  }
+}
+```
+
+## 二、导入 UE
+
+1. 把 `.glb` 拖进 Content Browser
+2. 导入对话框（Interchange glTF）里：
+   - **Import Uniform Scale = 1**（glTF 单位是米，UE 自动 ×100 转厘米）
+   - 勾选 **Generate Missing Collisions**（会生成简单凸包碰撞）
+   - **Import Materials** 保持勾选
+3. 生成的资产：
+   - `MC_ARC`（Static Mesh，1 个网格，N 个材质槽）
+   - `M_body` / `M_dark` / ... 材质实例
+4. 拖进关卡，缩放保持 1.0 —— 尺寸就是 3×3 米（300×300 uu）
+
+## 三、能保证什么 / 不能保证什么
+
+**能保证：**
+
+| 项 | 说明 |
+|---|---|
+| 网格结构 | 1 个 StaticMesh，N 个材质槽，命名可读 |
+| 尺寸 | 1 格 = 1 米，导入后 ×100 = 厘米；不超过声明占地 |
+| 轴心 | 底面中心，落地即对齐 |
+| 朝向 | glTF Y-up → UE Z-up 自动转换，正面朝 +X |
+| PBR 参数 | baseColor / metallic / roughness / emissive 会带过去 |
+| 碰撞 | 导入时勾选即可自动生成简单碰撞 |
+| 顶点数 | 单建筑约 2k~5k，属于 blockout 量级 |
+
+**不能保证（必须知道）：**
+
+| 项 | 原因 | 怎么办 |
+|---|---|---|
+| **动画** | GLB 只导出静态姿势（当前姿态）。旋转/浮动/脉动是 JS 程序化的 | 参数在 `extras.animations` 里，在 UE 里用 Timeline 或材质参数重建 |
+| **自发光强度 > 1** | glTF 规范里 `emissiveFactor` 上限是 1.0，脉动峰值 2.4 会被截断 | UE 里给材质加 Emissive 乘数（2~3）才有辉光 |
+| **材质观感** | glTF PBR 是「参数级」迁移，不含环境反射、色调映射 | UE 里套自己的后处理与反射球 |
+| **贴图 / 法线** | 没有导出贴图（几何是纯色块） | 需要的话自己展 UV / 做材质 |
+| **透明** | 玻璃材质的 alpha 在部分导入设置下会变不透明 | 导入后把该材质槽改成 Translucent |
+| **LOD** | 没有 LOD | 项目里用 Auto LOD |
+| **UV** | 用的是几何体默认 UV，不是为贴图设计的 | 展 UV 后重做材质 |
+
+## 四、这套东西的定位
+
+**明确的 blockout / 占位模型**，不是最终美术资产。
+
+它解决的问题是：**在美术进场之前，让策划和程序能验证占位体积、铺排间距、
+动画逻辑与建筑朝向**。等真实模型做好后，把机器数据里的 `mesh` 字段指向真模型即可，
+DataTable 里的其余字段（占地、耗电、配方）完全不用改。
+
