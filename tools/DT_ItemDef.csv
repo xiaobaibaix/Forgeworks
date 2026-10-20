@@ -1,0 +1,76 @@
+﻿Id,DisplayName,Tier,Type,Value,Color,Desc,HasCustomIcon,MeshPath,MaterialPath,ModelStatus
+ORE_FE,铁质混合矿,0,raw,1,#8b6b4a,Fe 55~65%，伴生 Si/Al/C,False,,,primitive
+ORE_SI,硅质混合矿,0,raw,1,#8a8f98,Si 50~60%，酸性岩区,False,,,primitive
+ORE_AL,铝质混合矿,0,raw,1,#a8adb5,Al 40~50%，热带风化壳,False,,,primitive
+ORE_C,煤化混合矿,0,raw,1,#3d3d3b,C 45~55%，沉积有机层,False,,,primitive
+ORE_TI,钛质混合矿,0,raw,2,#7d7f86,Ti 35~45%，辉石岩区,False,,,primitive
+ORE_NI,镍质混合矿,0,raw,2,#5d5b57,Ni 30~40%，伴生 Cr,False,,,primitive
+ORE_BRINE,卤水结晶矿,1,concentrate,1,#9fb8c9,Na/Cl 混合，蒸发结晶产物,False,,,primitive
+ORE_METEOR,陨铁混合矿,0,raw,3,#6a6560,Fe 70~85%，小行星带,False,,,primitive
+ORE_U,富铀混合矿,0,raw,4,#5f9e4f,U 3~8%，深层花岗岩,False,,,primitive
+ORE_RARE,稀有元素矿,0,raw,4,#9a5fa0,Li/Ge/Ga 混合，极地富集,False,,,primitive
+ORE_CU,铜质混合矿,0,raw,1,#b87333,Cu 30~40%，伴生 Fe/Ag,False,,,primitive
+ORE_CR,铬质混合矿,0,raw,2,#6b7280,Cr 25~35%，蛇纹岩区,False,,,primitive
+ORE_ZN,锌质混合矿,0,raw,1,#6e7480,Zn 25~35,False,,,primitive
+ORE_HE,液氦矿脉,0,raw,6,#7ac4e0,极地冻土层，E3 解锁,False,,,primitive
+CONC_FE,高纯铁矿,1,concentrate,2,#c08a5a,纯度 82~98%,False,,,primitive
+CONC_C,煤化料,1,concentrate,2,#4a4a48,富碳精料，C 45~55%,False,,,primitive
+CONC_SI,高纯硅矿,1,concentrate,2,#b0b5bd,纯度 90~99.5%，<95% 不能做半导体,False,,,primitive
+CONC_AL,高纯铝矿,1,concentrate,2,#c0c4cb,纯度 80~96%,False,,,primitive
+CONC_CU,高纯铜矿,1,concentrate,2,#d08a4a,纯度 85~97%,False,,,primitive
+CONC_TI,高纯钛矿,1,concentrate,3,#8a8c93,纯度 80~95%,False,,,primitive
+CONC_NI,高纯镍料,1,concentrate,3,#77746f,纯度 82~96%,False,,,primitive
+CONC_CR,高纯铬料,1,concentrate,3,#7d838c,,False,,,primitive
+CONC_ZN,高纯锌料,1,concentrate,2,#8a9098,,False,,,primitive
+CONC_U,富铀料,1,concentrate,5,#6fae5f,,False,,,primitive
+CONC_RARE,稀土元素料,1,concentrate,5,#a86fae,纯度 60~90%,False,,,primitive
+CONC_LI,碳酸锂,1,concentrate,5,#b58fd4,,False,,,primitive
+ING_PIG,生铁锭,2,ingot,4,#7d5a48,,False,,,primitive
+ING_STEEL,钢锭,2,ingot,6,#8a8d92,,False,,,primitive
+ING_SI,硅锭,2,ingot,6,#7f868e,,False,,,primitive
+ING_CU,铜锭,2,ingot,5,#c07a3a,,False,,,primitive
+ING_AL,铝锭,2,ingot,5,#c2c7cd,,False,,,primitive
+ING_TI,钛锭,2,ingot,9,#989ba1,,False,,,primitive
+ING_CR,铬锭,2,ingot,6,#79808a,,False,,,primitive
+ING_ZN,锌锭,2,ingot,4,#8f959d,,False,,,primitive
+ING_S,硫磺,2,ingot,4,#c8b53a,,False,,,primitive
+ING_HE3,氦-3,2,ingot,20,#6fb3d9,聚变燃料,False,,,primitive
+ING_H2,氢气,2,fluid,4,#6fc4e8,燃料 / 化工原料 / 推进剂,False,,,none
+ING_CL,氯气,2,fluid,3,#7fc47f,PVC / 制冷剂,False,,,none
+PLATE_SS,不锈钢板,3,material,14,#aeb4ba,,False,,,primitive
+PLATE_TI,钛合金板,3,material,22,#b4b8bd,T3 主力结构材料,False,,,primitive
+PLATE_TI_HARD,高强钛板,3,material,46,#c2c6cb,氩气保护焊接，E4 材料,False,,,primitive
+ROD_BRASS,黄铜棒,3,material,11,#c4a45e,,False,,,primitive
+FOIL_CU,铜箔,3,material,9,#d08a4a,,False,,,primitive
+PART_GEAR,齿轮组,3,part,12,#9099a3,,False,,,needed
+PART_SHAFT,传动轴,3,part,8,#8d949c,,False,,,needed
+PART_PCB,电路基板,3,part,24,#3f7a4a,需半导体级硅,False,,,needed
+PART_PRISM,光学棱镜,3,part,26,#9fd8e8,,False,,,needed
+PART_MAGNET,永磁体,3,part,30,#7a5a8a,,False,,,needed
+PART_BATTERY,电池组,3,part,32,#4a6e8a,,False,,,needed
+PART_CARBON,碳纤维布,3,material,34,#333336,,False,,,primitive
+PART_BRICK,隔热砖,3,material,4,#a08a72,尾矿回收产物,False,,,primitive
+BLOCK_CEMENT,混凝土块,3,material,5,#8e8d88,建筑材料，尾矿+炉渣回收,False,,,primitive
+PART_WIRE,超导线,3,material,60,#5fa8c4,,False,,,primitive
+PART_COIL,铜线圈,3,part,18,#b87a3a,,False,,,needed
+PART_RESIN,环氧树脂,3,part,7,#9a8a5a,,False,,,needed
+PART_TUBE,铜管,3,part,9,#c08a4a,,False,,,needed
+PART_FUELPIPE,燃料管,3,part,11,#6a6a72,,False,,,needed
+MOD_AUTOMATION,自动化模块,4,module,180,#1d9e75,,False,,,needed
+MOD_THRUSTER,离子推进模块,4,module,420,#378add,,False,,,needed
+MOD_LIFE,生保循环体,4,module,380,#5dc aa5,,False,,,needed
+MOD_POWER,发电机模块,4,module,340,#ef9f27,,False,,,needed
+MOD_SENSOR,深空传感器,4,module,300,#a3b1c4,,False,,,needed
+MOD_QUANTUM,量子计算核心,4,module,1400,#7f77dd,E4,False,,,needed
+MEGA_ELEVATOR,空间电梯段,5,mega,9000,#534ab7,T5 宏构,False,,,needed
+MEGA_FUSION,轨道聚变环,5,mega,26000,#a32d2d,T5 宏构,False,,,needed
+MEGA_DYSON,戴森帆阵列,5,mega,60000,#185fa5,T5 宏构,False,,,needed
+WASTE_TAIL,尾矿,1,byproduct,0,#7a736a,可压制成隔热砖,False,,,primitive
+WASTE_WATER,废水,1,byproduct,0,#7a9ab0,,False,,,primitive
+WASTE_SLAG,炉渣,2,byproduct,0,#6a6560,,False,,,primitive
+WASTE_GAS,废气,2,byproduct,0,#9a9a92,SO₂/CO₂,False,,,primitive
+GAS_ARGON,氩气,2,fluid,3,#7a95a8,,False,,,none
+HEAT_WASTE,废热,1,fluid,0,#c47a4a,可发电,False,,,none
+ORE_BRINE_LIQ,卤水,0,raw,1,#6fa8c4,潮汐泵抽取，raw 表示机器直采,False,,,none
+ORE_HE3_GAS,巨行星大气,0,raw,2,#8fd0e8,气体采集塔直采,False,,,none
+FLUID_HE,液态氦,3,fluid,20,#7ac4e0,,False,,,none

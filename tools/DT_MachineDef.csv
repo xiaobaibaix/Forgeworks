@@ -1,0 +1,33 @@
+﻿Id,DisplayName,Tier,Category,FootprintX,FootprintY,PowerDraw,Desc
+MC_DRILL,地质钻机,0,采集,2,2,60,开采 T0 混合矿，产出带品位浮动
+MC_HAND,手工镐,0,采集,1,1,0,手动采集
+MC_TIDAL_PUMP,潮汐泵,1,采集,3,3,120,产量随潮汐相位波动
+MC_DEEP_DRILL,深层钻机,3,采集,4,4,900,需先钻竖井
+MC_METEOR_CAP,陨石捕获器,2,采集,2,2,200,需在轨道运行
+MC_GAS_TOWER,气体采集塔,2,采集,3,3,400,巨行星大气取氦³
+MC_SORT,手选台,0,分离,2,1,15,
+MC_ARC,电弧熔炉,0,冶炼,3,3,200,
+MC_ALLOY_PRESS,合金压力机,1,合金,4,4,380,
+MC_EVAP,蒸发结晶塔,1,分离,3,3,180,
+MC_CHLOR_ALKALI,氯碱电解池,1,化工,3,3,300,
+MC_VAC_IND,真空感应炉,2,冶炼,4,4,380,
+MC_DISTILL,蒸馏塔,2,化工,2,2,80,
+MC_MAG,磁选机,2,分离,3,2,240,
+MC_CENTRIFUGE,同位素离心机,2,分离,4,4,1200,
+MC_ETCH,蚀刻机,3,加工,3,2,200,
+MC_LATHE,精密车床,3,加工,2,2,90,
+MC_CARBONIZER,炭化炉,3,加工,4,4,600,
+MC_MAG_FACTORY,磁体工厂,3,加工,3,3,400,
+MC_BATTERY,电池工厂,3,加工,3,3,500,
+MC_ROLLER,轧机,3,加工,2,2,200,
+MC_PRESS,压制机,1,加工,2,2,90,
+MC_SUPER_MILL,超导拉丝机,4,加工,4,4,1500,
+MC_CONCRETE,混凝土搅拌机,1,回收,3,3,60,
+MC_FUEL_SYNTH,合成燃料厂,3,回收,3,3,250,
+MC_CARBON_CAP,碳捕获装置,3,回收,3,3,180,
+MC_ASSEMBLY,装配机,0,组装,3,3,150,
+MC_PRECISION,精密装配厂,3,组装,5,5,800,
+MC_LIFEFAB,生保工厂,3,组装,4,4,600,
+MC_WINDER,绕线车间,3,组装,3,3,400,
+MC_CLEANROOM,洁净室,4,组装,6,6,2000,
+MC_ORBITAL_DOCK,轨道建造坞,4,组装,12,12,10000,T5 宏构

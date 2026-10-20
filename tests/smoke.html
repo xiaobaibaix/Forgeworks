@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StellarEra 内容设计器</title>
+<link rel="stylesheet" href="../css/theme.css">
+<link rel="stylesheet" href="../css/layout.css">
+<link rel="stylesheet" href="../css/components.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <h1>StellarEra 内容设计器</h1>
+      <p id="statLine">载入中…</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot">
+      <button id="btnSave" class="sm">保存到本地</button>
+      <button id="btnReset" class="sm">恢复预填数据</button>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="head">
+      <h2 id="viewTitle">元素</h2>
+      <span class="sub" id="viewSub"></span>
+      <div class="head-actions" id="headActions"></div>
+    </div>
+    <div class="body" id="view"></div>
+  </main>
+</div>
+
+<div class="mask hide" id="mask"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<!-- ============================================================
+     脚本按依赖顺序加载（顺序错了会 ReferenceError）。
+     全部是普通 script（不是 ES module）——
+     ES module 在 file:// 下会被 CORS 拦截，双击打不开。
+     ============================================================ -->
+
+<!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
+<script src="../js/core/config.js"></script>
+<script src="../js/data/seed.js"></script>
+<script src="../js/data/prompts.js"></script>
+
+<!-- 2. 状态与索引 -->
+<script src="../js/core/state.js"></script>
+<script src="../js/core/lookup.js"></script>
+
+<!-- 3. 引擎（无 UI 依赖） -->
+<script src="../js/engines/icons.js"></script>
+<script src="../js/engines/validate.js"></script>
+<script src="../js/engines/solver.js"></script>
+<script src="../js/engines/balance.js"></script>
+<script src="../js/engines/csv.js"></script>
+<script src="../js/core/io.js"></script>
+
+<!-- 4. UI 基础 -->
+<script src="../js/ui/table.js"></script>
+<script src="../js/ui/router.js"></script>
+<script src="../js/ui/editor.js"></script>
+
+<!-- 5. 各视图 -->
+<script src="../js/views/elements.js"></script>
+<script src="../js/views/items.js"></script>
+<script src="../js/views/machines.js"></script>
+<script src="../js/views/recipes.js"></script>
+<script src="../js/views/techs.js"></script>
+<script src="../js/views/eras.js"></script>
+<script src="../js/views/assets.js"></script>
+<script src="../js/views/prompts.js"></script>
+<script src="../js/views/validate.js"></script>
+<script src="../js/views/balance.js"></script>
+<script src="../js/views/solve.js"></script>
+<script src="../js/views/graph.js"></script>
+<script src="../js/views/export.js"></script>
+
+<!-- 6. 启动（构建 VIEWS 并首次渲染） -->
+<script src="../js/main.js"></script>
+
+<pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
+<script>
+(function(){
+  var errs = [];
+  window.addEventListener('error', function(e){ errs.push(String(e.message)); });
+
+  function run(){
+    var out = { errors: errs.slice(), checks: [], summary: {} };
+    function check(name, fn){
+      try{
+        var r = fn();
+        out.checks.push({ name: name, ok: !!r, detail: (typeof r === 'string') ? r : '' });
+      }catch(e){
+        out.checks.push({ name: name, ok: false, detail: 'EXCEPTION: ' + e.message });
+      }
+    }
+
+    check('数据已载入', function(){ return S && S.items.length > 0 ? S.items.length + ' 物品' : false; });
+    check('VIEWS 已构建', function(){ return VIEWS && Object.keys(VIEWS).length > 0 ? Object.keys(VIEWS).length + ' 个视图' : false; });
+
+    // 逐视图渲染
+    var views = ['elements','items','machines','recipes','techs','eras','assets','prompts','validate','balance','solve','graph','export'];
+    views.forEach(function(v){
+      check('视图 ' + v, function(){
+        if(!VIEWS[v]) return '未注册';
+        cur = v; VIEWS[v].render();
+        var len = document.getElementById('view').innerHTML.length;
+        return len > 100 ? len + ' 字符' : '内容过短 ' + len;
+      });
+    });
+
+    // 描述词覆盖
+    check('建筑描述词全覆盖', function(){
+      var missing = S.machines.filter(function(m){
+        try { return !machinePrompt(m, {withTech:true}) || machinePrompt(m,{withTech:true}).length < 80; }
+        catch(e){ return true; }
+      });
+      return missing.length === 0 ? S.machines.length + ' 条' : '缺失 ' + missing.length;
+    });
+    check('物品描述词全覆盖', function(){
+      var missing = S.items.filter(function(it){
+        try { return !itemPrompt(it, {withTech:true}); } catch(e){ return true; }
+      });
+      return missing.length === 0 ? S.items.length + ' 条' : '缺失 ' + missing.length;
+    });
+
+    // 等轴测预览
+    check('体块预览可生成', function(){
+      var bad = S.machines.filter(function(m){
+        try { var s = isoPreview(m, 0, 132); return !s || s.indexOf('<svg') !== 0; }
+        catch(e){ return true; }
+      });
+      return bad.length === 0 ? S.machines.length + ' 个' : '失败 ' + bad.length;
+    });
+
+    // 图标
+    check('图标生成', function(){
+      var bad = S.items.filter(function(it){
+        try { var u = iconURL(it); return !u || u.indexOf('data:') !== 0; } catch(e){ return true; }
+      });
+      return bad.length === 0 ? S.items.length + ' 个' : '失败 ' + bad.length;
+    });
+
+    // 物料平衡
+    check('物料平衡', function(){
+      var u = expandAmount('MOD_AUTOMATION', 1);
+      var tot = Object.keys(u.raws).length;
+      return tot > 0 ? tot + ' 种原料' : '无原料';
+    });
+
+    // 导出
+    check('CSV 生成', function(){ return itemCsv().split('\n').length > 1 ? 'ok' : false; });
+    check('Markdown 生成', function(){ return mdExport().length > 500 ? 'ok' : false; });
+
+    out.summary = {
+      total: out.checks.length,
+      pass: out.checks.filter(function(c){ return c.ok; }).length,
+      fail: out.checks.filter(function(c){ return !c.ok; }).length,
+      runtimeErrors: errs.length
+    };
+    document.getElementById('selftest-result').textContent =
+      'SELFTEST_JSON_START\n' + JSON.stringify(out, null, 2) + '\nSELFTEST_JSON_END';
+    document.title = out.summary.fail === 0 && errs.length === 0 ? 'SELFTEST_PASS' : 'SELFTEST_FAIL';
+  }
+
+  // 等全部脚本跑完
+  window.addEventListener('load', function(){ setTimeout(run, 200); });
+})();
+</script>
+</body>
+</html>

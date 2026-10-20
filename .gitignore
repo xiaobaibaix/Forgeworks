@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+._*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 导出产物（数据源是 index.html 里的 localStorage / 导出的 JSON）
+exports/
+*.local.json
+
+# 依赖（本项目无依赖，防止误提交）
+node_modules/

@@ -1,0 +1,28 @@
+/* StellarEra 设计器 · layout.css */
+/* ---- sidebar ---- */
+.side{width:190px;flex:0 0 190px;background:var(--panel);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden}
+.brand{padding:16px 16px 12px;border-bottom:1px solid var(--border)}
+.brand h1{font-size:14px;font-weight:500;letter-spacing:.2px}
+.brand p{font-size:11px;color:var(--text-3);margin-top:2px}
+.nav{padding:8px;overflow-y:auto;flex:1}
+.nav-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;
+  color:var(--text-2);font-size:13px;margin-bottom:1px;user-select:none}
+.nav-item:hover{background:var(--bg)}
+.nav-item.active{background:var(--accent-soft);color:#0f6e56;font-weight:500}
+.nav-item .cnt{margin-left:auto;font-size:11px;color:var(--text-3);font-family:var(--mono)}
+.nav-item.active .cnt{color:#0f6e56}
+.nav-group{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);
+  padding:12px 10px 4px;font-weight:500}
+.side-foot{padding:10px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);
+  display:flex;flex-direction:column;gap:6px}
+.side-foot button{font-size:11px}
+
+/* ---- main ---- */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.head{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--panel);
+  display:flex;align-items:center;gap:12px;flex:0 0 auto}
+.head h2{font-size:15px;font-weight:500}
+.head .sub{font-size:12px;color:var(--text-3)}
+.head-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+.body{flex:1;overflow:auto;padding:16px 20px 40px}

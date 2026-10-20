@@ -1,0 +1,17 @@
+/* StellarEra 设计器 · theme.css */
+:root{
+  --bg:#f7f7f5; --panel:#ffffff; --panel-2:#fbfbfa;
+  --border:rgba(0,0,0,.10); --border-2:rgba(0,0,0,.16);
+  --text:#2c2c2a; --text-2:#5f5e5a; --text-3:#8a8880;
+  --accent:#1d9e75; --accent-soft:#e1f5ee;
+  --blue:#185fa5; --blue-soft:#e6f1fb;
+  --amber:#ba7517; --amber-soft:#faeeda;
+  --red:#a32d2d; --red-soft:#fcebeb;
+  --purple:#534ab7; --purple-soft:#eeedfe;
+  --radius:10px;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg);color:var(--text);font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.app{display:flex;height:100vh;overflow:hidden}

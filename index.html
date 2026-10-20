@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forgeworks · 工厂游戏内容设计器</title>
+<link rel="stylesheet" href="css/theme.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <h1>Forgeworks</h1>
+      <p id="statLine">载入中…</p>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot">
+      <button id="btnSave" class="sm">保存到本地</button>
+      <button id="btnReset" class="sm">恢复预填数据</button>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="head">
+      <h2 id="viewTitle">元素</h2>
+      <span class="sub" id="viewSub"></span>
+      <div class="head-actions" id="headActions"></div>
+    </div>
+    <div class="body" id="view"></div>
+  </main>
+</div>
+
+<div class="mask hide" id="mask"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<!-- ============================================================
+     脚本按依赖顺序加载（顺序错了会 ReferenceError）。
+     全部是普通 script（不是 ES module）——
+     ES module 在 file:// 下会被 CORS 拦截，双击打不开。
+     ============================================================ -->
+
+<!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
+<script src="js/core/config.js"></script>
+<script src="js/data/seed.js"></script>
+<script src="js/data/prompts.js"></script>
+
+<!-- 2. 状态与索引 -->
+<script src="js/core/state.js"></script>
+<script src="js/core/lookup.js"></script>
+
+<!-- 3. 引擎（无 UI 依赖） -->
+<script src="js/engines/icons.js"></script>
+<script src="js/engines/validate.js"></script>
+<script src="js/engines/solver.js"></script>
+<script src="js/engines/balance.js"></script>
+<script src="js/engines/csv.js"></script>
+<script src="js/core/io.js"></script>
+
+<!-- 4. UI 基础 -->
+<script src="js/ui/table.js"></script>
+<script src="js/ui/router.js"></script>
+<script src="js/ui/editor.js"></script>
+
+<!-- 5. 各视图 -->
+<script src="js/views/elements.js"></script>
+<script src="js/views/items.js"></script>
+<script src="js/views/machines.js"></script>
+<script src="js/views/recipes.js"></script>
+<script src="js/views/techs.js"></script>
+<script src="js/views/eras.js"></script>
+<script src="js/views/assets.js"></script>
+<script src="js/views/prompts.js"></script>
+<script src="js/views/validate.js"></script>
+<script src="js/views/balance.js"></script>
+<script src="js/views/solve.js"></script>
+<script src="js/views/graph.js"></script>
+<script src="js/views/export.js"></script>
+
+<!-- 6. 启动（构建 VIEWS 并首次渲染） -->
+<script src="js/main.js"></script>
+</body>
+</html>
