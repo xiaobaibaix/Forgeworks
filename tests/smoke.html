@@ -49,7 +49,13 @@
 <script src="../js/core/state.js"></script>
 <script src="../js/core/lookup.js"></script>
 
-<!-- 3. 引擎（无 UI 依赖） -->
+<!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
+<script src="../js/vendor/three.min.js"></script>
+<script src="../js/vendor/OrbitControls.js"></script>
+<script src="../js/vendor/RoomEnvironment.js"></script>
+<script src="../js/vendor/GLTFExporter.js"></script>
+
+<!-- 4. 引擎（无 UI 依赖） -->
 <script src="../js/engines/icons.js"></script>
 <script src="../js/engines/viewer3d.js"></script>
 <script src="../js/engines/validate.js"></script>
@@ -58,12 +64,12 @@
 <script src="../js/engines/csv.js"></script>
 <script src="../js/core/io.js"></script>
 
-<!-- 4. UI 基础 -->
+<!-- 5. UI 基础 -->
 <script src="../js/ui/table.js"></script>
 <script src="../js/ui/router.js"></script>
 <script src="../js/ui/editor.js"></script>
 
-<!-- 5. 各视图 -->
+<!-- 6. 各视图 -->
 <script src="../js/views/elements.js"></script>
 <script src="../js/views/items.js"></script>
 <script src="../js/views/machines.js"></script>
@@ -78,7 +84,7 @@
 <script src="../js/views/graph.js"></script>
 <script src="../js/views/export.js"></script>
 
-<!-- 6. 启动（构建 VIEWS 并首次渲染） -->
+<!-- 7. 启动（构建 VIEWS 并首次渲染） -->
 <script src="../js/main.js"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
@@ -87,22 +93,33 @@
   var errs = [];
   window.addEventListener('error', function(e){ errs.push(String(e.message)); });
 
-  function run(){
-    var out = { errors: errs.slice(), checks: [], summary: {} };
-    function check(name, fn){
-      try{
-        var r = fn();
-        out.checks.push({ name: name, ok: !!r, detail: (typeof r === 'string') ? r : '' });
-      }catch(e){
-        out.checks.push({ name: name, ok: false, detail: 'EXCEPTION: ' + e.message });
-      }
+  var out = { errors: errs, checks: [], summary: {} };
+  function check(name, fn){
+    try{
+      var r = fn();
+      out.checks.push({ name: name, ok: !!r, detail: (typeof r === 'string') ? r : '' });
+    }catch(e){
+      out.checks.push({ name: name, ok: false, detail: 'EXCEPTION: ' + e.message });
     }
+  }
+  function finish(){
+    out.errors = errs.slice();
+    out.summary = {
+      total: out.checks.length,
+      pass: out.checks.filter(function(c){ return c.ok; }).length,
+      fail: out.checks.filter(function(c){ return !c.ok; }).length,
+      runtimeErrors: errs.length
+    };
+    document.getElementById('selftest-result').textContent =
+      'SELFTEST_JSON_START\n' + JSON.stringify(out, null, 2) + '\nSELFTEST_JSON_END';
+    document.title = (out.summary.fail === 0 && errs.length === 0) ? 'SELFTEST_PASS' : 'SELFTEST_FAIL';
+  }
 
+  function runSync(){
     check('数据已载入', function(){ return S && S.items.length > 0 ? S.items.length + ' 物品' : false; });
     check('VIEWS 已构建', function(){ return VIEWS && Object.keys(VIEWS).length > 0 ? Object.keys(VIEWS).length + ' 个视图' : false; });
 
-    var views = Object.keys(VIEWS);
-    views.forEach(function(v){
+    Object.keys(VIEWS).forEach(function(v){
       check('视图 ' + v, function(){
         cur = v; VIEWS[v].render();
         var len = document.getElementById('view').innerHTML.length;
@@ -111,27 +128,29 @@
     });
 
     check('建筑描述词全覆盖', function(){
-      var missing = S.machines.filter(function(m){
-        try { var p = machinePrompt(m, {withTech:true}); return !p || p.length < 80; }
-        catch(e){ return true; }
+      var bad = S.machines.filter(function(m){
+        try { var p = machinePrompt(m, {withTech:true}); return !p || p.length < 80; } catch(e){ return true; }
       });
-      return missing.length === 0 ? S.machines.length + ' 条' : '缺失 ' + missing.length;
+      return bad.length === 0 ? S.machines.length + ' 条' : '缺失 ' + bad.length;
     });
     check('物品描述词全覆盖', function(){
-      var missing = S.items.filter(function(it){
+      var bad = S.items.filter(function(it){
         try { return !itemPrompt(it, {withTech:true}); } catch(e){ return true; }
       });
-      return missing.length === 0 ? S.items.length + ' 条' : '缺失 ' + missing.length;
+      return bad.length === 0 ? S.items.length + ' 条' : '缺失 ' + bad.length;
     });
     check('等轴测预览', function(){
       var bad = S.machines.filter(function(m){
-        try { var s = isoPreview(m, 0, 132); return !s || s.indexOf('<svg') !== 0; }
-        catch(e){ return true; }
+        try { var s = isoPreview(m, 0, 132); return !s || s.indexOf('<svg') !== 0; } catch(e){ return true; }
       });
       return bad.length === 0 ? S.machines.length + ' 个' : '失败 ' + bad.length;
     });
 
-    // ---- 3D 体块 ----
+    // ---- three.js ----
+    check('three.js 已加载', function(){ return haveThree() ? 'REVISION ' + THREE.REVISION : '未加载'; });
+    check('OrbitControls 已加载', function(){ return !!THREE.OrbitControls; });
+    check('GLTFExporter 已加载', function(){ return !!THREE.GLTFExporter; });
+
     check('3D 体块构建', function(){
       var bad = S.machines.filter(function(m){
         try {
@@ -141,32 +160,39 @@
       });
       return bad.length === 0 ? S.machines.length + ' 个建筑' : '失败 ' + bad.length;
     });
-    check('3D 面绕序（法线朝外）', function(){
-      // 校验 6 个面的法线都应背离中心
-      var p = { c:[0,0,0], s:[1,1,1], col:'#fff' };
-      var v = boxVerts(p);
-      var badCount = 0;
-      BOX_FACES.forEach(function(idx, fi){
-        var a=v[idx[0]], b=v[idx[1]], c=v[idx[2]];
-        var ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
-        var wx=c[0]-a[0], wy=c[1]-a[1], wz=c[2]-a[2];
-        var n=[uy*wz-uz*wy, uz*wx-ux*wz, ux*wy-uy*wx];
-        // 面中心
-        var cen=[0,0,0];
-        idx.forEach(function(i){ cen[0]+=v[i][0]/4; cen[1]+=v[i][1]/4; cen[2]+=v[i][2]/4; });
-        var dot = n[0]*cen[0] + n[1]*cen[1] + n[2]*cen[2];
-        if(dot <= 0) badCount++;    // 法线应朝外
+
+    check('动画描述符合法', function(){
+      var kinds = {spin:1, bob:1, slide:1, swing:1, pulse:1};
+      var bad = 0, animCount = 0;
+      S.machines.forEach(function(m){
+        buildMachineParts(m).parts.forEach(function(p){
+          if(!p.anim) return;
+          animCount++;
+          if(!kinds[p.anim.kind]) bad++;
+        });
       });
-      return badCount === 0 ? '6/6 面朝外' : badCount + ' 个面法线朝内';
+      return bad === 0 ? animCount + ' 个动画部件' : bad + ' 个非法动画';
     });
-    check('3D 渲染器可创建', function(){
+
+    check('建筑带粒子配置', function(){
+      var withP = S.machines.filter(function(m){ return !!buildMachineParts(m).particles; });
+      return withP.length > 0 ? withP.length + '/' + S.machines.length + ' 个建筑有粒子' : '无粒子配置';
+    });
+
+    check('3D 渲染器可创建并渲染', function(){
       var cv = document.createElement('canvas');
-      cv.width = 200; cv.height = 200;
-      cv.getBoundingClientRect = function(){ return {width:200, height:200}; };
+      cv.width = 240; cv.height = 180;
+      cv.getBoundingClientRect = function(){ return {width:240, height:180}; };
+      document.body.appendChild(cv);
       var v = createViewer3D(cv, S.machines[0]);
+      var t = v._advance(0.5);
       var png = v.toPNG();
+      var dbg = v._debug();
       v.dispose();
-      return png && png.indexOf('data:image/png') === 0 ? 'ok' : '导出失败';
+      cv.remove();
+      if(!png || png.indexOf('data:image/png') !== 0) return 'PNG 导出失败';
+      if(!(dbg.meshes > 0)) return '无网格';
+      return '网格 ' + dbg.meshes + ' / 推进 ' + t.toFixed(2) + 's';
     });
 
     check('图标生成', function(){
@@ -175,25 +201,51 @@
       });
       return bad.length === 0 ? S.items.length + ' 个' : '失败 ' + bad.length;
     });
+
     check('物料平衡', function(){
       var u = expandAmount('MOD_AUTOMATION', 1);
       return Object.keys(u.raws).length > 0 ? Object.keys(u.raws).length + ' 种原料' : '无原料';
     });
     check('CSV 生成', function(){ return itemCsv().split('\n').length > 1 ? 'ok' : false; });
     check('Markdown 生成', function(){ return mdExport().length > 500 ? 'ok' : false; });
-
-    out.summary = {
-      total: out.checks.length,
-      pass: out.checks.filter(function(c){ return c.ok; }).length,
-      fail: out.checks.filter(function(c){ return !c.ok; }).length,
-      runtimeErrors: errs.length
-    };
-    document.getElementById('selftest-result').textContent =
-      'SELFTEST_JSON_START\n' + JSON.stringify(out, null, 2) + '\nSELFTEST_JSON_END';
-    document.title = out.summary.fail === 0 && errs.length === 0 ? 'SELFTEST_PASS' : 'SELFTEST_FAIL';
   }
 
-  window.addEventListener('load', function(){ setTimeout(run, 250); });
+  function runAsync(done){
+    // GLB 导出是异步的，单独测
+    var cv = document.createElement('canvas');
+    cv.width = 200; cv.height = 160;
+    cv.getBoundingClientRect = function(){ return {width:200, height:160}; };
+    document.body.appendChild(cv);
+    var v = null, settled = false;
+    function report(ok, detail){
+      if(settled) return;
+      settled = true;
+      out.checks.push({ name: 'GLB 导出', ok: ok, detail: detail });
+      try{ if(v) v.dispose(); }catch(e){}
+      cv.remove();
+      done();
+    }
+    try{
+      v = createViewer3D(cv, S.machines[0]);
+      v._advance(0.2);
+      v.toGLB(function(buf, err){
+        if(err) return report(false, 'ERROR: ' + err.message);
+        if(!buf) return report(false, '返回空');
+        var bytes = (buf.byteLength !== undefined) ? buf.byteLength : buf.length;
+        report(bytes > 1000, bytes + ' 字节');
+      });
+      setTimeout(function(){ report(false, '超时（5s）'); }, 5000);
+    }catch(e){
+      report(false, 'EXCEPTION: ' + e.message);
+    }
+  }
+
+  window.addEventListener('load', function(){
+    setTimeout(function(){
+      runSync();
+      runAsync(function(){ setTimeout(finish, 60); });
+    }, 250);
+  });
 })();
 </script>
 </body>

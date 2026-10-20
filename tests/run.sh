@@ -18,7 +18,9 @@ if [ -z "$CHROME" ]; then
   exit 0
 fi
 
-OUT="$("$CHROME" --headless --disable-gpu --no-sandbox \
+# headless 下 WebGL 需要 SwiftShader 软件渲染；没有它会跳过 3D 检查
+OUT="$("$CHROME" --headless --no-sandbox \
+  --use-gl=swiftshader --enable-unsafe-swiftshader \
   --virtual-time-budget=8000 --dump-dom \
   "file://$DIR/tests/smoke.html" 2>/dev/null)"
 
