@@ -75,9 +75,10 @@ function renderPrompts(){
               ${tierTag(m.tier)}
             </div>
             <div style="display:flex;gap:4px;flex-wrap:wrap">
-              <button class="sm" data-rot="${m.id}">⟳ 旋转</button>
+              <button class="sm primary" data-view3d="${m.id}">3D 查看</button>
+              <button class="sm" data-rot="${m.id}">⟳ 换角度</button>
               <button class="sm" data-copy="${m.id}">复制描述词</button>
-              <button class="sm" data-view="${m.id}">查看全文</button>
+              <button class="sm" data-view="${m.id}">全文</button>
             </div>
           </div>
         </div>
@@ -113,6 +114,9 @@ function renderPrompts(){
   /* ---------- 绑定 ---------- */
   v.querySelectorAll('[data-pfilter]').forEach(b=>{
     b.onclick = ()=>{ PROMPT_FILTER = b.dataset.pfilter; renderPrompts(); };
+  });
+  v.querySelectorAll('[data-view3d]').forEach(b=>{
+    b.onclick = ()=>open3DViewer(b.dataset.view3d);
   });
   v.querySelectorAll('[data-rot]').forEach(b=>{
     b.onclick = ()=>{

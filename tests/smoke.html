@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>StellarEra 内容设计器</title>
+<title>Forgeworks · 工厂游戏内容设计器</title>
 <link rel="stylesheet" href="../css/theme.css">
 <link rel="stylesheet" href="../css/layout.css">
 <link rel="stylesheet" href="../css/components.css">
@@ -12,7 +12,7 @@
 <div class="app">
   <aside class="side">
     <div class="brand">
-      <h1>StellarEra 内容设计器</h1>
+      <h1>Forgeworks</h1>
       <p id="statLine">载入中…</p>
     </div>
     <nav class="nav" id="nav"></nav>
@@ -51,6 +51,7 @@
 
 <!-- 3. 引擎（无 UI 依赖） -->
 <script src="../js/engines/icons.js"></script>
+<script src="../js/engines/viewer3d.js"></script>
 <script src="../js/engines/validate.js"></script>
 <script src="../js/engines/solver.js"></script>
 <script src="../js/engines/balance.js"></script>
@@ -100,21 +101,18 @@
     check('数据已载入', function(){ return S && S.items.length > 0 ? S.items.length + ' 物品' : false; });
     check('VIEWS 已构建', function(){ return VIEWS && Object.keys(VIEWS).length > 0 ? Object.keys(VIEWS).length + ' 个视图' : false; });
 
-    // 逐视图渲染
-    var views = ['elements','items','machines','recipes','techs','eras','assets','prompts','validate','balance','solve','graph','export'];
+    var views = Object.keys(VIEWS);
     views.forEach(function(v){
       check('视图 ' + v, function(){
-        if(!VIEWS[v]) return '未注册';
         cur = v; VIEWS[v].render();
         var len = document.getElementById('view').innerHTML.length;
         return len > 100 ? len + ' 字符' : '内容过短 ' + len;
       });
     });
 
-    // 描述词覆盖
     check('建筑描述词全覆盖', function(){
       var missing = S.machines.filter(function(m){
-        try { return !machinePrompt(m, {withTech:true}) || machinePrompt(m,{withTech:true}).length < 80; }
+        try { var p = machinePrompt(m, {withTech:true}); return !p || p.length < 80; }
         catch(e){ return true; }
       });
       return missing.length === 0 ? S.machines.length + ' 条' : '缺失 ' + missing.length;
@@ -125,9 +123,7 @@
       });
       return missing.length === 0 ? S.items.length + ' 条' : '缺失 ' + missing.length;
     });
-
-    // 等轴测预览
-    check('体块预览可生成', function(){
+    check('等轴测预览', function(){
       var bad = S.machines.filter(function(m){
         try { var s = isoPreview(m, 0, 132); return !s || s.indexOf('<svg') !== 0; }
         catch(e){ return true; }
@@ -135,22 +131,54 @@
       return bad.length === 0 ? S.machines.length + ' 个' : '失败 ' + bad.length;
     });
 
-    // 图标
+    // ---- 3D 体块 ----
+    check('3D 体块构建', function(){
+      var bad = S.machines.filter(function(m){
+        try {
+          var g = buildMachineParts(m);
+          return !g || !g.parts || g.parts.length < 3 || !(g.H > 0);
+        } catch(e){ return true; }
+      });
+      return bad.length === 0 ? S.machines.length + ' 个建筑' : '失败 ' + bad.length;
+    });
+    check('3D 面绕序（法线朝外）', function(){
+      // 校验 6 个面的法线都应背离中心
+      var p = { c:[0,0,0], s:[1,1,1], col:'#fff' };
+      var v = boxVerts(p);
+      var badCount = 0;
+      BOX_FACES.forEach(function(idx, fi){
+        var a=v[idx[0]], b=v[idx[1]], c=v[idx[2]];
+        var ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
+        var wx=c[0]-a[0], wy=c[1]-a[1], wz=c[2]-a[2];
+        var n=[uy*wz-uz*wy, uz*wx-ux*wz, ux*wy-uy*wx];
+        // 面中心
+        var cen=[0,0,0];
+        idx.forEach(function(i){ cen[0]+=v[i][0]/4; cen[1]+=v[i][1]/4; cen[2]+=v[i][2]/4; });
+        var dot = n[0]*cen[0] + n[1]*cen[1] + n[2]*cen[2];
+        if(dot <= 0) badCount++;    // 法线应朝外
+      });
+      return badCount === 0 ? '6/6 面朝外' : badCount + ' 个面法线朝内';
+    });
+    check('3D 渲染器可创建', function(){
+      var cv = document.createElement('canvas');
+      cv.width = 200; cv.height = 200;
+      cv.getBoundingClientRect = function(){ return {width:200, height:200}; };
+      var v = createViewer3D(cv, S.machines[0]);
+      var png = v.toPNG();
+      v.dispose();
+      return png && png.indexOf('data:image/png') === 0 ? 'ok' : '导出失败';
+    });
+
     check('图标生成', function(){
       var bad = S.items.filter(function(it){
         try { var u = iconURL(it); return !u || u.indexOf('data:') !== 0; } catch(e){ return true; }
       });
       return bad.length === 0 ? S.items.length + ' 个' : '失败 ' + bad.length;
     });
-
-    // 物料平衡
     check('物料平衡', function(){
       var u = expandAmount('MOD_AUTOMATION', 1);
-      var tot = Object.keys(u.raws).length;
-      return tot > 0 ? tot + ' 种原料' : '无原料';
+      return Object.keys(u.raws).length > 0 ? Object.keys(u.raws).length + ' 种原料' : '无原料';
     });
-
-    // 导出
     check('CSV 生成', function(){ return itemCsv().split('\n').length > 1 ? 'ok' : false; });
     check('Markdown 生成', function(){ return mdExport().length > 500 ? 'ok' : false; });
 
@@ -165,8 +193,7 @@
     document.title = out.summary.fail === 0 && errs.length === 0 ? 'SELFTEST_PASS' : 'SELFTEST_FAIL';
   }
 
-  // 等全部脚本跑完
-  window.addEventListener('load', function(){ setTimeout(run, 200); });
+  window.addEventListener('load', function(){ setTimeout(run, 250); });
 })();
 </script>
 </body>
