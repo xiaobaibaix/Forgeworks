@@ -161,6 +161,27 @@
       return bad.length === 0 ? S.machines.length + ' 个建筑' : '失败 ' + bad.length;
     });
 
+    check('几何体类型多样（不能全是方块）', function(){
+      var kindsAll = {};
+      S.machines.forEach(function(m){
+        buildMachineParts(m).parts.forEach(function(p){
+          var k = p.kind || 'box';
+          kindsAll[k] = (kindsAll[k] || 0) + 1;
+        });
+      });
+      var names = Object.keys(kindsAll);
+      var nonBox = names.filter(function(k){ return k !== 'box'; });
+      if(nonBox.length < 5) return '非方块图元只有 ' + nonBox.length + ' 种: ' + nonBox.join(',');
+      // 每个建筑至少要有 1/3 是非方块部件
+      var bad = S.machines.filter(function(m){
+        var ps = buildMachineParts(m).parts;
+        var nb = ps.filter(function(p){ return (p.kind||'box') !== 'box'; }).length;
+        return nb / ps.length < 0.34;
+      });
+      if(bad.length) return bad.length + ' 个建筑方块占比过高';
+      return names.length + ' 种图元 / ' + (kindsAll.cyl||0) + ' 圆柱 (非方块占比达标)';
+    });
+
     check('动画描述符合法', function(){
       var kinds = {spin:1, bob:1, slide:1, swing:1, pulse:1};
       var bad = 0, animCount = 0;
