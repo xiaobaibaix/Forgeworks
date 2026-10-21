@@ -6,5 +6,4 @@
 
 const LS_KEY = 'stellarera.content.v1';
 
-// 版本戳：显示在侧栏底部，用来确认浏览器跑的是不是最新代码
-const BUILD_STAMP = 'build 2026-10-21 · 2';
+// 版本戳不再手写：main.js 会从自己的 src 查询串（?v=）里读出来显示

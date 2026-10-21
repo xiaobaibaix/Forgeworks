@@ -11,10 +11,13 @@ document.getElementById('btnReset').onclick=()=>{
   if(!confirm('确认恢复预填数据？当前所有修改将丢失。')) return;
   S=JSON.parse(JSON.stringify(SEED));
   normalizeAssets(S);
-  saveState(); clearCostCache(); clearIconCache(); // 版本戳
+  saveState(); clearCostCache(); clearIconCache(); // 版本戳：直接从 main.js 自己的 src 里读 ?v=，保证与资源版本号一致
 (function(){
   const el = document.getElementById('buildStamp');
-  if(el && typeof BUILD_STAMP !== 'undefined') el.textContent = BUILD_STAMP;
+  if(!el) return;
+  const tag = document.querySelector('script[src*="js/main.js"]');
+  const v = tag ? (tag.getAttribute('src').split('?v=')[1] || '') : '';
+  el.textContent = v ? 'build ' + v : (typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : '');
 })();
 render(); toast('已恢复预填数据');
 };
@@ -27,9 +30,12 @@ VIEWS = makeViews();
   const h=(location.hash||'').replace('#','');
   if(h && VIEWS[h]) cur=h;
 })();
-// 版本戳
+// 版本戳：直接从 main.js 自己的 src 里读 ?v=，保证与资源版本号一致
 (function(){
   const el = document.getElementById('buildStamp');
-  if(el && typeof BUILD_STAMP !== 'undefined') el.textContent = BUILD_STAMP;
+  if(!el) return;
+  const tag = document.querySelector('script[src*="js/main.js"]');
+  const v = tag ? (tag.getAttribute('src').split('?v=')[1] || '') : '';
+  el.textContent = v ? 'build ' + v : (typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : '');
 })();
 render();
