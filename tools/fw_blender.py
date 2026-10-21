@@ -69,6 +69,54 @@ def _render_thumbnail(bpy, Vector, objects, bounds, output):
     bpy.ops.render.render(write_still=True)
 
 
+def _plain(value):
+    if hasattr(value, 'to_dict'):
+        return value.to_dict()
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _socket_image(material, input_name):
+    """沿连接向上游找第一个图像节点（Base Color / Roughness / Normal 都可能隔几层）。"""
+    if not material or not material.node_tree:
+        return None
+    for node in material.node_tree.nodes:
+        if node.type != 'BSDF_PRINCIPLED':
+            continue
+        socket = node.inputs.get(input_name)
+        if socket is None:
+            continue
+        seen = set()
+        stack = [link.from_node for link in socket.links]
+        while stack:
+            current = stack.pop()
+            if current.name in seen:
+                continue
+            seen.add(current.name)
+            if current.type == 'TEX_IMAGE' and current.image:
+                return current.image.name
+            for item in current.inputs:
+                stack.extend(link.from_node for link in item.links)
+    return None
+
+
+def _material_report(material):
+    nodes = list(material.node_tree.nodes) if material and material.node_tree else []
+    textures = {
+        'albedo': _socket_image(material, 'Base Color'),
+        'roughness': _socket_image(material, 'Roughness'),
+        'normal': _socket_image(material, 'Normal'),
+    }
+    return {
+        'name': material.name if material else None,
+        'nodeTypes': sorted({node.type for node in nodes}),
+        'textures': textures,
+    }
+
+
 def _inspect(args):
     import bpy
     from mathutils import Vector
@@ -79,6 +127,14 @@ def _inspect(args):
         'materialSlots': 0,
         'boundsMeters': [],
         'triangleCount': 0,
+        'uvPresent': False,
+        'uvLayers': [],
+        'imageCount': 0,
+        'images': [],
+        'materialDetails': [],
+        'normalMapSlots': 0,
+        'animationCount': 0,
+        'forgeworks': {},
         'errors': [],
     }
 
@@ -93,6 +149,38 @@ def _inspect(args):
         report['meshCount'] = len(objects)
         report['materialSlots'] = sum(len(obj.material_slots) for obj in objects)
         report['triangleCount'] = sum(len(obj.data.loop_triangles) for obj in objects)
+
+        uv_names = set()
+        image_names = set()
+        materials = []
+        seen_materials = set()
+        for obj in objects:
+            for layer in obj.data.uv_layers:
+                uv_names.add(layer.name)
+            for slot in obj.material_slots:
+                material = slot.material
+                if not material or material.name in seen_materials:
+                    if material:
+                        seen_materials.add(material.name)
+                    continue
+                seen_materials.add(material.name)
+                detail = _material_report(material)
+                materials.append(detail)
+                for image in detail['textures'].values():
+                    if image:
+                        image_names.add(image)
+        report['uvLayers'] = sorted(uv_names)
+        report['uvPresent'] = bool(uv_names)
+        report['images'] = sorted(image_names)
+        report['imageCount'] = len(image_names)
+        report['materialDetails'] = materials
+        report['normalMapSlots'] = sum(1 for item in materials if item['textures'].get('normal'))
+        report['animationCount'] = len(bpy.data.actions)
+        for obj in objects:
+            extra = obj.get('forgeworks') or (obj.data.get('forgeworks') if obj.data else None)
+            if extra:
+                report['forgeworks'] = _plain(extra)
+                break
 
         if objects:
             corners = [obj.matrix_world @ Vector(corner) for obj in objects for corner in obj.bound_box]

@@ -45,7 +45,7 @@ import sys
 import tempfile
 import threading
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 
@@ -57,6 +57,9 @@ _pipeline_spec.loader.exec_module(fw_pipeline)
 _provider_spec = importlib.util.spec_from_file_location('fw_providers', os.path.join(ROOT, 'tools', 'fw_providers.py'))
 fw_providers = importlib.util.module_from_spec(_provider_spec)
 _provider_spec.loader.exec_module(fw_providers)
+_texture_spec = importlib.util.spec_from_file_location('fw_textures', os.path.join(ROOT, 'tools', 'fw_textures.py'))
+fw_textures = importlib.util.module_from_spec(_texture_spec)
+_texture_spec.loader.exec_module(fw_textures)
 
 BRIDGE_VERSION = '0.1.0'
 STATE_FILE = os.path.join(ROOT, 'tools', '.bridge_state.json')
@@ -976,6 +979,35 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             for asset_id, record in (manifest.get('assets') or {}).items():
                 rows.extend(dict(item, id=asset_id) for item in record.get('conflicts', []) if item.get('status') == 'pending')
             self._json({'ok': True, 'conflicts': rows})
+        elif route == 'materials/textures':
+            query = self._query()
+            try:
+                style = fw_textures.style_id((query.get('style') or [''])[0])
+                bound = fw_dir()
+                catalog = fw_textures.load_catalog(bound, style)
+                self._json({
+                    'ok': True, 'styleId': style, 'items': catalog['items'],
+                    'specs': fw_textures.specs_for_client(),
+                    'providerReady': fw_textures.provider_ready(read_json(CONFIG_FILE, {}) or {}),
+                    'dir': fw_textures.texture_dir(bound, style),
+                })
+            except (ValueError, TypeError) as error:
+                self._json({'ok': False, 'error': str(error)}, 409 if not fw_dir() else 400)
+        elif route == 'materials/texture/file':
+            query = self._query()
+            try:
+                path, content_type = fw_textures.texture_file(
+                    fw_dir(), (query.get('style') or [''])[0], (query.get('key') or [''])[0])
+                with open(path, 'rb') as stream:
+                    data = stream.read()
+            except (ValueError, TypeError, OSError) as error:
+                self._json({'ok': False, 'error': str(error)}, 404)
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         elif route == 'pipeline/providers':
             cfg = read_json(CONFIG_FILE, {}) or {}
             if not isinstance(cfg, dict):
@@ -1181,10 +1213,41 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 self._json({'ok': True, 'graph': result_graph, 'task': task})
             except (ValueError, TypeError, RuntimeError, OSError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
+        elif route == 'materials/texture/submit':
+            b = body or {}
+            try:
+                if not self._same_loopback_origin():
+                    raise ValueError('贴图生成仅允许 Forgeworks 本地同源页面发起')
+                if b.get('confirmRemote') is not True:
+                    raise ValueError('需要用户明确确认可能产生 Provider 费用')
+                result = fw_textures.submit_many(
+                    fw_providers, read_json(CONFIG_FILE, {}) or {}, fw_dir(),
+                    b.get('styleId'), b.get('keys'), b.get('styleHint') or '',
+                    b.get('size') or '1K', bool(b.get('force')))
+                push_event('texture.progress', {'styleId': b.get('styleId'), 'submitted': result['submitted']})
+                self._json({'ok': True, **result})
+            except (ValueError, TypeError, RuntimeError) as error:
+                self._json({'ok': False, 'error': str(error)}, 400)
+        elif route == 'materials/texture/poll':
+            b = body or {}
+            try:
+                if not self._same_loopback_origin():
+                    raise ValueError('贴图任务仅允许 Forgeworks 本地同源页面查询')
+                catalog, item = fw_textures.poll_one(
+                    fw_providers, read_json(CONFIG_FILE, {}) or {}, fw_dir(),
+                    b.get('styleId'), b.get('key'))
+                push_event('texture.progress', {'styleId': b.get('styleId'), 'key': b.get('key'),
+                                                'state': item.get('state'), 'progress': item.get('progress')})
+                self._json({'ok': True, 'catalog': catalog, 'item': item})
+            except (ValueError, TypeError, RuntimeError, OSError) as error:
+                self._json({'ok': False, 'error': str(error)}, 400)
         else:
             self._json({'ok': False, 'error': 'unknown route: %s' % route}, 404)
 
     # ---- helpers ----
+    def _query(self):
+        return parse_qs(urlparse(self.path).query)
+
     def _read_body(self):
         try:
             n = int(self.headers.get('Content-Length') or 0)

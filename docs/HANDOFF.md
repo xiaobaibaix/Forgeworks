@@ -52,6 +52,7 @@
 | Q3 | 本机 Tripo 输出有 GLB 格式/体积检查 | Blender 减面、PBR 风格重染、真实 GLB 门禁与最终同步 manifest 导出尚未实现 |
 | Q4 | 重跑 Provider 节点会保留 taskId 命名的历史输出文件和任务记录 | 图上版本选取/并排对比与回滚 UI 尚未实现 |
 | Q5 | 机器/物品/图标模板已分开；批量预估入口按当前公开价目计算 image/3D credits 与 USD 区间 | 单价会变；估算不是实时报价，最终以 Provider 返回的 credits_consumed 为准；尚未实现批量队列运行 |
+| 材质贴图（AI） | 8 类材质的中性灰贴图生成、目录缓存、同步页管理 UI、3D 预览按材质映射、GLB 内嵌贴图均已实现；`tests/test_textures.py` 通过 | 未配置 Tripo key，未发出真实生成请求；GLB 内嵌用本地注入的 CanvasTexture 验证（1 image / 5 materials 全部带 baseColorTexture） |
 
 运行时安全约束：API key 只放在 gitignore 的 `tools/bridge_config.json`；Provider 配置状态接口只返回是否配置；远程提交需二次确认。运行手动任务查询会联网，但不会新建生成任务。
 
@@ -472,3 +473,55 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - 用户明确禁止未授权提交；交接文档原 §8 中建议提交的命令不适用，所有更改留在工作区，未提交、未推送。
 - 后续只读代码审查发现并修正：EEVEE 引擎标识按 Blender 可用枚举兼容选择；后台任务绑定提交时的项目根目录，manifest 网格哈希匹配后才替换正式缩略图，异常会记录失败并继续消费队列；同步面板转义来自 Bridge/manifest 的动态文本，避免 HTML 注入；行级导出共用批量导出的忙碌锁；缩略图缓存键改用文件哈希。
 - 复验：`python3 tests/test_fw_blender.py -v` 在提权环境 2/2 通过（普通沙箱不允许绑定回环端口且 Blender Metal 初始化会崩溃）；Node/Python 语法检查和 `git diff --check` 通过；浏览器冒烟页 48/48、runtimeErrors 0。恶意 HTML 字符串验证以文本显示，未创建注入节点、未执行事件处理器。
+
+## 13. 材质贴图（AI）通道（2026-10-21）
+
+**目的**：GLB 原先只有 5 个纯色 PBR 材质槽（`images: 0 / textures: 0`）。本期给每类材质生成一张细节贴图，导出时内嵌进 GLB；颜色仍由风格色板决定。
+
+- `tools/fw_textures.py`：8 类材质规格（`concrete / steel / steelDark / steelLite / glass / rust / clean / ceramic`）、中性灰提示词、目录读写（`_Source/Materials/<风格>/textures.json`）、提交/轮询/落盘、路径与体积校验（单张 ≤ 20 MB）。
+- `tools/bridge.py`：`GET materials/textures`、`GET materials/texture/file`、`POST materials/texture/submit`、`POST materials/texture/poll`。提交要求同源回环 + `confirmRemote:true`，并推 `texture.progress` SSE。
+- `js/engines/material-textures.js`：拉取目录、把 AI 图压成中性明度（`fwNeutralCanvas`）、派生粗糙度、装载为 `THREE.CanvasTexture`（JPEG 内嵌）。同一套图可被任何风格复用。
+- `js/engines/viewer3d.js`：材质按 `mat.key` 挂 `map` / `roughnessMap`；目录异步到达后 `applyTextures()` 刷新，导出前在 `syncExportMachine` 等 `fwTexturesReady()`，GLTFExporter 才能把已解码的贴图写进 GLB。
+- `js/views/sync.js`：新增「材质贴图（AI）」卡片——逐材质状态、缩略图、生成/重新生成、生成全部缺失；有排队/生成中任务时每 3 秒轮询一次。
+- 启用方式：`tools/bridge_config.json` 写入 `providers.tripo.api_key`，重启 Bridge。未配置时卡片显示指引并禁用生成按钮。
+- `tests/test_textures.py`：9 项通过（目录归一化/丢未知键/丢文件、路径穿越拒绝、提示词、提交去重与 force、轮询成功/失败落盘、文件端点）。
+- 验证边界：未配置 key，未发真实生成请求；GLB 内嵌用页面内注入的 64×64 CanvasTexture 验证——1 image、1 texture、5 个材质全部带 `baseColorTexture`，`mimeType: image/jpeg`。
+
+## 14. 资产七方面 + 图层化预览 + 管线阶段（2026-10-21）
+
+**用户要求**：白模（几何）、材质、UV、LOD、碰撞体、动画、元数据这七项，既要在生成管线里各是一个阶段，也要在 3D 展示里逐项可见、可开关（例如临时去掉材质、去掉法线贴图）。
+
+**新增 `js/engines/asset-layers.js`**（`index.html` 与 `tests/smoke.html` 都要在 `viewer3d.js` 之前加载）：
+
+- `normalizeLayers()` / `fwLodPlan()` / `fwCollisionBox()` / `fwAssetAspects()` / `fwLayerSummary()`。
+- LOD 是确定性的“按部件体积隐藏”预览：L1 藏 35%、L2 藏 60%，导出恒为 L0。
+- 碰撞盒由 footprint + 自动高度（`collisionHeight` 可覆盖）生成，不参与渲染导出。
+
+**`js/engines/viewer3d.js`**：
+
+- 预览态 `state.layers`（clay / albedo / roughness / normal / wireframe / uv / collision / particles / animations / lod / collisionHeight）只影响显示；`baseMaterial` 保真材质，`exportMaterial(entry)` 在导出时重建真材质，所以任何图层开关都不会污染 GLB。
+- 新增浮动「资产图层」面板、LOD 三档下拉、碰撞高度输入，以及顶部的七方面摘要条；API 增加 `getLayers / setLayer / getLodInfo / getAspects / getCollision`。
+- GLB `extras.forgeworks` 增写 `uv / lod / collision / layers`。
+- 顺带修复既有导出 Bug：按部件覆盖材质时桶键是 `role + '_' + id`，旧代码写死 `buckets[role]` 会抛错。
+
+**`js/pipeline.js` + `tools/fw_pipeline.py`**：
+
+- 起始图扩为 11 节点：`prompt → image → model → style → uv → lod → collision → animation → metadata → validate → export`。
+- `PIPELINE_LOCAL_STAGES = ['uv','lod','collision','animation','metadata']`，浏览器端用 `fwAssetAspects()` 推导并写 `source: 'forgeworks-ui'`。
+- Python 无法复算浏览器签名，因此 `save_graph` / `execute_local` 对 `source == 'forgeworks-ui' && state == 'done'` 的结果原样保留；未推导时该节点标 `blocked` 并提示回工具里运行。
+- 节点卡显示阶段摘要（UV 通道 / LOD 三档件数 / 碰撞尺寸 / 动画部件与类型 / 元数据格式）。
+
+**`tools/fw_blender.py` + 测试**：
+
+- 报告新增 `uvPresent / uvLayers / imageCount / images / materialDetails / normalMapSlots / animationCount / forgeworks`；缺 UV 不判失败。
+- 新增 `tests/test_fw_pipeline.py`（3 项），`tests/test_fw_blender.py` 补七方面断言。
+
+**验证**：Python 21 项通过；冒烟页 54/54、runtimeErrors 0；浏览器实测管线 11 节点，运行后五个本地阶段 `done`（如 `L0 20 件 / L1 14 件 / L2 9 件`、`2×2.886×2 m`、`3 件 · pulse、spin、bob`），远程节点在 Bridge 离线时按预期 `blocked`。版本戳 `?v=20261021zzzc`。未提交。
+
+### 端口与拖拽连线（同日补充）
+
+- 端口表抽成 `PIPELINE_PORTS`（`js/pipeline.js`），与 Python `NODE_TYPES` 一一对应；节点卡两侧渲染圆点，左侧输入、右侧输出。
+- 连线路由：输出圆点 `pointerdown` 起线 → 跟随鼠标 → 松开在输入圆点（或目标卡片任意位置，自动选第一个兼容端口）。拖拽中高亮所有同类型输入端口，`Esc` 取消。
+- 语义：**一个输出可接多个下游**（fan-out，JS 与 Python 均允许）；**一个输入端口只保留一条连线**，新连线替换旧的；自连和成环在客户端直接拒绝（`pipelineReachable`），不再等 Bridge 报错。
+- 连线端点按端口几何计算（`pipelineEdgePath`），替代原先写死的 `+225/+75`；原来的下拉框已移除。
+- 验证：浏览器实测拖拽 `uv → collision`（替换原 `lod → collision`）、`uv` 同时连 `lod` 与 `collision`（多输出）、拖到卡片空白处、`Esc` 取消、不兼容端口拒绝均符合预期；冒烟页新增 1 项「流水线端口：多输出与单输入替换」，55/55。版本戳 `?v=20261021a`。未提交。

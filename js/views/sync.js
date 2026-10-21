@@ -117,6 +117,20 @@ function renderSync(){
     </div>
 
     <div class="card">
+      <h3>材质贴图（AI）</h3>
+      <p class="hint">
+        每个材质一张中性灰度细节图，导出 GLB 时作为贴图内嵌；颜色仍由风格色板决定，同一套贴图可被所有风格复用。
+        生成走 Tripo <code>seedream_v5</code>（1K），按张计费；结果缓存在 <code>_Source/Materials/&lt;风格&gt;/</code>。
+      </p>
+      <div id="syTexNotice"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="primary" id="syTexAll">生成全部缺失</button>
+        <button id="syTexRefresh">刷新目录</button>
+      </div>
+      <div id="syTextures" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
       <h3>资产明细</h3>
       <div id="syTable" style="margin-top:6px"></div>
     </div>
@@ -151,6 +165,18 @@ function renderSync(){
   renderSyncConflicts();
   renderSyncUETable();
   renderSyncLog();
+
+  /* ---------- 材质贴图 ---------- */
+  _loadTexturePanel();
+  const texAll = document.getElementById('syTexAll');
+  if(texAll) texAll.onclick = ()=>_submitTextures(_missingTextureKeys());
+  const texRefresh = document.getElementById('syTexRefresh');
+  if(texRefresh) texRefresh.onclick = async ()=>{
+    texRefresh.disabled = true;
+    await syncLoadTextures(true);
+    renderSyncTextures();
+    texRefresh.disabled = false;
+  };
 
   /* ---------- 绑定 ---------- */
   const bindBtn = document.getElementById('syBind');
@@ -381,6 +407,153 @@ function renderSyncTable(){
       _doExport([b.dataset.syex]);
     };
   });
+}
+
+/* ---------- 材质贴图 ---------- */
+
+let _texPollTimer = null;
+
+function _texCatalog(){
+  return (typeof FW_TEX !== 'undefined') ? FW_TEX.catalog : null;
+}
+
+function _texSpecs(){
+  const catalog = _texCatalog();
+  return catalog && Array.isArray(catalog.specs) ? catalog.specs : [];
+}
+
+function _texItem(key){
+  const catalog = _texCatalog();
+  return (catalog && catalog.items && catalog.items[key]) || null;
+}
+
+function _texActiveKeys(){
+  return _texSpecs().map(spec=>spec.key).filter(key=>{
+    const item = _texItem(key);
+    return item && (item.state === 'queued' || item.state === 'running');
+  });
+}
+
+function _missingTextureKeys(){
+  return _texSpecs().map(spec=>spec.key).filter(key=>{
+    const item = _texItem(key);
+    return !item || ['none', 'failed', 'missing'].indexOf(item.state || 'none') >= 0;
+  });
+}
+
+async function _loadTexturePanel(){
+  const el = document.getElementById('syTextures');
+  if(!el) return;
+  if(!_texCatalog()) el.innerHTML = '<span class="hint">读取贴图目录…</span>';
+  await syncLoadTextures(false);
+  renderSyncTextures();
+  _scheduleTexturePoll();
+}
+
+function renderSyncTextures(){
+  const el = document.getElementById('syTextures');
+  if(!el) return;
+  const catalog = _texCatalog();
+  const notice = document.getElementById('syTexNotice');
+  if(!catalog){
+    if(notice) notice.innerHTML = '';
+    el.innerHTML = '<span class="hint">未能读取贴图目录（Bridge 离线、未绑定项目或请求失败）。</span>';
+    return;
+  }
+  if(notice){
+    notice.innerHTML = catalog.providerReady
+      ? `<div style="font-size:11px;color:var(--text-3);margin-top:6px">缓存目录：<code>${syncEscape(catalog.dir)}</code></div>`
+      : `<div class="issue warn" style="margin-top:8px"><span class="ic">!</span><div>
+          贴图生成未配置。把 Tripo API Key 写进 <code>tools/bridge_config.json</code> 的
+          <code>providers.tripo.api_key</code>，重启 Bridge 后再生成。
+        </div></div>`;
+  }
+  const allButton = document.getElementById('syTexAll');
+  if(allButton) allButton.disabled = !catalog.providerReady || !_missingTextureKeys().length;
+
+  const meta = {
+    ready:   { label:'已生成',  color:'var(--accent)' },
+    queued:  { label:'排队中',  color:'var(--text-2)' },
+    running: { label:'生成中',  color:'var(--amber)' },
+    failed:  { label:'失败',    color:'var(--red)' },
+    missing: { label:'文件缺失', color:'var(--red)' },
+    none:    { label:'未生成',  color:'var(--text-3)' },
+  };
+  const specs = _texSpecs();
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px">
+    ${specs.map(spec=>{
+      const item = _texItem(spec.key) || {};
+      const state = item.state || 'none';
+      const view = meta[state] || meta.none;
+      const busy = state === 'queued' || state === 'running';
+      const thumb = state === 'ready' && item.file && typeof fwTextureUrl === 'function'
+        ? `<img src="${fwTextureUrl(catalog.styleId, spec.key, item)}" alt="${syncEscape(spec.name)}贴图"
+               style="width:52px;height:52px;object-fit:cover;border:1px solid var(--border);border-radius:6px;background:var(--panel-2)">`
+        : `<span style="display:flex;align-items:center;justify-content:center;width:52px;height:52px;
+               border:1px dashed var(--border);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--text-3)">
+             ${state === 'running' ? (Number(item.progress) || 0) + '%' : state === 'queued' ? '排队' : '—'}</span>`;
+      const button = busy
+        ? '<button class="sm" disabled>生成中</button>'
+        : state === 'ready'
+          ? `<button class="sm" data-tex="${syncEscape(spec.key)}" data-force="1" ${catalog.providerReady ? '' : 'disabled'}>重新生成</button>`
+          : `<button class="sm" data-tex="${syncEscape(spec.key)}" ${catalog.providerReady ? '' : 'disabled title="需要配置 Tripo API Key"'}>生成</button>`;
+      return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px;border:1px solid var(--border);border-radius:8px">
+        ${thumb}
+        <div style="min-width:0;flex:1">
+          <div style="font-size:12px;font-weight:600">${syncEscape(spec.name)}</div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text-3)">${syncEscape(spec.key)}</div>
+          <div style="font-size:10.5px;color:${view.color};margin-top:3px" ${item.error ? `title="${syncEscape(item.error)}"` : ''}>
+            ${view.label}${state === 'ready' && item.size ? ' · ' + Math.round(item.size / 1024) + ' KB' : ''}
+          </div>
+          <div style="margin-top:6px">${button}</div>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+
+  el.querySelectorAll('[data-tex]').forEach(button=>{
+    button.onclick = ()=>_submitTextures([button.dataset.tex], button.dataset.force === '1');
+  });
+}
+
+async function _submitTextures(keys, force){
+  if(!keys || !keys.length){ toast('没有需要生成的贴图'); return; }
+  const names = keys.map(key=>{
+    const spec = _texSpecs().find(item=>item.key === key);
+    return spec ? spec.name : key;
+  }).join('、');
+  if(!window.confirm(`将调用 Tripo 生成 ${keys.length} 张材质贴图（${names}），可能产生费用。继续？`)) return;
+  try{
+    const result = await syncSubmitTextures(keys, force);
+    if(!result || !result.ok){
+      syncLog('贴图生成失败：' + ((result && result.error) || '未知错误'), 'warn');
+      toast('贴图生成失败：' + ((result && result.error) || '未知错误'));
+      return;
+    }
+    const submitted = (result.submitted || []).length;
+    syncLog(`已提交 ${submitted} 张材质贴图` +
+            (submitted < keys.length ? `（${keys.length - submitted} 张已存在或进行中）` : ''), 'ok');
+    renderSyncTextures();
+    _scheduleTexturePoll();
+  }catch(error){
+    syncLog('贴图生成失败：' + error.message, 'warn');
+    toast('贴图生成失败：' + error.message);
+  }
+}
+
+function _scheduleTexturePoll(){
+  if(_texPollTimer){ clearTimeout(_texPollTimer); _texPollTimer = null; }
+  if(!_texActiveKeys().length) return;
+  _texPollTimer = setTimeout(async ()=>{
+    _texPollTimer = null;
+    if(!document.getElementById('syTextures')) return;
+    const keys = _texActiveKeys();
+    for(let i = 0; i < keys.length; i++){
+      try{ await syncPollTexture(keys[i]); }catch(error){ /* 单张失败不影响其余 */ }
+    }
+    renderSyncTextures();
+    _scheduleTexturePoll();
+  }, 3000);
 }
 
 /* ---------- 日志 ---------- */

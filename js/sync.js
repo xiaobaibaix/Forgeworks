@@ -206,6 +206,41 @@ function machineSyncState(m){
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
+/* ---------- 材质贴图 ---------- */
+
+async function syncLoadTextures(force){
+  if(!SYNC.online || typeof fwReloadTextures !== 'function') return null;
+  return fwReloadTextures(!!force);
+}
+
+async function syncSubmitTextures(keys, force){
+  if(!SYNC.online) return { ok:false, error:'Bridge 不在线' };
+  const st = getStyle();
+  const r = await syncApi('materials/texture/submit', {
+    styleId: st.id,
+    keys: keys,
+    force: !!force,
+    size: '1K',
+    confirmRemote: true,
+    styleHint: [st.name, st.tagline, st.eraHint].filter(Boolean).join('；'),
+  });
+  if(r && r.ok) await syncLoadTextures(true);
+  return r;
+}
+
+async function syncPollTexture(key){
+  if(!SYNC.online) return { ok:false, error:'Bridge 不在线' };
+  const styleId = getStyle().id;
+  const r = await syncApi('materials/texture/poll', { styleId: styleId, key: key });
+  if(r && r.ok && r.catalog && r.catalog.items && typeof FW_TEX !== 'undefined' && FW_TEX.catalog){
+    FW_TEX.catalog.items = r.catalog.items;
+  }
+  if(r && r.ok && r.item && r.item.state === 'ready' && typeof fwLoadTextureItem === 'function'){
+    await fwLoadTextureItem(styleId, key, r.item);
+  }
+  return r;
+}
+
 /* ---------- 导出 ---------- */
 
 function bufToB64(buf){
@@ -231,6 +266,8 @@ async function syncExportMachine(id, opt){
   if(!haveThree()) return { ok:false, error:'three.js 未加载' };
 
   // 1. 离屏生成 GLB（复用 3D 预览的完整管线，含风格材质与合并）
+  //    贴图必须先解码完成，GLTFExporter 只会把已加载的 texture.image 写进 GLB。
+  if(typeof fwTexturesReady === 'function') await fwTexturesReady();
   const cv = document.createElement('canvas');
   cv.width = 64; cv.height = 64;
   let V = null;
@@ -277,6 +314,7 @@ async function syncExportMachine(id, opt){
       style: { presetId: st.id, name: st.name,
                accent: accentFor(m.cat, st) },
       gate: gate,
+      textures: typeof FW_TEX !== 'undefined' ? Object.keys(FW_TEX.items) : [],
       contentHash: machineContentHash(m),
       styleHash: machineStyleHash(m),
     },
@@ -342,6 +380,7 @@ function syncLog(msg, level){
   if(SYNC.log.length > 60) SYNC.log.length = 60;
 }
 function syncLogEvent(ev){
+  if(ev.kind === 'texture.progress') return;   // 进度已在贴图面板实时显示
   const map = {
     'project.bound':   ['已绑定项目', 'ok'],
     'project.unbound': ['已解除绑定', 'info'],

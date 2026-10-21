@@ -14,12 +14,20 @@ NODE_TYPES = {
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
     'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'styleApply': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
+    'uv': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
+    'lod': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
+    'collision': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
+    'animation': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
+    'metadata': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'validate': {'in': {'mesh': 'mesh'}, 'out': {'report': 'report'}},
     'manualEdit': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'variant': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'imageExport': {'in': {'image': 'image'}, 'out': {}},
     'export': {'in': {'mesh': 'mesh', 'report': 'report'}, 'out': {}},
 }
+
+
+LOCAL_STAGE_TYPES = ('uv', 'lod', 'collision', 'animation', 'metadata')
 
 
 def _digest(value):
@@ -116,7 +124,9 @@ def save_graph(forgeworks_root, asset_id, graph):
         param_hash = _digest({'type': node['type'], 'params': node.get('params', {})})
         signature = _digest([input_hash, param_hash])
         old = node.get('result') or {}
-        state = 'done' if old.get('signature') == signature and old.get('state') == 'done' else 'dirty'
+        # 本地阶段由浏览器端推导，签名无法在 Python 侧复算，按来源标记保留
+        ui_derived = old.get('source') == 'forgeworks-ui' and old.get('state') == 'done'
+        state = 'done' if ui_derived or (old.get('signature') == signature and old.get('state') == 'done') else 'dirty'
         node['result'] = dict(old, state=state, signature=signature, inputHash=input_hash, paramHash=param_hash)
         previous[node_id] = signature
     with open(tmp, 'w', encoding='utf-8') as stream:
@@ -152,6 +162,11 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False):
             node.setdefault('result', {})['state'] = 'done'
             node['result']['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
             node['result']['output'] = {'text': str(node.get('params', {}).get('text', ''))[:12000]}
+        elif node['type'] in LOCAL_STAGE_TYPES:
+            result = node.setdefault('result', {})
+            if not (result.get('source') == 'forgeworks-ui' and result.get('state') == 'done'):
+                result['state'] = 'blocked'
+                result['error'] = '该阶段由 Forgeworks 浏览器端资产图层推导；请在工具里运行此节点'
         elif node['type'] == 'imageExport':
             edge = next((item for item in graph['edges'] if item.get('to') == node_id and item.get('in') == 'image'), None)
             source = by_id.get(edge.get('from')) if edge else None
@@ -179,19 +194,29 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False):
 
 def starter_graph(asset_id, template='machine'):
     nodes = [
-        {'id': 'prompt', 'type': 'prompt', 'x': 80, 'y': 100, 'params': {'text': ''}},
-        {'id': 'image', 'type': 'textToImage', 'x': 340, 'y': 100, 'params': {'provider': 'tripo'}},
-        {'id': 'model', 'type': 'imageTo3D', 'x': 600, 'y': 100, 'params': {'provider': 'tripo', 'texture': False}},
-        {'id': 'style', 'type': 'styleApply', 'x': 860, 'y': 100, 'params': {}},
-        {'id': 'validate', 'type': 'validate', 'x': 1120, 'y': 100, 'params': {'maxTriangles': 20000}},
-        {'id': 'export', 'type': 'export', 'x': 1380, 'y': 100, 'params': {}},
+        {'id': 'prompt', 'type': 'prompt', 'x': 60, 'y': 100, 'params': {'text': ''}},
+        {'id': 'image', 'type': 'textToImage', 'x': 300, 'y': 100, 'params': {'provider': 'tripo'}},
+        {'id': 'model', 'type': 'imageTo3D', 'x': 540, 'y': 100, 'params': {'provider': 'tripo', 'texture': False}},
+        {'id': 'style', 'type': 'styleApply', 'x': 780, 'y': 100, 'params': {}},
+        {'id': 'uv', 'type': 'uv', 'x': 1020, 'y': 100, 'params': {'mode': 'primitive'}},
+        {'id': 'lod', 'type': 'lod', 'x': 1260, 'y': 100, 'params': {'levels': 3}},
+        {'id': 'collision', 'type': 'collision', 'x': 1500, 'y': 100, 'params': {'type': 'box'}},
+        {'id': 'animation', 'type': 'animation', 'x': 1740, 'y': 100, 'params': {'mode': 'ue-rebuild'}},
+        {'id': 'metadata', 'type': 'metadata', 'x': 1980, 'y': 100, 'params': {'formats': ['csv', 'json']}},
+        {'id': 'validate', 'type': 'validate', 'x': 2220, 'y': 100, 'params': {'maxTriangles': 20000}},
+        {'id': 'export', 'type': 'export', 'x': 2460, 'y': 100, 'params': {}},
     ]
     edges = [{'from': 'prompt', 'out': 'text', 'to': 'image', 'in': 'text'},
              {'from': 'image', 'out': 'image', 'to': 'model', 'in': 'image'},
              {'from': 'model', 'out': 'mesh', 'to': 'style', 'in': 'mesh'},
-             {'from': 'style', 'out': 'mesh', 'to': 'validate', 'in': 'mesh'},
+             {'from': 'style', 'out': 'mesh', 'to': 'uv', 'in': 'mesh'},
+             {'from': 'uv', 'out': 'mesh', 'to': 'lod', 'in': 'mesh'},
+             {'from': 'lod', 'out': 'mesh', 'to': 'collision', 'in': 'mesh'},
+             {'from': 'collision', 'out': 'mesh', 'to': 'animation', 'in': 'mesh'},
+             {'from': 'animation', 'out': 'mesh', 'to': 'metadata', 'in': 'mesh'},
+             {'from': 'metadata', 'out': 'mesh', 'to': 'validate', 'in': 'mesh'},
              {'from': 'validate', 'out': 'report', 'to': 'export', 'in': 'report'},
-             {'from': 'style', 'out': 'mesh', 'to': 'export', 'in': 'mesh'}]
+             {'from': 'metadata', 'out': 'mesh', 'to': 'export', 'in': 'mesh'}]
     if template == 'icon':
         nodes = [nodes[0], nodes[1], {'id': 'imageExport', 'type': 'imageExport', 'x': 600, 'y': 100, 'params': {}}]
         edges = [{'from': 'prompt', 'out': 'text', 'to': 'image', 'in': 'text'},

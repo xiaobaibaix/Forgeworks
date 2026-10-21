@@ -62,10 +62,10 @@ const MATERIAL_PRESETS = {
 
 function resolveMaterial(role, accentColor, presetKey){
   if(role === 'accent'){
-    return { name:'强调色', color:accentColor, metal:0.45, rough:0.40, emissive:0.12, alpha:1, pattern:'none' };
+    return { name:'强调色', key:'accent', color:accentColor, metal:0.45, rough:0.40, emissive:0.12, alpha:1, pattern:'none' };
   }
   // 容错：如果 role 其实是材质名（历史上误用过），直接用该材质，避免静默回退
-  if(!ROLE_MAT[role] && MATERIALS[role]) return MATERIALS[role];
+  if(!ROLE_MAT[role] && MATERIALS[role]) return Object.assign({ key:role }, MATERIALS[role]);
 
   // presetKey 可能是「风格 id」，也可能是旧体系的「材质方案名」
   let map = null;
@@ -77,8 +77,8 @@ function resolveMaterial(role, accentColor, presetKey){
 
   const key = map[role] || ROLE_MAT[role] || 'steel';
   const base = MATERIALS[key] || MATERIALS.steel;
-  if(role === 'glow') return Object.assign({}, base, { color: accentColor, emissive: 1.0 });
-  return base;
+  if(role === 'glow') return Object.assign({ key:key }, base, { color: accentColor, emissive: 1.0 });
+  return Object.assign({ key:key }, base);
 }
 
 /* ============================================================
@@ -562,6 +562,7 @@ function createViewer3D(canvas, machine){
     disposed: false,
     needsRender: true,
     particles: [],
+    layers: (typeof fwLayersOf === 'function') ? fwLayersOf(machine) : {},
   };
 
   let geo = buildMachineParts(machine, state.preset);
@@ -638,6 +639,17 @@ function createViewer3D(canvas, machine){
   if(edgeLine.computeLineDistances) edgeLine.computeLineDistances();
   scene.add(edgeLine);
 
+  /* ---------- 碰撞盒（footprint 自动派生） ---------- */
+  const collisionGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+  const collisionMat = new THREE.LineBasicMaterial({ color:0xe8523d, transparent:true, opacity:0.9 });
+  const collisionBox = new THREE.LineSegments(collisionGeo, collisionMat);
+  collisionBox.visible = false;
+  collisionBox.renderOrder = 999;
+  scene.add(collisionBox);
+
+  // 粒子对象要在首次 applyLayers 之前声明，否则命中小let的暂时性死区
+  let emberPoints = null, smokePoints = null, emberPos = null, smokePos = null;
+
   /* ---------- 几何体工厂 ---------- */
   const geoCache = {};
   function partGeometry(p){
@@ -668,8 +680,14 @@ function createViewer3D(canvas, machine){
 
   function makeThreeMaterial(mat){
     const c = new THREE.Color(mat.color);
+    const tex = (typeof fwTextureFor === 'function') ? fwTextureFor(mat.key) : null;
+    const roughTex = (typeof fwRoughnessFor === 'function') ? fwRoughnessFor(mat.key) : null;
+    const normalTex = (typeof fwNormalFor === 'function') ? fwNormalFor(mat.key) : null;
     return new THREE.MeshStandardMaterial({
       color: c,
+      map: tex || null,
+      roughnessMap: roughTex || null,
+      normalMap: normalTex || null,
       metalness: mat.metal,
       roughness: mat.rough,
       emissive: mat.emissive > 0 ? c.clone() : new THREE.Color(0x000000),
@@ -735,16 +753,35 @@ function createViewer3D(canvas, machine){
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       group.add(mesh);
-      meshes.push({
-        mesh: mesh, part: p, role: p.role, id: p.partId,
+      const entry = {
+        mesh: mesh, part: p, role: p.role, id: p.partId, matKey: p.mat.key,
         baseMaterial: mat.clone(),
+        lodHidden: false,
+        entryHidden: !!(override && override.hidden),
         base: {
           pos: mesh.position.clone(),
           rot: mesh.rotation.clone(),
           quat: mesh.quaternion.clone(),
         },
-      });
+      };
+      snapshotStyle(entry);
+      meshes.push(entry);
     });
+  }
+
+  /** 记录「真实材质」快照：图层开关都从它还原，白模/线框不会污染导出 */
+  function snapshotStyle(entry){
+    const mat = entry.mesh.material;
+    entry.style = {
+      color: '#' + mat.color.getHexString(),
+      metalness: mat.metalness,
+      roughness: mat.roughness,
+      emissive: mat.emissive ? '#' + mat.emissive.getHexString() : '#000000',
+      emissiveIntensity: mat.emissiveIntensity || 0,
+      opacity: mat.opacity,
+      transparent: !!mat.transparent,
+    };
+    entry.styleColor = new THREE.Color(entry.style.color);
   }
 
   function applyPartOverride(mesh, part, override){
@@ -762,7 +799,11 @@ function createViewer3D(canvas, machine){
     const material = override.material || {};
     if(material.color) mesh.material.color.set(material.color);
     if(material.textureData && THREE.TextureLoader){
-      mesh.material.map = new THREE.TextureLoader().load(material.textureData, function(){ mesh.material.needsUpdate = true; });
+      mesh.material.map = new THREE.TextureLoader().load(material.textureData, function(){
+        mesh.userData.fwOverrideMap = mesh.material.map;
+        mesh.material.needsUpdate = true;
+      });
+      mesh.userData.fwOverrideMap = mesh.material.map;
     }
     if(Number.isFinite(material.metallic)) mesh.material.metalness = material.metallic;
     if(Number.isFinite(material.roughness)) mesh.material.roughness = material.roughness;
@@ -774,6 +815,120 @@ function createViewer3D(canvas, machine){
     }
   }
   buildMeshes();
+
+  /** 贴图异步到达后刷新真实材质，再按当前图层状态重算显示 */
+  function applyTextures(){
+    for(let i=0;i<meshes.length;i++){
+      const entry = meshes[i];
+      entry.baseMaterial.map = (typeof fwTextureFor === 'function') ? fwTextureFor(entry.matKey) : null;
+      entry.baseMaterial.roughnessMap = (typeof fwRoughnessFor === 'function') ? fwRoughnessFor(entry.matKey) : null;
+      entry.baseMaterial.normalMap = (typeof fwNormalFor === 'function') ? fwNormalFor(entry.matKey) : null;
+      entry.baseMaterial.needsUpdate = true;
+    }
+    applyLayers();
+  }
+
+  /** 把当前图层状态落到材质/可见性上（只改显示，不改 baseMaterial） */
+  function applyLayers(){
+    const layers = state.layers;
+    const clay = !!layers.clay;
+    const uvChecker = !!layers.uv && typeof fwUvCheckerTexture === 'function' ? fwUvCheckerTexture() : null;
+    for(let i=0;i<meshes.length;i++){
+      const entry = meshes[i];
+      const mat = entry.mesh.material;
+      if(!mat) continue;
+      const style = entry.style || {};
+      const overridden = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[entry.id];
+      const ownTexture = !!(overridden && overridden.material && overridden.material.textureData);
+
+      if(clay){
+        mat.color.set(0xb9b7b2);
+        mat.metalness = 0.02;
+        mat.roughness = 0.86;
+        mat.emissive.setHex(0x000000);
+        mat.emissiveIntensity = 0;
+        mat.opacity = 1;
+        mat.transparent = false;
+      }else{
+        mat.color.set(style.color || '#888888');
+        mat.metalness = Number(style.metalness) || 0;
+        mat.roughness = style.roughness == null ? 0.6 : style.roughness;
+        mat.emissive.set(style.emissive || '#000000');
+        mat.emissiveIntensity = style.emissiveIntensity || 0;
+        mat.opacity = style.opacity == null ? 1 : style.opacity;
+        mat.transparent = !!style.transparent;
+      }
+
+      if(uvChecker){
+        mat.map = uvChecker;
+        mat.roughnessMap = null;
+        mat.normalMap = null;
+        mat.metalness = 0.02;
+        mat.roughness = 0.9;
+      }else if(clay){
+        mat.map = null;
+        mat.roughnessMap = null;
+        mat.normalMap = null;
+      }else{
+        const ownMap = ownTexture ? (entry.mesh.userData.fwOverrideMap || null) : null;
+        mat.map = layers.albedo ? (ownMap || entry.baseMaterial.map || null) : null;
+        mat.roughnessMap = layers.roughness ? (entry.baseMaterial.roughnessMap || null) : null;
+        mat.normalMap = layers.normal ? (entry.baseMaterial.normalMap || null) : null;
+      }
+      mat.wireframe = !!layers.wireframe;
+      mat.needsUpdate = true;
+    }
+    applyLod();
+    applyCollision();
+    if(emberPoints) emberPoints.visible = !!layers.particles;
+    if(smokePoints) smokePoints.visible = !!layers.particles;
+    state.needsRender = true;
+  }
+
+  function applyLod(){
+    const level = Math.max(0, Math.min(2, Number(state.layers.lod) || 0));
+    let hidden = null;
+    if(level > 0 && typeof fwLodPlan === 'function'){
+      const plan = fwLodPlan(machine, state.preset);
+      hidden = plan.levels[level] ? plan.levels[level].hidden : null;
+    }
+    for(let i=0;i<meshes.length;i++){
+      const entry = meshes[i];
+      entry.lodHidden = !!(hidden && hidden.has(entry.id));
+      entry.mesh.visible = !entry.entryHidden && !entry.lodHidden;
+    }
+  }
+
+  /** 导出材质始终是「真实材質 + 部件覆盖」，不受白模/线框/贴图开关影响 */
+  function exportMaterial(entry){
+    const mat = entry.baseMaterial.clone();
+    const override = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[entry.id];
+    const own = override && override.material;
+    if(own){
+      if(own.color) mat.color.set(own.color);
+      if(Number.isFinite(own.metallic)) mat.metalness = own.metallic;
+      if(Number.isFinite(own.roughness)) mat.roughness = own.roughness;
+      if(Number.isFinite(own.emissive)){ mat.emissive.copy(mat.color); mat.emissiveIntensity = own.emissive; }
+      if(Number.isFinite(own.alpha)){ mat.opacity = own.alpha; mat.transparent = own.alpha < 1; }
+      if(own.textureData && entry.mesh.userData.fwOverrideMap) mat.map = entry.mesh.userData.fwOverrideMap;
+    }
+    mat.wireframe = false;
+    return mat;
+  }
+
+  function applyCollision(){
+    if(typeof fwCollisionBox !== 'function'){ collisionBox.visible = false; return; }
+    const box = fwCollisionBox(machine, state.layers.collisionHeight);
+    if(!box){ collisionBox.visible = false; return; }
+    collisionBox.scale.set(box.w, box.h, box.d);
+    collisionBox.position.set(0, box.h / 2, 0);
+    collisionBox.visible = !!state.layers.collision;
+    state.needsRender = true;
+  }
+  const offTextures = (typeof fwOnTexturesChanged === 'function')
+    ? fwOnTexturesChanged(function(){ applyTextures(); })
+    : null;
+  if(typeof fwReloadTextures === 'function') fwReloadTextures(false);
 
   /**
    * 适配占地：模型不能超出 footprint。
@@ -797,10 +952,10 @@ function createViewer3D(canvas, machine){
     return k;
   }
   const fitScale = fitToFootprint();
+  applyLayers();
 
   /* ---------- 粒子 ---------- */
   const MAX_P = 300;
-  let emberPoints = null, smokePoints = null, emberPos = null, smokePos = null;
 
   function makePoints(count, color, size, blending){
     const g = new THREE.BufferGeometry();
@@ -984,7 +1139,7 @@ function createViewer3D(canvas, machine){
       state.time += scaled;
       spawnParticles(scaled);
       stepParticles(scaled);
-      applyAnimations(state.time);
+      if(state.layers.animations !== false) applyAnimations(state.time);
       syncParticles();
     }
     if(controls && controls.update) controls.update();
@@ -1042,11 +1197,14 @@ function createViewer3D(canvas, machine){
       mat.opacity = latest.mat.alpha;
       mat.needsUpdate = true;
       m.part.anim = latest.anim;
+      m.matKey = latest.mat.key;
       const override = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[m.id];
+      m.entryHidden = !!(override && override.hidden);
       if(override) applyPartOverride(m.mesh, latest, override);
+      snapshotStyle(m);
     }
     rebuildParticles();
-    state.needsRender = true;
+    applyLayers();
   }
 
   return {
@@ -1054,6 +1212,7 @@ function createViewer3D(canvas, machine){
       state.disposed = true;
       cancelAnimationFrame(rafId);
       clearInterval(watchdog);
+      if(offTextures) offTextures();
       if(controls && controls.dispose) controls.dispose();
       for(let i=0;i<meshes.length;i++){
         if(meshes[i].mesh.material) meshes[i].mesh.material.dispose();
@@ -1062,6 +1221,7 @@ function createViewer3D(canvas, machine){
       Object.keys(geoCache).forEach(function(k){ geoCache[k].dispose(); });
       groundGeo.dispose(); groundMat.dispose();
       edgeGeo.dispose(); edgeMat.dispose();
+      collisionGeo.dispose(); collisionMat.dispose();
       if(emberPoints){ emberPoints.geometry.dispose(); emberPoints.material.dispose(); }
       if(smokePoints){ smokePoints.geometry.dispose(); smokePoints.material.dispose(); }
       renderer.dispose();
@@ -1071,6 +1231,37 @@ function createViewer3D(canvas, machine){
       if(controls) controls.autoRotate = !!v;
     },
     getAutoRotate: function(){ return !!(controls && controls.autoRotate); },
+    applyTextures: applyTextures,
+    getLayers: function(){ return Object.assign({}, state.layers); },
+    setLayer: function(key, value){
+      if(typeof fwSetLayer === 'function') state.layers = fwSetLayer(machine, key, value);
+      else state.layers[key] = value;
+      if(key === 'animations' && !value){
+        for(let i=0;i<meshes.length;i++){
+          meshes[i].mesh.position.copy(meshes[i].base.pos);
+          meshes[i].mesh.rotation.copy(meshes[i].base.rot);
+        }
+      }
+      applyLayers();
+      return Object.assign({}, state.layers);
+    },
+    getLodInfo: function(){
+      if(typeof fwLodPlan !== 'function') return null;
+      const plan = fwLodPlan(machine, state.preset);
+      return {
+        parts: plan.parts,
+        totalTriangles: plan.totalTriangles,
+        levels: plan.levels.map(function(level){
+          return { level:level.level, parts:level.parts, triangles:level.triangles, hidden:level.hidden.size };
+        }),
+      };
+    },
+    getAspects: function(){
+      return (typeof fwAssetAspects === 'function') ? fwAssetAspects(machine, state.preset) : null;
+    },
+    getCollision: function(){
+      return (typeof fwCollisionBox === 'function') ? fwCollisionBox(machine, state.layers.collisionHeight) : null;
+    },
     setPlaying: function(v){ state.playing = !!v; },
     getPlaying: function(){ return state.playing; },
     setSpeed: function(v){ state.speed = Math.max(0.1, Math.min(3, v)); },
@@ -1090,11 +1281,14 @@ function createViewer3D(canvas, machine){
       mesh.rotation.copy(entry.base.rot);
       mesh.quaternion.copy(entry.base.quat);
       mesh.scale.set(1,1,1);
-      mesh.visible = !(override && override.hidden);
+      entry.entryHidden = !!(override && override.hidden);
+      mesh.visible = !entry.entryHidden;
       if(mesh.material !== entry.baseMaterial) mesh.material.dispose();
       mesh.material = entry.baseMaterial.clone();
+      mesh.userData.fwOverrideMap = null;
       if(override) applyPartOverride(mesh, entry.part, override);
-      state.needsRender = true;
+      snapshotStyle(entry);
+      applyLayers();
       return true;
     },
     reset: function(){
@@ -1123,22 +1317,23 @@ function createViewer3D(canvas, machine){
       const order = [];
       for(let i=0;i<meshes.length;i++){
         const m = meshes[i];
-        if(!m.mesh.visible) continue;
+        if(m.entryHidden) continue;
         const role = m.role || 'body';
         const override = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[m.id];
         const key = override && override.material ? role + '_' + m.id : role;
-        if(!buckets[key]){ buckets[key] = { role:key, mat:m.mesh.material, geos:[] }; order.push(key); }
+        if(!buckets[key]){ buckets[key] = { role:key, mat:exportMaterial(m), matKey:m.matKey, geos:[] }; order.push(key); }
         m.mesh.updateWorldMatrix(true, false);
         const g = m.mesh.geometry.clone();
         g.applyMatrix4(m.mesh.matrixWorld);
         // 统一去掉多余属性，保证可合并
         if(g.attributes.uv2) g.deleteAttribute('uv2');
-        buckets[role].geos.push(g);
+        buckets[key].geos.push(g);
       }
 
       // 2. 每个桶先合并，再整体按 group 合并
       const perMat = [];
       const materials = [];
+      const materialSpecs = [];
       order.forEach(function(role){
         const b = buckets[role];
         let g;
@@ -1153,6 +1348,16 @@ function createViewer3D(canvas, machine){
         const m = b.mat.clone();
         m.name = 'M_' + role;              // UE 里的材质槽名
         materials.push(m);
+        materialSpecs.push({
+          slot: m.name,
+          key: b.matKey || null,
+          color: '#' + m.color.getHexString(),
+          metalness: +m.metalness.toFixed(2),
+          roughness: +m.roughness.toFixed(2),
+          map: m.map ? m.map.name : null,
+          roughnessMap: m.roughnessMap ? m.roughnessMap.name : null,
+          normalMap: m.normalMap ? m.normalMap.name : null,
+        });
       });
 
       let finalGeo;
@@ -1201,6 +1406,8 @@ function createViewer3D(canvas, machine){
           knobs: stt.knobs,
         };
       }
+      const aspects = (typeof fwAssetAspects === 'function') ? fwAssetAspects(machine, state.preset) : null;
+      const cbox = (typeof fwCollisionBox === 'function') ? fwCollisionBox(machine, state.layers.collisionHeight) : null;
       out.userData = {
         forgeworks: {
           generator: 'Forgeworks',
@@ -1212,7 +1419,12 @@ function createViewer3D(canvas, machine){
           unit: 'meter (1 unit = 1 grid)',
           pivot: 'bottom-center',
           materialSlots: materials.map(function(mm){ return mm.name; }),
+          materialSpecs: materialSpecs,
           animations: animSpec,
+          uv: aspects ? aspects.uv : null,
+          lod: aspects ? aspects.lod : null,
+          collision: cbox ? { type:'box', sizeM:[cbox.w, cbox.h, cbox.d], pivot:'bottom-center' } : null,
+          layers: Object.assign({}, state.layers),
           style: styleMeta,
         },
       };
@@ -1303,6 +1515,24 @@ function open3DViewer(machineId){
         '<div style="position:absolute;left:12px;top:10px;font-size:11px;color:#5f5e5a;' +
              'background:rgba(255,255,255,.85);padding:4px 9px;border-radius:6px;pointer-events:none">' +
           '拖动旋转 · 滚轮缩放 · 双击复位</div>' +
+        '<div class="v3-layers" id="v3Layers">' +
+          '<div class="v3-layers-head">资产图层<span id="v3LayerSummary"></span></div>' +
+          '<label><input type="checkbox" data-layer="clay"> 白模（去材质）</label>' +
+          '<label><input type="checkbox" data-layer="albedo"> 基础色</label>' +
+          '<label><input type="checkbox" data-layer="roughness"> 粗糙度</label>' +
+          '<label><input type="checkbox" data-layer="normal"> 法线</label>' +
+          '<label><input type="checkbox" data-layer="wireframe"> 线框</label>' +
+          '<label><input type="checkbox" data-layer="uv"> UV 棋盘</label>' +
+          '<label><input type="checkbox" data-layer="collision"> 碰撞盒</label>' +
+          '<label><input type="checkbox" data-layer="particles"> 粒子</label>' +
+          '<label><input type="checkbox" data-layer="animations"> 动画</label>' +
+          '<div class="v3-layers-row"><span>LOD</span>' +
+            '<select id="v3Lod"><option value="0">L0 全量</option><option value="1">L1 轻量</option><option value="2">L2 最省</option></select>' +
+          '</div>' +
+          '<div class="v3-layers-row"><span>碰撞高</span>' +
+            '<input type="number" id="v3CollH" step="0.1" min="0" placeholder="自动">' +
+          '</div>' +
+        '</div>' +
       '</div>' +
       '<div style="padding:12px 20px;border-top:1px solid var(--border)">' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">' +
@@ -1322,6 +1552,7 @@ function open3DViewer(machineId){
           '<button class="sm" id="v3Shot">导出 PNG</button>' +
           '<button class="sm primary" id="v3Glb">导出 GLB</button>' +
         '</div>' +
+        '<div class="v3-aspects" id="v3Aspects"></div>' +
         '<div style="font-size:11.5px;color:var(--text-2);line-height:1.7">' +
           '<span class="pill">' + m.cat + '</span> <span class="pill">' + m.footprint + '</span> ' +
           tierTag(m.tier) +
@@ -1355,6 +1586,58 @@ function open3DViewer(machineId){
   }
   _activeViewer = V;
 
+  function renderLayerSummary(){
+    document.getElementById('v3LayerSummary').textContent =
+      (typeof fwLayerSummary === 'function') ? fwLayerSummary(V.getLayers()) : '';
+  }
+  function renderAspectStrip(){
+    const a = V.getAspects();
+    const lod = V.getLodInfo();
+    const box = V.getCollision();
+    const chips = [];
+    if(a){
+      chips.push('几何 ' + a.geometry.parts + ' 件 · ' + a.geometry.triangles + ' 面');
+      chips.push('材质 ' + a.material.slots + ' 槽 · 贴图 ' +
+        a.material.textures.albedo + '/' + a.material.textures.roughness + '/' + a.material.textures.normal);
+      chips.push('UV ' + a.uv.channels.join(','));
+      if(lod) chips.push('LOD ' + lod.levels.map(function(l){ return 'L' + l.level + ' ' + l.triangles + ' 面'; }).join(' / '));
+      if(box) chips.push('碰撞 ' + box.w + '×' + box.h + '×' + box.d + ' m');
+      chips.push('动画 ' + a.animation.parts + ' 件' +
+        (a.animation.kinds.length ? '（' + a.animation.kinds.join('、') + '）' : ''));
+      chips.push('元数据 UE CSV / GLB JSON');
+    }
+    document.getElementById('v3Aspects').innerHTML = chips.map(function(text){
+      return '<span>' + text + '</span>';
+    }).join('');
+  }
+
+  const layerInputs = document.querySelectorAll('#v3Layers input[data-layer]');
+  for(let i=0;i<layerInputs.length;i++){
+    const input = layerInputs[i];
+    const key = input.getAttribute('data-layer');
+    input.checked = !!V.getLayers()[key];
+    input.onchange = function(){
+      V.setLayer(key, input.checked);
+      renderLayerSummary();
+      renderAspectStrip();
+    };
+  }
+  const lodSel = document.getElementById('v3Lod');
+  lodSel.value = String(V.getLayers().lod || 0);
+  lodSel.onchange = function(){
+    V.setLayer('lod', parseInt(lodSel.value, 10) || 0);
+    renderLayerSummary();
+  };
+  const collH = document.getElementById('v3CollH');
+  if(V.getLayers().collisionHeight != null) collH.value = V.getLayers().collisionHeight;
+  collH.onchange = function(){
+    const value = parseFloat(collH.value);
+    V.setLayer('collisionHeight', value > 0 ? value : null);
+    renderAspectStrip();
+  };
+  renderLayerSummary();
+  renderAspectStrip();
+
   function close(){
     if(_activeViewer){ _activeViewer.dispose(); _activeViewer = null; }
     closeModal();
@@ -1381,7 +1664,7 @@ function open3DViewer(machineId){
   };
   const presetSel = document.getElementById('v3Preset');
   presetSel.value = defaultKey;      // 默认选中项目风格
-  presetSel.onchange = function(e){ V.setPreset(e.target.value); };
+  presetSel.onchange = function(e){ V.setPreset(e.target.value); renderAspectStrip(); };
   document.getElementById('v3Shot').onclick = function(){
     downloadDataURL(V.toPNG(), m.id + '_view3d.png');
     toast('已导出当前视角');

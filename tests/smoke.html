@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261021zz">
-<link rel="stylesheet" href="../css/layout.css?v=20261021zz">
-<link rel="stylesheet" href="../css/components.css?v=20261021zz">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261021zz">
+<link rel="stylesheet" href="../css/theme.css?v=20261021a">
+<link rel="stylesheet" href="../css/layout.css?v=20261021a">
+<link rel="stylesheet" href="../css/components.css?v=20261021a">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261021a">
 </head>
 <body>
 <div class="app">
@@ -51,61 +51,63 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261021zz"></script>
-<script src="../js/core/color.js?v=20261021zz"></script>
-<script src="../js/data/styles.js?v=20261021zz"></script>
-<script src="../js/data/seed.js?v=20261021zz"></script>
-<script src="../js/data/prompts.js?v=20261021zz"></script>
+<script src="../js/core/config.js?v=20261021a"></script>
+<script src="../js/core/color.js?v=20261021a"></script>
+<script src="../js/data/styles.js?v=20261021a"></script>
+<script src="../js/data/seed.js?v=20261021a"></script>
+<script src="../js/data/prompts.js?v=20261021a"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261021zz"></script>
-<script src="../js/core/lookup.js?v=20261021zz"></script>
-<script src="../js/core/style.js?v=20261021zz"></script>
+<script src="../js/core/state.js?v=20261021a"></script>
+<script src="../js/core/lookup.js?v=20261021a"></script>
+<script src="../js/core/style.js?v=20261021a"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261021zz"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261021zz"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261021zz"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261021zz"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261021zz"></script>
+<script src="../js/vendor/three.min.js?v=20261021a"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261021a"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261021a"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261021a"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261021a"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261021zz"></script>
-<script src="../js/engines/viewer3d.js?v=20261021zz"></script>
-<script src="../js/views/editor3d.js?v=20261021zz"></script>
-<script src="../js/engines/validate.js?v=20261021zz"></script>
-<script src="../js/engines/solver.js?v=20261021zz"></script>
-<script src="../js/engines/balance.js?v=20261021zz"></script>
-<script src="../js/engines/csv.js?v=20261021zz"></script>
-<script src="../js/core/io.js?v=20261021zz"></script>
-<script src="../js/sync.js?v=20261021zz"></script>
-<script src="../js/pipeline.js?v=20261021zz"></script>
-<script src="../js/pipeline-templates.js?v=20261021zz"></script>
+<script src="../js/engines/icons.js?v=20261021a"></script>
+<script src="../js/engines/material-textures.js?v=20261021a"></script>
+<script src="../js/engines/asset-layers.js?v=20261021a"></script>
+<script src="../js/engines/viewer3d.js?v=20261021a"></script>
+<script src="../js/views/editor3d.js?v=20261021a"></script>
+<script src="../js/engines/validate.js?v=20261021a"></script>
+<script src="../js/engines/solver.js?v=20261021a"></script>
+<script src="../js/engines/balance.js?v=20261021a"></script>
+<script src="../js/engines/csv.js?v=20261021a"></script>
+<script src="../js/core/io.js?v=20261021a"></script>
+<script src="../js/sync.js?v=20261021a"></script>
+<script src="../js/pipeline.js?v=20261021a"></script>
+<script src="../js/pipeline-templates.js?v=20261021a"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261021zz"></script>
-<script src="../js/ui/router.js?v=20261021zz"></script>
-<script src="../js/ui/editor.js?v=20261021zz"></script>
+<script src="../js/ui/table.js?v=20261021a"></script>
+<script src="../js/ui/router.js?v=20261021a"></script>
+<script src="../js/ui/editor.js?v=20261021a"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261021zz"></script>
-<script src="../js/views/elements.js?v=20261021zz"></script>
-<script src="../js/views/items.js?v=20261021zz"></script>
-<script src="../js/views/machines.js?v=20261021zz"></script>
-<script src="../js/views/recipes.js?v=20261021zz"></script>
-<script src="../js/views/techs.js?v=20261021zz"></script>
-<script src="../js/views/assets.js?v=20261021zz"></script>
-<script src="../js/views/prompts.js?v=20261021zz"></script>
-<script src="../js/views/validate.js?v=20261021zz"></script>
-<script src="../js/views/balance.js?v=20261021zz"></script>
-<script src="../js/views/solve.js?v=20261021zz"></script>
-<script src="../js/views/graph.js?v=20261021zz"></script>
-<script src="../js/views/sync.js?v=20261021zz"></script>
-<script src="../js/views/pipeline.js?v=20261021zz"></script>
-<script src="../js/views/export.js?v=20261021zz"></script>
+<script src="../js/views/style.js?v=20261021a"></script>
+<script src="../js/views/elements.js?v=20261021a"></script>
+<script src="../js/views/items.js?v=20261021a"></script>
+<script src="../js/views/machines.js?v=20261021a"></script>
+<script src="../js/views/recipes.js?v=20261021a"></script>
+<script src="../js/views/techs.js?v=20261021a"></script>
+<script src="../js/views/assets.js?v=20261021a"></script>
+<script src="../js/views/prompts.js?v=20261021a"></script>
+<script src="../js/views/validate.js?v=20261021a"></script>
+<script src="../js/views/balance.js?v=20261021a"></script>
+<script src="../js/views/solve.js?v=20261021a"></script>
+<script src="../js/views/graph.js?v=20261021a"></script>
+<script src="../js/views/sync.js?v=20261021a"></script>
+<script src="../js/views/pipeline.js?v=20261021a"></script>
+<script src="../js/views/export.js?v=20261021a"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261021zz"></script>
+<script src="../js/main.js?v=20261021a"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -374,6 +376,95 @@
       return withP.length > 0 ? withP.length + '/' + S.machines.length + ' 个建筑有粒子' : '无粒子配置';
     });
 
+    /* ---- 资产图层：白模 / 材质 / UV / LOD / 碰撞 / 动画 / 元数据 ---- */
+    check('图层状态归一化', function(){
+      var layers = fwLayersOf({ui3d:{layers:{lod:9, collisionHeight:-2}}});
+      if(layers.lod !== 2) return 'lod 未夹取: ' + layers.lod;
+      if(layers.collisionHeight !== null) return '负碰撞高未回落';
+      var missing = Object.keys(FW_LAYER_DEFAULTS).filter(function(key){ return !(key in layers); });
+      return missing.length ? '缺字段 ' + missing.join(',') : Object.keys(layers).length + ' 项';
+    });
+
+    check('图层可写回并派生碰撞盒', function(){
+      var holder = {ui3d:{layers:{}}};
+      var out = fwSetLayer(holder, 'clay', true);
+      if(!out.clay) return '白模未写入';
+      var box = fwCollisionBox(S.machines[0]);
+      if(!(box.w > 0 && box.d > 0 && box.h > 0)) return '碰撞盒尺寸无效';
+      return '碰撞 ' + box.w + '×' + box.h + '×' + box.d + ' m';
+    });
+
+    check('UV 棋盘纹理可用', function(){
+      var a = fwUvCheckerTexture();
+      var b = fwUvCheckerTexture();
+      return a && a.isTexture && a === b ? '棋盘纹理缓存命中' : '纹理未缓存';
+    });
+
+    check('LOD 三档逐级减面', function(){
+      var bad = 0;
+      S.machines.forEach(function(m){
+        var plan = fwLodPlan(m);
+        if(!plan || plan.levels.length !== 3){ bad++; return; }
+        if(plan.levels[0].triangles !== plan.totalTriangles) bad++;
+        else if(plan.levels[1].triangles > plan.levels[0].triangles) bad++;
+        else if(plan.levels[2].triangles > plan.levels[1].triangles) bad++;
+      });
+      return bad === 0 ? S.machines.length + ' 个建筑 LOD 单调递减' : bad + ' 个建筑 LOD 异常';
+    });
+
+    check('资产方面七项齐全', function(){
+      var aspects = fwAssetAspects(S.machines[0]);
+      if(!aspects) return '无输出';
+      var need = ['geometry','material','uv','lod','collision','animation','metadata'];
+      var missing = need.filter(function(key){ return !aspects[key]; });
+      if(missing.length) return '缺 ' + missing.join(',');
+      if(!(aspects.geometry.parts > 0 && aspects.geometry.triangles > 0)) return '几何为空';
+      if(!aspects.uv.channels.length) return '无 UV 通道';
+      return aspects.geometry.parts + ' 件 / ' + aspects.geometry.triangles + ' 面 / ' +
+        aspects.material.slots + ' 材质槽';
+    });
+
+    check('流水线含全部资产阶段', function(){
+      var graph = pipelineStarterGraph('probe', 'machine');
+      var types = graph.nodes.map(function(node){ return node.type; });
+      var need = ['styleApply','uv','lod','collision','animation','metadata','validate','export'];
+      var missing = need.filter(function(type){ return types.indexOf(type) < 0; });
+      if(missing.length) return '缺 ' + missing.join(',');
+      var prevAsset = PIPELINE.assetId;
+      PIPELINE.assetId = S.machines[0].id;
+      var derived = pipelineDeriveStage({type:'lod'});
+      PIPELINE.assetId = prevAsset;
+      if(!derived.ok) return '本地推导失败: ' + derived.error;
+      if(!derived.output.levels || derived.output.levels.length !== 3) return 'LOD 输出不完整';
+      return types.length + ' 节点 / ' + PIPELINE_LOCAL_STAGES.length + ' 个本地阶段';
+    });
+
+    check('流水线端口：多输出与单输入替换', function(){
+      var savedGraph = PIPELINE.graph, savedAsset = PIPELINE.assetId, savedSave = window.pipelineSave;
+      var graph = pipelineStarterGraph('probe', 'machine');
+      PIPELINE.graph = graph;
+      PIPELINE.assetId = 'probe';
+      window.pipelineSave = function(){ return Promise.resolve(); };
+      try {
+        if(pipelinePorts('export', 'in').length !== 2) return 'export 应有 mesh + report 两个输入';
+        graph.edges = graph.edges.filter(function(edge){ return edge.from !== 'metadata'; });
+        if(!pipelineConnect('metadata', 'validate', 'mesh')) return '第一个下游连线失败';
+        if(!pipelineConnect('metadata', 'export', 'mesh')) return '同一输出无法连接多个下游';
+        if(!pipelineConnect('uv', 'export', 'mesh')) return '输入端口连线失败';
+        var intoExport = graph.edges.filter(function(edge){ return edge.to === 'export' && edge.in === 'mesh'; });
+        if(intoExport.length !== 1 || intoExport[0].from !== 'uv') return '输入端口未替换旧连线';
+        var before = graph.edges.length;
+        if(pipelineConnect('metadata', 'animation', 'mesh')) return '循环连线未被拒绝';
+        if(graph.edges.length !== before) return '被拒绝的连线仍写入图';
+        if(pipelineEdgePath({from:'metadata', out:'mesh', to:'export', in:'mesh'}).charAt(0) !== 'M') return '连线路径异常';
+        return '2 入端口 / 输出可多连 / 单入替换 / 环拒绝';
+      } finally {
+        window.pipelineSave = savedSave;
+        PIPELINE.graph = savedGraph;
+        PIPELINE.assetId = savedAsset;
+      }
+    });
+
     check('3D 渲染器可创建并渲染', function(){
       var cv = document.createElement('canvas');
       cv.width = 240; cv.height = 180;
@@ -390,12 +481,18 @@
         unchanged = unchanged && v.setPartOverride(parts[0].id, {transform:{position:{x:0.25}}});
         unchanged = unchanged && v.setPartOverride(parts[0].id, null);
       }
+      var layers = v.getLayers();
+      var aspects = v.getAspects();
+      var toggled = v.setLayer('clay', true);
+      var restored = v.setLayer('clay', !!layers.clay);
       v.dispose();
       cv.remove();
       if(!png || png.indexOf('data:image/png') !== 0) return 'PNG 导出失败';
       if(!(dbg.meshes > 0)) return '无网格';
       if(!unchanged) return '部件 ID 不唯一或编辑接口复位失败';
-      return '网格 ' + dbg.meshes + ' / 推进 ' + t.toFixed(2) + 's';
+      if(!aspects || !aspects.geometry || !(aspects.geometry.parts > 0)) return '资产方面为空';
+      if(!toggled.clay || restored.clay !== !!layers.clay) return '图层切换未生效';
+      return '网格 ' + dbg.meshes + ' / 推进 ' + t.toFixed(2) + 's / 图层 ' + Object.keys(layers).length + ' 项';
     });
 
     check('机器列表点击打开 3D', function(){
@@ -482,6 +579,12 @@
         // 4) 节点要带机器 ID
         var nm = j.nodes && j.nodes[0] && j.nodes[0].name;
         if(!nm) problems.push('节点无名字');
+        // 5) extras 要带资产方面，UE 侧才能读到 UV/LOD/碰撞/图层
+        var fwExtra = j.nodes && j.nodes[0] && j.nodes[0].extras && j.nodes[0].extras.forgeworks;
+        if(!fwExtra) problems.push('缺 forgeworks extras');
+        else ['uv','lod','collision','layers'].forEach(function(key){
+          if(!fwExtra[key]) problems.push('extras 缺 ' + key);
+        });
         // 5) 包围盒：底部贴地 + 不超出占地
         var mn = [Infinity,Infinity,Infinity], mx = [-Infinity,-Infinity,-Infinity];
         j.meshes[0].primitives.forEach(function(p){

@@ -52,7 +52,20 @@
 .pipeline-node textarea{font-size:10.5px}
 .pipeline-node-actions,.pipeline-ports{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
 .pipeline-node-actions button{font-size:10px;padding:4px 7px;box-shadow:none}
-.pipeline-ports select{width:100%;font-size:10px;padding:5px 7px}
+.pipeline-port{position:absolute;width:12px;height:12px;box-sizing:border-box;border-radius:50%;
+  background:var(--panel);border:2px solid var(--accent);cursor:crosshair;z-index:2;
+  transition:transform var(--duration-fast,120ms) ease,box-shadow var(--duration-fast,120ms) ease}
+.pipeline-port-in{left:-7px}
+.pipeline-port-out{right:-7px;background:var(--accent)}
+.pipeline-port:hover{transform:scale(1.3)}
+.pipeline-port-out:hover{box-shadow:0 0 0 4px rgba(194,65,12,.18)}
+.pipeline-port.compatible{border-color:var(--brand);background:var(--brand-soft);transform:scale(1.2)}
+.pipeline-port.compatible-hover{border-color:var(--brand);background:var(--brand);transform:scale(1.55);
+  box-shadow:0 0 0 5px rgba(194,65,12,.2)}
+.pipeline-canvas>svg path.pipeline-wire-temp{stroke:var(--brand);stroke-width:2.4;stroke-dasharray:6 4;opacity:.95}
+.pipeline-ports-hint{margin-top:7px;font-size:10px;color:var(--text-3);line-height:1.5}
+.pipeline-stage{color:var(--text-2)!important;background:var(--panel-2);border:1px solid var(--border);
+  border-radius:5px;padding:3px 6px;line-height:1.45}
 .pipeline-error{color:var(--red);line-height:1.4}
 .pipeline-output{display:inline-block;margin-top:6px;font-size:10px;color:var(--brand);text-decoration:none}
 .pipeline-output:hover{text-decoration:underline}

@@ -101,6 +101,14 @@ class BlenderPipelineTest(unittest.TestCase):
             self.assertEqual(len(data['boundsMeters']), 3)
             self.assertTrue(all(size > 0 for size in data['boundsMeters']))
             self.assertTrue(thumbnail.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
+            # 资产方面字段：缺少 UV / 贴图不应判失败，但字段必须存在
+            self.assertFalse(data['uvPresent'])
+            self.assertEqual(data['uvLayers'], [])
+            self.assertEqual(data['imageCount'], 0)
+            self.assertEqual(data['normalMapSlots'], 0)
+            self.assertEqual(data['animationCount'], 0)
+            self.assertEqual(len(data['materialDetails']), 5)
+            self.assertEqual(data['forgeworks'], {})
 
     def test_bridge_queues_validation_and_serves_thumbnail(self):
         blender = bridge.find_blender(force=True)
