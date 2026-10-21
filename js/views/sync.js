@@ -48,10 +48,20 @@ function renderSync(){
         </div>
       ` : `
         <div class="issue warn" style="margin-top:8px"><span class="ic">!</span><div>
-          Bridge 不在线。同步功能需要它（浏览器自身无法写项目目录、无法调 Blender）。<br>
-          启动方式：<code>python3 tools/bridge.py</code>（在 Forgeworks 目录下），
-          然后刷新本页。不想同步时，工具其余功能不受影响。
+          Bridge 不在线。同步需要本地服务（浏览器自身无法写项目目录、无法调 Blender）。
+          不想同步时，工具其余功能不受影响。
         </div></div>
+        <div class="setup-steps">
+          <div class="setup-step"><span class="n">01</span><div>
+            <b>启动 Bridge</b><p>在 Forgeworks 目录运行 <code>python3 tools/bridge.py</code>，然后刷新本页。</p>
+          </div></div>
+          <div class="setup-step"><span class="n">02</span><div>
+            <b>绑定项目目录</b><p>选一个 UE 项目或任意工作区文件夹，资产会写进其中的 <code>Forgeworks/</code>。</p>
+          </div></div>
+          <div class="setup-step"><span class="n">03</span><div>
+            <b>导出并核对</b><p>导出 GLB、图标与清单；后续改动会自动标记为「待更新」。</p>
+          </div></div>
+        </div>
       `}
     </div>
 

@@ -1,28 +1,104 @@
-/* StellarEra 设计器 · layout.css */
-/* ---- sidebar ---- */
-.side{width:190px;flex:0 0 190px;background:var(--panel);border-right:1px solid var(--border);
-  display:flex;flex-direction:column;overflow:hidden}
-.brand{padding:16px 16px 12px;border-bottom:1px solid var(--border)}
-.brand h1{font-size:14px;font-weight:500;letter-spacing:.2px}
-.brand p{font-size:11px;color:var(--text-3);margin-top:2px}
-.nav{padding:8px;overflow-y:auto;flex:1}
-.nav-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;
-  color:var(--text-2);font-size:13px;margin-bottom:1px;user-select:none}
-.nav-item:hover{background:var(--bg)}
-.nav-item.active{background:var(--accent-soft);color:#0f6e56;font-weight:500}
-.nav-item .cnt{margin-left:auto;font-size:11px;color:var(--text-3);font-family:var(--mono)}
-.nav-item.active .cnt{color:#0f6e56}
-.nav-group{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3);
-  padding:12px 10px 4px;font-weight:500}
-.side-foot{padding:10px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);
-  display:flex;flex-direction:column;gap:6px}
-.side-foot button{font-size:11px}
+/* Forgeworks · layout.css */
+/* ---- 侧栏 ---- */
+.side{width:236px;flex:0 0 236px;background:var(--side-bg);color:var(--side-text);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden;
+  border-right:1px solid rgba(0,0,0,.4);
+  background-image:linear-gradient(180deg,var(--side-bg) 0%,var(--side-bg-2) 100%)}
+.brand{display:flex;align-items:center;gap:11px;padding:16px 16px 8px}
+.brand-mark{width:32px;height:32px;flex:0 0 32px;border-radius:9px;display:grid;place-items:center;
+  color:#fff;background:linear-gradient(150deg,#e0601f,#a8330a);
+  box-shadow:0 6px 18px -6px rgba(194,65,12,.75),inset 0 1px 0 rgba(255,255,255,.22)}
+.brand-mark svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.brand-text{min-width:0}
+.brand h1{font-size:14px;font-weight:600;letter-spacing:.02em;color:#f2efe8;line-height:1.25}
+.brand .tagline{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--side-muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand-stats{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;padding:6px 16px 0;
+  font-family:var(--mono);font-size:9.5px;line-height:1.55;color:#7d817a}
+.brand-stats span{display:flex;align-items:baseline;gap:6px;min-width:0}
+.brand-stats em{font-style:normal;color:#7d817a}
+.brand-stats b{margin-left:auto;font-weight:500;font-size:10.5px;color:#bdb9af}
+#projectChip{padding:8px 12px 0}
 
-/* ---- main ---- */
-.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.head{padding:14px 20px;border-bottom:1px solid var(--border);background:var(--panel);
-  display:flex;align-items:center;gap:12px;flex:0 0 auto}
-.head h2{font-size:15px;font-weight:500}
-.head .sub{font-size:12px;color:var(--text-3)}
-.head-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
-.body{flex:1;overflow:auto;padding:16px 20px 40px}
+.project-chip{width:100%;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;
+  gap:1px;text-align:left;cursor:pointer;
+  padding:6px 9px;border-radius:8px;color:#ece8df;
+  background:rgba(255,255,255,.045);border:1px solid var(--side-line);
+  transition:background .14s,border-color .14s}
+.project-chip:hover{background:rgba(255,255,255,.085);border-color:rgba(255,255,255,.2)}
+.pc-label{font-size:9px;line-height:1.45;letter-spacing:.16em;text-transform:uppercase;color:var(--side-muted)}
+.pc-name{font-size:11.5px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-kind{display:flex;align-items:center;gap:5px;font-size:9.5px;line-height:1.4;color:var(--side-muted)}
+.pc-kind .dot{width:5px;height:5px;border-radius:50%;background:#6e726b}
+.pc-kind .dot.on{background:#3ecf8e;box-shadow:0 0 0 3px rgba(62,207,142,.14)}
+
+/* ---- 导航 ---- */
+.nav{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 10px 12px}
+.nav-group{display:flex;align-items:center;gap:8px;padding:11px 10px 4px;
+  font-size:9.5px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;color:var(--side-muted);
+  font-weight:500}
+.nav-group::after{content:"";flex:1;height:1px;background:var(--side-line)}
+.nav-group .ng-i{font-family:var(--mono);font-size:9px;letter-spacing:0;color:#9b7a63}
+.nav-item{position:relative;display:flex;align-items:center;gap:9px;padding:6px 10px;border-radius:7px;
+  color:var(--side-text);font-size:12.5px;cursor:pointer;user-select:none;
+  transition:background .12s,color .12s}
+.nav-item:hover{background:rgba(255,255,255,.055);color:#f5f2ec}
+.nav-item:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.nav-item.active{background:rgba(255,255,255,.085);color:#fff;font-weight:500}
+.nav-item.active::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;
+  border-radius:2px;background:var(--brand)}
+.nav-item .ni{width:15px;height:15px;flex:0 0 15px;opacity:.55;
+  fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;
+  transition:opacity .12s,color .12s}
+.nav-item:hover .ni{opacity:.85}
+.nav-item.active .ni{opacity:1;color:#f08a4b}
+.nav-item .cnt{margin-left:auto;font-family:var(--mono);font-size:9.5px;line-height:1.7;
+  padding:0 5px;border-radius:4px;color:var(--side-muted);background:rgba(255,255,255,.05)}
+.nav-item.active .cnt{color:#f0b087;background:rgba(194,65,12,.18)}
+
+.side-foot{padding:10px 12px;border-top:1px solid var(--side-line);display:flex;flex-direction:column;gap:5px}
+.side-foot button{width:100%;justify-content:flex-start;text-align:left;padding:5px 9px;font-size:11px;
+  color:#d6d2c8;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.13)}
+.side-foot button:hover{color:#fff;background:rgba(255,255,255,.085);border-color:rgba(255,255,255,.24)}
+.side-foot #btnSave{color:#fff;font-weight:500;border-color:#a8330a;
+  background:linear-gradient(180deg,#cf4a0e,#a8330a)}
+.side-foot #btnSave:hover{background:linear-gradient(180deg,#dd5312,#b83a0c);border-color:#c2410c}
+#buildStamp{margin-top:2px;text-align:center;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.04em;color:#767a73;opacity:.9}
+
+/* ---- 主区 ---- */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;
+  background:radial-gradient(1100px 380px at 18% -8%,rgba(194,65,12,.07),transparent 70%),var(--bg)}
+.head{padding:15px 26px 13px;border-bottom:1px solid var(--border);flex:0 0 auto;
+  display:flex;align-items:flex-end;gap:16px;
+  background:rgba(251,249,243,.88);backdrop-filter:blur(10px)}
+.head-title{min-width:0}
+.crumb{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--brand);margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.title-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.head h2{font-size:19px;font-weight:600;letter-spacing:-.015em;line-height:1.25}
+.head .sub{font-size:11.5px;color:var(--text-3)}
+.head-actions{margin-left:auto;display:flex;gap:7px;align-items:center;flex:0 0 auto}
+.body{flex:1;overflow:auto;overscroll-behavior:contain;padding:20px 26px 48px}
+.body>*{animation:viewIn .18s ease-out}
+@keyframes viewIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.body>*{animation:none}}
+
+/* ---- 滚动条 ---- */
+.body::-webkit-scrollbar,.nav::-webkit-scrollbar,
+.scroll-x::-webkit-scrollbar,.modal .content::-webkit-scrollbar{width:10px;height:10px}
+.body::-webkit-scrollbar-thumb,.scroll-x::-webkit-scrollbar-thumb,
+.modal .content::-webkit-scrollbar-thumb{background:rgba(43,40,34,.2);border:3px solid transparent;
+  background-clip:content-box;border-radius:8px}
+.body::-webkit-scrollbar-thumb:hover,.scroll-x::-webkit-scrollbar-thumb:hover,
+.modal .content::-webkit-scrollbar-thumb:hover{background:rgba(43,40,34,.34);background-clip:content-box}
+.nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border:3px solid transparent;
+  background-clip:content-box;border-radius:8px}
+.nav::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.28);background-clip:content-box}
+
+@media(max-width:1180px){
+  .side{width:212px;flex-basis:212px}
+  .head{padding:14px 20px 12px}
+  .body{padding:18px 20px 44px}
+}

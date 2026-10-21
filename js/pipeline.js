@@ -365,15 +365,21 @@ function renderPipelineView(){
     return `<path d="M${x1} ${y1} C${x1+70} ${y1},${x2-70} ${y2},${x2} ${y2}"/>`;
   }).join('');
   view.innerHTML=`<div class="pipeline-toolbar card">
-    <label>资产 <select id="pipelineAsset">${candidates.map(item=>`<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}</option>`).join('')}</select></label>
-    <label>模板 <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}">${template.label}</option>`).join('')}</select></label>
-    <button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineRunAll">运行全部（本地节点）</button>
-    <span>远程 Provider：${bridgeReady
-      ? (providerNames.map(name=>`${pipelineEscape(name)} ${PIPELINE.providers[name].configured?'已配置':'未配置'}`).join(' · ')||'未配置')
-      : 'Bridge 未连接（离线只能编辑与运行本地步骤）'}</span>
-    ${bridgeReady
-      ? '<span>远程任务需逐次确认；额度预估按当前公开价目，最终以任务实耗为准。</span>'
-      : '<span>图保存在本机浏览器；启动 Bridge 并绑定项目后，同一资产自动改用项目目录里的图。</span>'}
+    <div class="pt-field"><label for="pipelineAsset">资产</label>
+      <select id="pipelineAsset">${candidates.map(item=>`<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}</option>`).join('')}</select></div>
+    <div class="pt-field"><label for="pipelineTemplate">模板</label>
+      <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}">${template.label}</option>`).join('')}</select></div>
+    <div class="pt-btns">
+      <button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineRunAll" class="primary">运行全部（本地节点）</button>
+    </div>
+    <div class="pt-note">
+      <span>远程 Provider：${bridgeReady
+        ? (providerNames.map(name=>`${pipelineEscape(name)} ${PIPELINE.providers[name].configured?'已配置':'未配置'}`).join(' · ')||'未配置')
+        : 'Bridge 未连接（离线只能编辑与运行本地步骤）'}</span>
+      ${bridgeReady
+        ? '<span>远程任务需逐次确认；额度预估按当前公开价目，最终以任务实耗为准。</span>'
+        : '<span>图保存在本机浏览器；启动 Bridge 并绑定项目后，同一资产自动改用项目目录里的图。</span>'}
+    </div>
   </div>
   <div class="pipeline-shell"><aside class="pipeline-palette"><b>节点</b>${Object.entries(PIPELINE_NODE_LABELS).map(([type,label])=>`<button data-add="${type}">${label}</button>`).join('')}</aside>
   <div class="pipeline-scroll"><div class="pipeline-canvas" style="width:${Math.max(1700,...PIPELINE.graph.nodes.map(node=>(Number(node.x)||0)+260))}px;height:${Math.max(650,...PIPELINE.graph.nodes.map(node=>(Number(node.y)||0)+210))}px"><svg>${edgeSvg}</svg>${PIPELINE.graph.nodes.map(pipelineNodeCard).join('')}</div></div></div>

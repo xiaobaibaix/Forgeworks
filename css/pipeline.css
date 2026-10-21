@@ -1,27 +1,69 @@
-.pipeline-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.pipeline-toolbar label{display:flex;align-items:center;gap:6px}
-.pipeline-toolbar span{font-size:11px;color:var(--text-2)}
-.pipeline-shell{display:flex;gap:10px;min-height:620px;margin:12px 0}
-.pipeline-palette{width:125px;flex:0 0 125px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px}
-.pipeline-palette button{text-align:left}
-.pipeline-scroll{overflow:auto;flex:1;border:1px solid var(--border);border-radius:10px;background-color:var(--bg);background-image:radial-gradient(var(--border) .7px,transparent .7px);background-size:18px 18px}
+/* Forgeworks · pipeline.css */
+
+/* ---- 顶部控制条 ---- */
+.pipeline-toolbar{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:14px 16px}
+.pt-field{display:flex;flex-direction:column;gap:4px;min-width:190px}
+.pt-field label{margin:0;font-size:9.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--text-3)}
+.pt-field select{min-width:210px}
+.pt-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding-bottom:1px}
+.pt-note{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px 18px;
+  border-top:1px dashed var(--border);padding-top:9px;margin-top:2px;
+  font-size:10.5px;color:var(--text-3)}
+.pt-note span{display:inline-flex;align-items:center;gap:6px}
+.pt-note span::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--brand);
+  opacity:.55;flex:0 0 4px}
+
+/* ---- 画布 ---- */
+.pipeline-shell{display:flex;gap:12px;min-height:620px;margin:14px 0}
+.pipeline-palette{width:146px;flex:0 0 146px;background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;gap:5px;
+  box-shadow:var(--shadow-sm);align-self:flex-start;position:sticky;top:0}
+.pipeline-palette b{font-size:9.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--text-3);margin-bottom:4px}
+.pipeline-palette button{justify-content:flex-start;text-align:left;font-size:11.5px;padding:6px 9px;
+  background:var(--panel-2);box-shadow:none;border-color:var(--border)}
+.pipeline-palette button:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
+.pipeline-palette button::before{content:"+";font-family:var(--mono);font-size:11px;color:var(--text-3)}
+.pipeline-palette button:hover::before{color:var(--brand)}
+.pipeline-scroll{overflow:auto;flex:1;border:1px solid var(--border);border-radius:var(--radius);
+  background-color:var(--panel-2);
+  background-image:radial-gradient(rgba(43,40,34,.16) .8px,transparent .8px);
+  background-size:18px 18px;box-shadow:inset 0 1px 3px rgba(43,40,34,.05)}
 .pipeline-canvas{position:relative;min-width:100%;min-height:100%}
 .pipeline-canvas>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
-.pipeline-canvas>svg path{fill:none;stroke:var(--accent);stroke-width:2;opacity:.65}
-.pipeline-node{position:absolute;width:230px;min-height:165px;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 4px 16px #0002}
-.pipeline-node.selected{outline:2px solid var(--accent)}
-.pipeline-node header{display:flex;justify-content:space-between;gap:8px;font-size:12px}
-.pipeline-node header{cursor:grab;touch-action:none}
+.pipeline-canvas>svg path{fill:none;stroke:var(--accent);stroke-width:2;opacity:.55}
+
+/* ---- 节点 ---- */
+.pipeline-node{position:absolute;width:230px;min-height:165px;padding:10px 11px;background:var(--panel);
+  border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 10px 26px -16px rgba(43,40,34,.55),0 1px 2px rgba(43,40,34,.06)}
+.pipeline-node.selected{border-color:var(--brand);
+  box-shadow:0 0 0 2px rgba(194,65,12,.16),0 14px 30px -16px rgba(43,40,34,.6)}
+.pipeline-node header{display:flex;justify-content:space-between;gap:8px;align-items:center;
+  font-size:12px;padding-bottom:6px;margin-bottom:2px;border-bottom:1px solid var(--border);
+  cursor:grab;touch-action:none}
 .pipeline-node header:active{cursor:grabbing}
-.pipeline-node header span{font-family:var(--mono);font-size:10px;color:var(--text-2)}
+.pipeline-node header b{font-weight:600}
+.pipeline-node header span{font-family:var(--mono);font-size:9.5px;color:var(--text-3);
+  text-transform:uppercase;letter-spacing:.06em}
 .pipeline-node small{display:block;margin:5px 0;color:var(--text-3);font-family:var(--mono);font-size:10px}
 .pipeline-node textarea,.pipeline-node input{width:100%;box-sizing:border-box;margin:4px 0}
-.pipeline-node-actions,.pipeline-ports{display:flex;gap:5px;margin-top:6px}
-.pipeline-node-actions button{font-size:10px;padding:4px 7px}
-.pipeline-ports select{width:100%;font-size:10px}
-.pipeline-error{color:var(--danger,#b54708);line-height:1.4}
-.pipeline-output{display:inline-block;margin-top:6px;font-size:10px;color:var(--accent)}
+.pipeline-node textarea{font-size:10.5px}
+.pipeline-node-actions,.pipeline-ports{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+.pipeline-node-actions button{font-size:10px;padding:4px 7px;box-shadow:none}
+.pipeline-ports select{width:100%;font-size:10px;padding:5px 7px}
+.pipeline-error{color:var(--red);line-height:1.4}
+.pipeline-output{display:inline-block;margin-top:6px;font-size:10px;color:var(--brand);text-decoration:none}
+.pipeline-output:hover{text-decoration:underline}
 .pipeline-edge-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:var(--text-2)}
-.pipeline-edge-list span{padding:4px 6px;border-radius:5px;background:var(--panel-2)}
-.pipeline-edge-list button{padding:2px 5px;font-size:9px}
-@media(max-width:760px){.pipeline-shell{min-height:500px}.pipeline-palette{width:95px;flex-basis:95px}}
+.pipeline-edge-list span{padding:4px 7px;border-radius:5px;background:var(--panel-2);
+  border:1px solid var(--border);font-family:var(--mono)}
+.pipeline-edge-list button{padding:2px 6px;font-size:9px;box-shadow:none;margin-left:4px}
+
+@media(max-width:900px){
+  .pipeline-shell{min-height:500px}
+  .pipeline-palette{width:112px;flex-basis:112px}
+  .pt-field{min-width:150px}
+  .pt-field select{min-width:160px}
+}

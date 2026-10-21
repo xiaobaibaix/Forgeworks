@@ -143,11 +143,11 @@ function renderProjectChip(){
   const project = SYNC.status && SYNC.status.project;
   const name = project ? (project.name || project.root) : '未绑定项目';
   const kind = project ? (project.kind === 'ue' ? 'UE 项目' : '工作区') : (SYNC.online ? '点击选择目录' : 'Bridge 未启动');
-  el.innerHTML = `<button class="sm" style="width:100%;text-align:left;line-height:1.45;white-space:normal"
+  el.innerHTML = `<button class="project-chip"
     title="${syncEscape(project ? project.root : '在同步页绑定项目目录')}">
-    <span style="display:block;font-size:11px;color:var(--text-3)">项目</span>
-    <span style="display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis">${syncEscape(name)}</span>
-    <span style="display:block;font-size:10.5px;color:var(--text-3)">${syncEscape(kind)}</span>
+    <span class="pc-label">项目</span>
+    <span class="pc-name">${syncEscape(name)}</span>
+    <span class="pc-kind"><i class="dot ${project ? 'on' : ''}"></i>${syncEscape(kind)}</span>
   </button>`;
   el.querySelector('button').onclick = ()=>{ cur = 'sync'; render(); syncHash('sync'); };
 }

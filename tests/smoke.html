@@ -4,18 +4,25 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261021v">
-<link rel="stylesheet" href="../css/layout.css?v=20261021v">
-<link rel="stylesheet" href="../css/components.css?v=20261021v">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261021v">
+<link rel="stylesheet" href="../css/theme.css?v=20261021zz">
+<link rel="stylesheet" href="../css/layout.css?v=20261021zz">
+<link rel="stylesheet" href="../css/components.css?v=20261021zz">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261021zz">
 </head>
 <body>
 <div class="app">
   <aside class="side">
     <div class="brand">
-      <h1>Forgeworks</h1>
-      <p id="statLine">载入中…</p>
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3l7.5 4.4v9.2L12 21l-7.5-4.4V7.4z"/><path d="M12 8v8M9 12h6"/></svg>
+      </div>
+      <div class="brand-text">
+        <h1>Forgeworks</h1>
+        <p class="tagline">工厂内容设计台</p>
+      </div>
     </div>
+    <div class="brand-stats" id="statLine">载入中…</div>
+    <div id="projectChip"></div>
     <nav class="nav" id="nav"></nav>
     <div class="side-foot">
       <button id="btnSave" class="sm">保存到本地</button>
@@ -24,8 +31,10 @@
   </aside>
   <main class="main">
     <div class="head">
-      <h2 id="viewTitle">元素</h2>
-      <span class="sub" id="viewSub"></span>
+      <div class="head-title">
+        <div class="crumb" id="viewCrumb">内容定义</div>
+        <div class="title-row"><h2 id="viewTitle">元素</h2><span class="sub" id="viewSub"></span></div>
+      </div>
       <div class="head-actions" id="headActions"></div>
     </div>
     <div class="body" id="view"></div>
@@ -42,61 +51,61 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261021v"></script>
-<script src="../js/core/color.js?v=20261021v"></script>
-<script src="../js/data/styles.js?v=20261021v"></script>
-<script src="../js/data/seed.js?v=20261021v"></script>
-<script src="../js/data/prompts.js?v=20261021v"></script>
+<script src="../js/core/config.js?v=20261021zz"></script>
+<script src="../js/core/color.js?v=20261021zz"></script>
+<script src="../js/data/styles.js?v=20261021zz"></script>
+<script src="../js/data/seed.js?v=20261021zz"></script>
+<script src="../js/data/prompts.js?v=20261021zz"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261021v"></script>
-<script src="../js/core/lookup.js?v=20261021v"></script>
-<script src="../js/core/style.js?v=20261021v"></script>
+<script src="../js/core/state.js?v=20261021zz"></script>
+<script src="../js/core/lookup.js?v=20261021zz"></script>
+<script src="../js/core/style.js?v=20261021zz"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261021v"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261021v"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261021v"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261021v"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261021v"></script>
+<script src="../js/vendor/three.min.js?v=20261021zz"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261021zz"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261021zz"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261021zz"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261021zz"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261021v"></script>
-<script src="../js/engines/viewer3d.js?v=20261021v"></script>
-<script src="../js/views/editor3d.js?v=20261021v"></script>
-<script src="../js/engines/validate.js?v=20261021v"></script>
-<script src="../js/engines/solver.js?v=20261021v"></script>
-<script src="../js/engines/balance.js?v=20261021v"></script>
-<script src="../js/engines/csv.js?v=20261021v"></script>
-<script src="../js/core/io.js?v=20261021v"></script>
-<script src="../js/sync.js?v=20261021v"></script>
-<script src="../js/pipeline.js?v=20261021v"></script>
-<script src="../js/pipeline-templates.js?v=20261021v"></script>
+<script src="../js/engines/icons.js?v=20261021zz"></script>
+<script src="../js/engines/viewer3d.js?v=20261021zz"></script>
+<script src="../js/views/editor3d.js?v=20261021zz"></script>
+<script src="../js/engines/validate.js?v=20261021zz"></script>
+<script src="../js/engines/solver.js?v=20261021zz"></script>
+<script src="../js/engines/balance.js?v=20261021zz"></script>
+<script src="../js/engines/csv.js?v=20261021zz"></script>
+<script src="../js/core/io.js?v=20261021zz"></script>
+<script src="../js/sync.js?v=20261021zz"></script>
+<script src="../js/pipeline.js?v=20261021zz"></script>
+<script src="../js/pipeline-templates.js?v=20261021zz"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261021v"></script>
-<script src="../js/ui/router.js?v=20261021v"></script>
-<script src="../js/ui/editor.js?v=20261021v"></script>
+<script src="../js/ui/table.js?v=20261021zz"></script>
+<script src="../js/ui/router.js?v=20261021zz"></script>
+<script src="../js/ui/editor.js?v=20261021zz"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261021v"></script>
-<script src="../js/views/elements.js?v=20261021v"></script>
-<script src="../js/views/items.js?v=20261021v"></script>
-<script src="../js/views/machines.js?v=20261021v"></script>
-<script src="../js/views/recipes.js?v=20261021v"></script>
-<script src="../js/views/techs.js?v=20261021v"></script>
-<script src="../js/views/assets.js?v=20261021v"></script>
-<script src="../js/views/prompts.js?v=20261021v"></script>
-<script src="../js/views/validate.js?v=20261021v"></script>
-<script src="../js/views/balance.js?v=20261021v"></script>
-<script src="../js/views/solve.js?v=20261021v"></script>
-<script src="../js/views/graph.js?v=20261021v"></script>
-<script src="../js/views/sync.js?v=20261021v"></script>
-<script src="../js/views/pipeline.js?v=20261021v"></script>
-<script src="../js/views/export.js?v=20261021v"></script>
+<script src="../js/views/style.js?v=20261021zz"></script>
+<script src="../js/views/elements.js?v=20261021zz"></script>
+<script src="../js/views/items.js?v=20261021zz"></script>
+<script src="../js/views/machines.js?v=20261021zz"></script>
+<script src="../js/views/recipes.js?v=20261021zz"></script>
+<script src="../js/views/techs.js?v=20261021zz"></script>
+<script src="../js/views/assets.js?v=20261021zz"></script>
+<script src="../js/views/prompts.js?v=20261021zz"></script>
+<script src="../js/views/validate.js?v=20261021zz"></script>
+<script src="../js/views/balance.js?v=20261021zz"></script>
+<script src="../js/views/solve.js?v=20261021zz"></script>
+<script src="../js/views/graph.js?v=20261021zz"></script>
+<script src="../js/views/sync.js?v=20261021zz"></script>
+<script src="../js/views/pipeline.js?v=20261021zz"></script>
+<script src="../js/views/export.js?v=20261021zz"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261021v"></script>
+<script src="../js/main.js?v=20261021zz"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>

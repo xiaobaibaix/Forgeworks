@@ -1,17 +1,32 @@
-/* StellarEra 设计器 · theme.css */
+/* Forgeworks · theme.css */
 :root{
-  --bg:#f7f7f5; --panel:#ffffff; --panel-2:#fbfbfa;
-  --border:rgba(0,0,0,.10); --border-2:rgba(0,0,0,.16);
-  --text:#2c2c2a; --text-2:#5f5e5a; --text-3:#8a8880;
-  --accent:#1d9e75; --accent-soft:#e1f5ee;
+  /* 纸面、卡片、墨色 */
+  --bg:#eeeae0; --panel:#fbf9f3; --panel-2:#f3efe5; --panel-3:#e8e2d5;
+  --border:rgba(43,40,34,.12); --border-2:rgba(43,40,34,.22);
+  --text:#26231d; --text-2:#5c564a; --text-3:#8b8475;
+
+  /* 品牌：烧橙；状态：钢青 */
+  --brand:#c2410c; --brand-2:#a63a0b; --brand-soft:#f7e6da;
+  --accent:#0f766e; --accent-soft:#e3f2ef;
   --blue:#185fa5; --blue-soft:#e6f1fb;
-  --amber:#ba7517; --amber-soft:#faeeda;
-  --red:#a32d2d; --red-soft:#fcebeb;
+  --amber:#9a5b0c; --amber-soft:#f8eeda;
+  --red:#a32d2d; --red-soft:#fbe9e7;
   --purple:#534ab7; --purple-soft:#eeedfe;
+
+  /* 深色侧栏 */
+  --side-bg:#22252a; --side-bg-2:#1b1e22;
+  --side-text:#c9c5bb; --side-muted:#8a8d86;
+  --side-line:rgba(255,255,255,.085);
+
   --radius:10px;
-  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  --radius-lg:14px;
+  --shadow-sm:0 1px 2px rgba(43,40,34,.05);
+  --shadow-md:0 12px 32px -20px rgba(43,40,34,.45);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"JetBrains Mono",monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-  background:var(--bg);color:var(--text);font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  background:var(--bg);color:var(--text);font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility}
+body::selection,body *::selection{background:var(--brand-soft);color:var(--text)}
 .app{display:flex;height:100vh;overflow:hidden}
