@@ -75,18 +75,20 @@
 | 仓库名 | Forgeworks —— 为 StellarEra（UE 5.8 体素宇宙工厂游戏）服务的内容设计工具 |
 | 形态 | **纯前端静态站**，无构建步骤，无 npm 依赖（three.js 等以 UMD 脚本手放在 `js/vendor/`） |
 
-### 启动方式（两种，任选）
+### 启动方式
 
 ```bash
 cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
-# A. 只开界面（不同步功能）—— 注意：必须走 HTTP，file:// 下 ES module 与 history API 会挂
+# 默认：界面 + Bridge 一起起（同步、Blender、管线都可用），端口 8787
 python3 tools/serve.py
 
-# B. 开界面 + Bridge（同步功能需要它）—— 推荐，默认端口 8787
-python3 tools/bridge.py
-# 然后浏览器开 http://127.0.0.1:8787/
+# 只要静态界面、不启 Bridge
+python3 tools/serve.py --static
 ```
+
+`serve.py` 现在直接交给 `tools/bridge.py` 执行，所以同源、只占一个端口。
+必须走 HTTP，`file://` 下 `fetch('/api/...')` 连不上 Bridge。
 
 ### 测试
 
@@ -152,7 +154,7 @@ python3 tools/stamp.py
 
 浏览器自身**不能**写项目目录、不能调 Blender、不能生成 `.uasset`，所以必须有个本地进程中转。
 
-**启动**：`python3 tools/bridge.py [端口]`，默认 **8787**。它同时是静态服务器（带 `no-store` + CORS）和 REST + SSE。
+**启动**：`python3 tools/serve.py [端口]`（推荐，等同 `tools/bridge.py`），默认 **8787**。它同时是静态服务器（带 `no-store` + CORS）和 REST + SSE。
 
 **目录约定**（关键，别改）：
 
