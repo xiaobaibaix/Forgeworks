@@ -11,7 +11,12 @@ document.getElementById('btnReset').onclick=()=>{
   if(!confirm('确认恢复预填数据？当前所有修改将丢失。')) return;
   S=JSON.parse(JSON.stringify(SEED));
   normalizeAssets(S);
-  saveState(); clearCostCache(); clearIconCache(); render(); toast('已恢复预填数据');
+  saveState(); clearCostCache(); clearIconCache(); // 版本戳
+(function(){
+  const el = document.getElementById('buildStamp');
+  if(el && typeof BUILD_STAMP !== 'undefined') el.textContent = BUILD_STAMP;
+})();
+render(); toast('已恢复预填数据');
 };
 
 // 所有脚本已载入，现在才构建视图表（见 router.js 里的说明）
@@ -21,5 +26,10 @@ VIEWS = makeViews();
 (function initFromHash(){
   const h=(location.hash||'').replace('#','');
   if(h && VIEWS[h]) cur=h;
+})();
+// 版本戳
+(function(){
+  const el = document.getElementById('buildStamp');
+  if(el && typeof BUILD_STAMP !== 'undefined') el.textContent = BUILD_STAMP;
 })();
 render();

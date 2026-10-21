@@ -127,6 +127,15 @@ open index.html          # macOS
 
 浏览器打开即用。数据存在 localStorage，`Cmd/Ctrl + S` 保存。
 
+**开发时建议用自带的静态服务器**（禁用缓存）：
+
+```bash
+python3 tools/serve.py        # http://127.0.0.1:8787
+```
+
+> 别用 `python3 -m http.server` —— 它不发送 `Cache-Control`，浏览器会缓存 JS，
+> 改完代码刷新页面跑的仍是旧版本，很难排查。侧栏底部有版本戳可以确认。
+
 支持的 URL hash：`#balance` `#prompts` `#assets` `#graph` 等，可直接打开指定视图。
 
 ---
