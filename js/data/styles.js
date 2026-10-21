@@ -91,7 +91,7 @@ const STYLE_PRESETS = {
     id:'voxel-industrial',
     name:'体素工业',
     tagline:'硬边方盒 + 平直着色 + 中饱和，一眼读懂的工业化',
-    eraHint:'纪元 1-2 · 主星殖民地',
+    eraHint:'主星殖民地',
     form: {
       body:'低多边形体素风格，硬边方盒体块',
       bevel:0.05,
@@ -145,7 +145,7 @@ const STYLE_PRESETS = {
     id:'hardsurface-scifi',
     name:'硬表面科幻',
     tagline:'倒角硬边 + 深空合金 + 冷色调，青蓝能量光点缀',
-    eraHint:'纪元 3-5 · 轨道设施',
+    eraHint:'轨道设施',
     form:{
       body:'硬表面（hard surface）机械形态，倒角边、嵌板分割线清晰',
       bevel:0.35,
@@ -197,7 +197,7 @@ const STYLE_PRESETS = {
     id:'weathered-frontier',
     name:'风化边陲',
     tagline:'锈迹 + 补焊 + 土黄暖色，殖民早期的将就感',
-    eraHint:'纪元 1 · 外缘拓荒',
+    eraHint:'外缘拓荒',
     form:{
       body:'粗犷体块，构件尺度不一，可见补丁与临时加固',
       bevel:0.02,
@@ -249,7 +249,7 @@ const STYLE_PRESETS = {
     id:'cleanroom-orbit',
     name:'洁净轨道',
     tagline:'白 + 浅蓝，高亮低饱和，无尘实验室气质',
-    eraHint:'纪元 4-5 · 轨道研究设施',
+    eraHint:'轨道研究设施',
     form:{
       body:'简洁几何体，圆角过渡，封闭性好，外露构件少',
       bevel:0.5,
@@ -301,7 +301,7 @@ const STYLE_PRESETS = {
     id:'dieselpunk-foundry',
     name:'柴油朋克铸造',
     tagline:'暗色铸铁 + 炉火橙，高对比的重工业压迫感',
-    eraHint:'纪元 2-3 · 熔炼工业带',
+    eraHint:'熔炼工业带',
     form:{
       body:'厚重铸铁体块，铆钉与加强筋外露，管道粗壮',
       bevel:0.1,
@@ -353,7 +353,7 @@ const STYLE_PRESETS = {
     id:'bio-xeno',
     name:'异星共生',
     tagline:'有机曲面 + 陶瓷外壳，绿紫生物光流转',
-    eraHint:'纪元 4-5 · 异星生态带',
+    eraHint:'异星生态带',
     form:{
       body:'有机形态与工业结构共生：骨架是机械，外壳是生物质',
       bevel:0.6,

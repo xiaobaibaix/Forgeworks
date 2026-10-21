@@ -155,10 +155,5 @@ function validate(){
   }
   Object.keys(graph).forEach(n=>{ if(!state[n]) dfs(n); });
 
-  // 纪元覆盖
-  S.eras.forEach(e=>{
-    e.elements.forEach(el=>{ if(!S.elements.find(x=>x.id===el)) warn(`纪元 ${e.id} 引用了不存在的元素 ${el}`, e.id); });
-  });
-
   return issues;
 }

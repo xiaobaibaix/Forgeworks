@@ -75,7 +75,6 @@ struct FStarEraRecipeDef : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadOnly) int32 Tier = 0;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float CycleTime = 1.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float PowerDraw = 0.f;
-    UPROPERTY(EditAnywhere, BlueprintReadOnly) FName TierUnlock;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FStarEraItemAmount> Inputs;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FStarEraItemAmount> Outputs;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString Desc;

@@ -235,7 +235,7 @@ function promptsMarkdown(){
     h += `| ID | \`${m.id}\` |\n`;
     h += `| 分类 | ${m.cat} |\n`;
     h += `| 占地 | ${m.footprint} |\n`;
-    h += `| 纪元 | T${m.tier} |\n`;
+    h += `| 等级 | T${m.tier} |\n`;
     h += `| 耗电 | ${m.power} kW |\n\n`;
     h += `\`\`\`\n${machinePrompt(m,{withTech:true})}\`\`\`\n\n`;
   });
@@ -289,7 +289,7 @@ function machineBriefText(){
     const b = MACHINE_BRIEFS[m.id] || {};
     h += `\n[${String(i+1).padStart(2,'0')}] ${m.name}  (${m.id})\n`;
     h += '-'.repeat(56) + '\n';
-    h += `分类：${m.cat}    占地：${m.footprint}    纪元：T${m.tier}\n`;
+    h += `分类：${m.cat}    占地：${m.footprint}    等级：T${m.tier}\n`;
     h += `外形：${b.form || '—'}\n`;
     h += `部件：${(b.parts||[]).join(' / ') || '—'}\n`;
     // 配色用风格校正后的值，避免任务书让美术做出偏离风格的颜色

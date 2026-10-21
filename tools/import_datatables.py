@@ -44,7 +44,7 @@ import os
 #
 # FRecipeDef:
 #   Id: str, DisplayName: str, MachineType: str, Category: str, Tier: int,
-#   CycleTime: float, PowerDraw: float, TierUnlock: str,
+#   CycleTime: float, PowerDraw: float,
 #   Inputs: TArray<FItemAmount>, Outputs: TArray<FItemAmount>, Desc: str
 #
 # FTechDef:
@@ -218,7 +218,6 @@ def _map_recipe(src):
     r.set_editor_property("tier", int(src.get("tier", 0)))
     r.set_editor_property("cycle_time", float(src.get("cycle", 1.0)))
     r.set_editor_property("power_draw", float(src.get("power", 0.0)))
-    r.set_editor_property("tier_unlock", src.get("unlock", "E0"))
     r.set_editor_property("desc", src.get("desc", ""))
 
     inputs = []
@@ -457,7 +456,6 @@ def _make_row_handle(src, mapper):
 #     UPROPERTY(EditAnywhere, BlueprintReadOnly) int32 Tier = 0;
 #     UPROPERTY(EditAnywhere, BlueprintReadOnly) float CycleTime = 1.f;
 #     UPROPERTY(EditAnywhere, BlueprintReadOnly) float PowerDraw = 0.f;
-#     UPROPERTY(EditAnywhere, BlueprintReadOnly) FName TierUnlock;
 #     UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FStarEraItemAmount> Inputs;
 #     UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FStarEraItemAmount> Outputs;
 #     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString Desc;

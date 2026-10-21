@@ -21,7 +21,6 @@ function renderRecipes(){
         return outAmt?`<code>${(outAmt*60/r.cycle).toFixed(1)}/min</code>`:'—';
       }},
       {t:'耗电',w:'80px',f:r=>`<code>${r.power}kW</code>`},
-      {t:'解锁',w:'65px',f:r=>`<span class="pill">${r.unlock}</span>`},
     ], byCat[c]);
   });
   v.innerHTML=h;

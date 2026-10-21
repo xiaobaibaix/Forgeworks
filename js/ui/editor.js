@@ -2,9 +2,9 @@
 /* ---------- 编辑器弹窗 ---------- */
 function openEditor(coll, id){
   const isNew=!id;
-  let d = isNew ? null : (coll==='eras'?S.eras.find(x=>x.id===id):S[coll].find(x=>x.id===id));
+  let d = isNew ? null : S[coll].find(x=>x.id===id);
   modalState={coll,id,isNew};
-  const titleMap={elements:'元素',items:'物品',machines:'机器',recipes:'配方',techs:'科技',eras:'纪元'};
+  const titleMap={elements:'元素',items:'物品',machines:'机器',recipes:'配方',techs:'科技'};
   document.getElementById('modal').innerHTML=`
     <header><h3>${isNew?'新增':'编辑'}${titleMap[coll]}</h3><span class="x" id="mX">×</span></header>
     <div class="content" id="mBody"></div>
@@ -22,7 +22,6 @@ function openEditor(coll, id){
   if(del) del.onclick=()=>{
     if(!confirm(`确认删除「${d.name||d.id}」？引用它的配方会变成悬空引用。`)) return;
     if(coll==='recipes') S.recipes=S.recipes.filter(x=>x.id!==id);
-    else if(coll==='eras') S.eras=S.eras.filter(x=>x.id!==id);
     else S[coll]=S[coll].filter(x=>x.id!==id);
     closeModal(); clearCostCache(); clearIconCache(); render(); toast('已删除');
   };
@@ -42,7 +41,7 @@ function renderEditorForm(coll, d, isNew){
     b.innerHTML = F('id','ID（建议 元素符号，如 Fe）', d?.id||'','text','required') +
       F('name','名称', d?.name||'') + F('symbol','符号', d?.symbol||'') +
       F('color','颜色（hex）', d?.color||'#888780') +
-      SEL('tier','纪元档位', String(d?.tier??0), [0,1,2,3].map(t=>({v:String(t),t:'T'+t})));
+      SEL('tier','等级', String(d?.tier??0), [0,1,2,3].map(t=>({v:String(t),t:'T'+t})));
   }
   else if(coll==='items'){
     const hasCustom = !!(d && d.icon && d.icon.trim());
@@ -140,7 +139,7 @@ function renderEditorForm(coll, d, isNew){
     b.innerHTML = F('id','ID', d?.id||'','text','required') + F('name','名称', d?.name||'') +
       SEL('cat','分类', d?.cat||'加工',
         ['采集','分离','冶炼','合金','化工','加工','组装','回收'].map(c=>({v:c,t:c}))) +
-      SEL('tier','纪元', String(d?.tier??0), [0,1,2,3,4].map(t=>({v:String(t),t:'T'+t}))) +
+      SEL('tier','等级', String(d?.tier??0), [0,1,2,3,4].map(t=>({v:String(t),t:'T'+t}))) +
       F('footprint','占地（如 3×3）', d?.footprint||'2×2') +
       F('power','耗电 kW', d?.power??100,'number') + F('desc','说明', d?.desc||'');
   }
@@ -162,8 +161,6 @@ function renderEditorForm(coll, d, isNew){
       `<div class="row">
         <div class="field"><label>周期（秒）</label><input type="number" step="0.1" min="0.1" id="f_cycle" value="${d?.cycle??1}"></div>
         <div class="field"><label>耗电 kW</label><input type="number" step="1" min="0" id="f_power" value="${d?.power??100}"></div>
-        <div class="field"><label>解锁纪元</label><select id="f_unlock">${S.eras.map(e=>
-          `<option value="${e.id}" ${d?.unlock===e.id?'selected':''}>${e.id} ${e.name}</option>`).join('')}</select></div>
       </div>`+
       `<div class="field"><label>输入</label><div class="io-list" id="ioInputs">${ioRows(d?.inputs,'in')}</div>
         <button class="sm" id="addIn" style="margin-top:6px">+ 添加输入</button></div>`+
@@ -183,7 +180,7 @@ function renderEditorForm(coll, d, isNew){
   }
   else if(coll==='techs'){
     b.innerHTML = F('id','ID', d?.id||'','text','required') + F('name','名称', d?.name||'') +
-      SEL('tier','纪元', String(d?.tier??0), [0,1,2,3,4].map(t=>({v:String(t),t:'T'+t}))) +
+      SEL('tier','等级', String(d?.tier??0), [0,1,2,3,4].map(t=>({v:String(t),t:'T'+t}))) +
       F('cost','研究成本', d?.cost??100,'number') +
       `<div class="field"><label>前置科技（多选）</label><select multiple size="6" id="f_prereqs" style="height:auto">
         ${S.techs.filter(t=>t.id!==id).map(t=>`<option value="${t.id}" ${d?.prereqs?.includes(t.id)?'selected':''}>${t.name}</option>`).join('')}
@@ -192,11 +189,6 @@ function renderEditorForm(coll, d, isNew){
         ${S.recipes.map(r=>`<option value="${r.id}" ${d?.unlocks?.includes(r.id)?'selected':''}>${r.name}</option>`).join('')}
       </select></div>`+
       F('desc','说明', d?.desc||'');
-  }
-  else if(coll==='eras'){
-    b.innerHTML = F('id','纪元 ID', d?.id||'','text','required') + F('name','名称', d?.name||'') +
-      F('elements','新增元素（逗号分隔）', (d?.elements||[]).join(',')) +
-      F('planets','星球类型', d?.planets||'') + F('machines','代表机器', d?.machines||'');
   }
 }
 function addIorow(listId, prefix){
@@ -247,7 +239,7 @@ function commitEditor(){
         amount:parseFloat(r.querySelector('.io-amt').value)||0
       })).filter(o=>o.item && o.amount>0);
     obj={id:g('id').trim(),name:g('name').trim(),machine:g('machine'),cat:g('cat'),
-      cycle:+g('cycle')||1,power:+g('power')||0,unlock:g('unlock'),
+      cycle:+g('cycle')||1,power:+g('power')||0,
       inputs:readIO('ioInputs','in'),outputs:readIO('ioOutputs','out'),desc:g('desc')};
   }
   else if(coll==='techs') obj={id:g('id').trim(),name:g('name').trim(),tier:+g('tier'),
@@ -255,9 +247,6 @@ function commitEditor(){
     prereqs:[...document.getElementById('f_prereqs').selectedOptions].map(o=>o.value),
     unlocks:[...document.getElementById('f_unlocks').selectedOptions].map(o=>o.value),
     desc:g('desc')};
-  else if(coll==='eras') obj={id:g('id').trim(),name:g('name').trim(),
-    elements:g('elements').split(',').map(s=>s.trim()).filter(Boolean),
-    planets:g('planets'),machines:g('machines')};
 
   if(!obj.id){ toast('ID 不能为空'); return; }
   if(!obj.name){ toast('名称不能为空'); return; }
@@ -265,7 +254,7 @@ function commitEditor(){
 
   if(isNew){ S[coll].push(obj); }
   else {
-    const arr = coll==='eras'?S.eras:S[coll];
+    const arr = S[coll];
     const i=arr.findIndex(x=>x.id===id);
     arr[i]=obj;
   }

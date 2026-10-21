@@ -32,9 +32,9 @@ function recipeCsv(){
   //   注意：内层引号由 CSV 自身的转义处理（""），不要在值里手写 \"
   const fmtItems=arr=>'('+arr.filter(o=>o.amount>0)
     .map(o=>`(ItemId="${o.item}",Amount=${o.amount})`).join(',')+')';
-  return csvRows(['Id','DisplayName','MachineType','Category','Tier','CycleTime','PowerDraw','TierUnlock','Inputs','Outputs','Desc'],
+  return csvRows(['Id','DisplayName','MachineType','Category','Tier','CycleTime','PowerDraw','Inputs','Outputs','Desc'],
     S.recipes.map(r=>[
-      r.id,r.name,r.machine,r.cat,r.tier,r.cycle,r.power,r.unlock,
+      r.id,r.name,r.machine,r.cat,r.tier,r.cycle,r.power,
       fmtItems(r.inputs),fmtItems(r.outputs),r.desc||''
     ]));
 }
@@ -52,14 +52,14 @@ function mdExport(){
   const cats=[...new Set(S.recipes.map(r=>r.cat))];
   cats.forEach(c=>{
     const rs=S.recipes.filter(r=>r.cat===c);
-    h+=`\n## ${c}\n\n| Id | 配方 | 机器 | 输入 | 输出 | 周期 | 速率 | 耗电 | 解锁 |\n|---|---|---|---|---|---|---|---|---|\n`;
+    h+=`\n## ${c}\n\n| Id | 配方 | 机器 | 输入 | 输出 | 周期 | 速率 | 耗电 |\n|---|---|---|---|---|---|---|---|\n`;
     rs.forEach(r=>{
       const outAmt=r.outputs.filter(o=>o.amount>0).reduce((s,o)=>s+o.amount,0);
       const rate=outAmt?((outAmt*60/r.cycle).toFixed(1)+'/min'):'—';
       h+=`| \`${r.id}\` | ${r.name} | ${machineOf(r.machine)?.name||'缺失'} | `+
         (r.inputs.map(i=>`${itemOf(i.item)?.name||i.item}×${i.amount}`).join(' + ')||'—')+' | '+
         (r.outputs.filter(o=>o.amount>0).map(o=>`${itemOf(o.item)?.name||o.item}×${o.amount}`).join(' + ')||'—')+
-        ` | ${r.cycle}s | ${rate} | ${r.power}kW | ${r.unlock} |\n`;
+        ` | ${r.cycle}s | ${rate} | ${r.power}kW |\n`;
     });
   });
   h+=`\n\n## 物品表\n\n| Id | 名称 | 等级 | 类型 | 价值 | 说明 |\n|---|---|---|---|---|---|\n`;

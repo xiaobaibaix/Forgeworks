@@ -7,7 +7,7 @@ function renderElements(){
     {t:'ID',w:'90px',f:r=>`<code>${r.id}</code>`},
     {t:'名称',f:r=>r.name},
     {t:'符号',w:'80px',f:r=>r.symbol},
-    {t:'纪元档位',w:'100px',f:r=>tierTag(r.tier)},
+    {t:'等级',w:'100px',f:r=>tierTag(r.tier)},
     {t:'用于',f:r=>{
       const uses=S.recipes.filter(rc=>rc.inputs.some(i=>i.item===r.id)).length;
       return uses?`<span class="pill">${uses} 条配方</span>`:'<span style="color:var(--text-3)">未使用</span>';

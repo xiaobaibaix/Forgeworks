@@ -30,8 +30,7 @@ function makeViews(){
     items:{title:'物品', sub:'矿物、精矿、零件、模块、宏构', render:()=>renderItems()},
     machines:{title:'机器', sub:'采集 / 分离 / 冶炼 / 加工 / 组装', render:()=>renderMachines()},
     recipes:{title:'配方', sub:'生产链的核心', render:()=>renderRecipes()},
-    techs:{title:'科技树', sub:'恒星纪元解锁链', render:()=>renderTechs()},
-    eras:{title:'恒星纪元', sub:'元素与星球类型解锁', render:()=>renderEras()},
+    techs:{title:'科技树', sub:'配方解锁链', render:()=>renderTechs()},
     style:{title:'风格', sub:'项目美术风格的单一来源', render:()=>renderStyle()},
     assets:{title:'资源', sub:'物品图标与模型', render:()=>renderAssets()},
     prompts:{title:'美术需求', sub:'建筑/物品的生成描述词', render:()=>renderPrompts()},
@@ -48,7 +47,7 @@ function makeViews(){
 function renderNav(){
   const nav=document.getElementById('nav');
   const groups=[
-    ['内容定义',['elements','items','machines','recipes','techs','eras']],
+    ['内容定义',['elements','items','machines','recipes','techs']],
     ['美术资源',['style','assets','prompts']],
     ['分析工具',['validate','balance','solve','graph']],
     ['输出与同步',['export','sync','pipeline']],
@@ -58,11 +57,10 @@ function renderNav(){
     h+=`<div class="nav-group">${g}</div>`;
     keys.forEach(k=>{
       // 只对「数据类」视图显示条目数；工具类视图不显示无意义的 0
-      const dataViews = ['elements','items','machines','recipes','techs','eras','assets','prompts'];
+      const dataViews = ['elements','items','machines','recipes','techs','assets','prompts'];
       let cnt = '';
       if(dataViews.includes(k)){
         const n = k==='elements' ? S.elements.length
-                : k==='eras'     ? S.eras.length
                 : k==='assets'   ? S.items.length
                 : k==='prompts'  ? S.machines.length + S.items.length
                 : S[k].length;

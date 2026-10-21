@@ -18,7 +18,7 @@ function renderMachines(){
     {t:'ID',w:'150px',f:r=>`<code>${r.id}</code>`},
     {t:'名称',w:'130px',f:r=>r.name},
     {t:'分类',w:'80px',f:r=>`<span class="pill">${r.cat}</span>`},
-    {t:'纪元',w:'72px',f:r=>tierTag(r.tier)},
+    {t:'等级',w:'72px',f:r=>tierTag(r.tier)},
     {t:'占地',w:'66px',f:r=>`<code>${r.footprint}</code>`},
     {t:'耗电kW',w:'78px',f:r=>`<code>${r.power}</code>`},
     {t:'可执行配方',w:'100px',f:r=>{

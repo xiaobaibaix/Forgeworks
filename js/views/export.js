@@ -6,7 +6,7 @@ function renderExport(){
   <div class="grid2">
     <div class="card">
       <h3>JSON 完整数据</h3>
-      <p class="hint">包含全部五类数据 + 纪元定义。可用于版本管理、diff、CI 校验。</p>
+      <p class="hint">包含全部五类数据。可用于版本管理、diff、CI 校验。</p>
       <button class="primary" id="exJson">下载 JSON</button>
       <button id="exJsonCopy">复制到剪贴板</button>
     </div>
