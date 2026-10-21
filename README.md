@@ -30,6 +30,7 @@
 | 模块 | 说明 |
 |---|---|
 | **内容编辑** | 元素 / 物品 / 机器 / 配方 / 科技 / 纪元，六类数据的增删改 |
+| **风格引擎** | 6 套风格预设 + 旋钮微调，描述词/图标/3D 预览/GLB 元数据共用一套色板，内置一致性检查 |
 | **校验引擎** | 三级严重度：悬空引用、循环依赖、内容不可达、副产物无去向、能耗异常 |
 | **物料平衡** | 单位成本、反向换算（要 N 个要备多少料）、正向换算（有多少料能产几个） |
 | **产线求解器** | 目标物品 → 完整生产链，计算每级机器数与总耗电 |
@@ -38,6 +39,22 @@
 | **美术需求** | 每个建筑/物品的生成描述词，可导出 Markdown / JSON / 纯文本任务书 |
 | **3D 预览** | three.js 实时渲染：轨道拖动、实时阴影、材质预设、程序化动画、粒子、GLB 导出 |
 | **导出** | JSON（完整数据）、UE DataTable CSV × 5、Markdown 速查表 |
+
+### 风格引擎
+
+生成类美术最容易翻车的不是单个模型质量，而是**成套感**——每个模型单看不错，
+摆在一起却像六个项目拼的。根因通常是配色逐个手写，彼此不在同一个饱和度/明度带。
+
+风格引擎的解法是让程序强制统一：
+
+> **色相负责区分功能，饱和度/明度负责统一风格。**
+
+- 内置 6 套面向 StellarEra 题材的预设（体素工业 / 硬表面科幻 / 风化边陲 / 洁净轨道 / 柴油朋克铸造 / 异星共生）
+- 每套定义 8 个「角色带」（结构 / 金属 / 强调 / 发光…），大面积结构低饱和、小面积强调色可以艳
+- 任何颜色经过 `fitColor()` 都会被校正进角色带——色相保留（冶炼还是橙色），明度饱和度统一
+- 描述词、图标、3D 预览、GLB 元数据**全部从同一处取色**，所见即所得
+- 一致性检查扫描全部数据，把偏离量量化出来；建筑配色还能一键生成修正代码
+- 6 个旋钮（饱和度 / 对比 / 磨损 / 金属感 / 发光 / 细节密度）可覆盖预设，存 localStorage 不污染内容数据
 
 ### 物料平衡
 
@@ -175,14 +192,17 @@ Forgeworks/
     │   └── GLTFLoader.js       预留：加载模型
     ├── core/
     │   ├── config.js       常量（存储键名）
+    │   ├── color.js        颜色工具（hexToHsl / clampSL / mixHex，全局唯一定义）
     │   ├── state.js        状态、localStorage、资源字段补全
+    │   ├── style.js        风格引擎：角色带校正、一致性检查、修正表
     │   ├── lookup.js       索引查询
     │   └── io.js           下载、剪贴板
     ├── data/
+    │   ├── styles.js       6 套风格预设 + 角色带定义 + 旋钮定义
     │   ├── seed.js         预填数据集（75 物品 / 32 机器 / 60 配方）
     │   └── prompts.js      美术需求描述词库 + 等轴测体块预览
     ├── engines/
-    │   ├── icons.js        程序化 SVG 图标
+    │   ├── icons.js        程序化 SVG 图标（配色走风格引擎）
     │   ├── viewer3d.js     three.js 3D 查看器 + 体块构建 + 粒子
     │   ├── validate.js     校验引擎
     │   ├── solver.js       产线求解
@@ -192,7 +212,7 @@ Forgeworks/
     │   ├── table.js        通用表格
     │   ├── router.js       视图路由（VIEWS 延迟构建）
     │   └── editor.js       编辑弹窗
-    ├── views/              13 个视图，每个一个文件
+    ├── views/              14 个视图，每个一个文件（style.js 是风格控制面板）
     └── main.js             启动
 ├── tools/
 │   ├── serve.py            静态服务器（发 no-store，禁用缓存）
@@ -200,7 +220,7 @@ Forgeworks/
 │   ├── import_datatables.py  UE Python 导入脚本
 │   └── DT_*.csv            导出的 DataTable 样例
 ├── tests/
-│   ├── smoke.html          真实浏览器自测页（32 项检查）
+│   ├── smoke.html          真实浏览器自测页（47 项检查，含 15 项风格链路）
 │   └── run.sh              冒烟测试入口
 └── docs/
     ├── ue-import.md        UE 导入指南
@@ -214,9 +234,17 @@ Forgeworks/
 靠 `index.html` 里的顺序保证依赖，顺序错了直接白屏：
 
 1. `data/seed.js` 必须在 `core/state.js` 之前（后者初始化时要读 `SEED`）
-2. `js/vendor/three.min.js` 必须在 `engines/viewer3d.js` 之前
-3. `ui/router.js` 里的 `VIEWS` 用 `makeViews()` 延迟构建，它比所有 `views/*.js` 先加载，
+2. `core/color.js` 必须在 `engines/icons.js` 之前（图标引擎要用它做 HSL 变换，
+   颜色工具全局只有这一份定义，多份实现会导致颜色对不上）
+3. `data/styles.js` 必须在 `core/style.js` 之前（风格引擎读预设表）；
+   `core/style.js` 必须在 `engines/*` 之前（图标与 3D 都要跟风格联动）
+4. `js/vendor/three.min.js` 必须在 `engines/viewer3d.js` 之前
+5. `ui/router.js` 里的 `VIEWS` 用 `makeViews()` 延迟构建，它比所有 `views/*.js` 先加载，
    不能在顶层直接引用还没定义的渲染函数
+
+> 风格相关的函数（`getStyle` / `fitColor` / `accentFor`）虽然定义在 `core/style.js`，
+> 但 `data/prompts.js` 等更早加载的文件也可以在**函数体内**调用它们——
+> 只要不在顶层立即执行，运行时定义早已就位。这是本仓库加载顺序的核心约定。
 
 ---
 

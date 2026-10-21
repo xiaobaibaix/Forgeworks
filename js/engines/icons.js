@@ -5,6 +5,9 @@
    - 形状按物品 type 区分（矿石/精矿/锭/零件/模块/宏构/副产物/流体）
    - 同类型内部用 ID 哈希做微扰动，避免看起来完全一样
    - 输出 SVG，矢量无损，可批量导出成图集
+
+   颜色工具（hexToHsl / hslToHex / shade / clampSL / mixHex）统一在
+   js/core/color.js —— 风格引擎也要用同一套，多份实现会导致颜色对不上。
    ---------------------------------------- */
 
 // FNV-1a 哈希，用于确定性的"随机"扰动
@@ -14,36 +17,6 @@ function hashStr(s){
   return h >>> 0;
 }
 
-function hexToHsl(hex){
-  let c = String(hex||'#888780').replace('#','');
-  if(c.length===3) c = c.split('').map(x=>x+x).join('');
-  if(c.length!==6) c = '888780';
-  const r=parseInt(c.slice(0,2),16)/255, g=parseInt(c.slice(2,4),16)/255, b=parseInt(c.slice(4,6),16)/255;
-  const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-  let h=0, s=0, l=(mx+mn)/2;
-  if(mx!==mn){
-    const d = mx-mn;
-    s = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
-    if(mx===r) h = ((g-b)/d + (g<b?6:0));
-    else if(mx===g) h = ((b-r)/d + 2);
-    else h = ((r-g)/d + 4);
-    h *= 60;
-  }
-  return {h, s:s*100, l:l*100};
-}
-function hslToHex(h,s,l){
-  h = ((h%360)+360)%360; s = Math.max(0,Math.min(100,s))/100; l = Math.max(0,Math.min(100,l))/100;
-  const k = n => (n + h/30) % 12;
-  const a = s * Math.min(l, 1-l);
-  const f = n => l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1)));
-  const to = x => Math.round(255*Math.max(0,Math.min(1,x))).toString(16).padStart(2,'0');
-  return '#'+to(f(0))+to(f(8))+to(f(4));
-}
-// 调整明度/饱和度得到同色系的深浅
-function shade(hex, dl, ds=0){
-  const {h,s,l} = hexToHsl(hex);
-  return hslToHex(h, s+ds, l+dl);
-}
 
 /** 对 SVG path 里的所有数字做确定性微扰，让同类物品不至于完全一样 */
 function jitterPath(d, seed, amp){
@@ -61,14 +34,28 @@ function jitterPath(d, seed, amp){
  * 生成图标内部的 SVG 图形（64×64 坐标系）
  */
 function iconInner(item){
-  const b = item.color || '#888780';
+  // ── 基色走风格校正 ─────────────────────────────
+  // 以前直接用 item.color，结果图标跟描述词、3D 预览各用一套色。
+  // 现在统一从风格引擎取，保证「看到的图标」=「让 AI 生成的模型」。
+  let b = item.color || '#888780';
+  let edgeA = 0.30, edgeW = 1.6;
+  if(typeof itemFitColor === 'function'){
+    const st = getStyle();
+    b = itemFitColor(item, st).hex;
+    const ic = st.icon || {};
+    // 预设自己的图标偏好（饱和/明度/描边），注意 satBoost 已在 fitColor 里算过，不重复叠加
+    const h0 = hexToHsl(b);
+    b = hslToHex(h0.h, h0.s * (ic.satScale || 1), h0.l * (ic.ligScale || 1));
+    edgeA = ic.stroke !== undefined ? ic.stroke : 0.30;
+    edgeW = Math.max(0.9, Math.min(2.6, (ic.stroke || 0.22) * 7.3));
+  }
   const dk = shade(b, -22);       // 暗部
   const lt = shade(b,  20);       // 亮部
   const mid = b;
   const seed = hashStr(item.id || 'x');
   // 取哈希的不同位做 -4..4 的偏移
   const j = n => ((seed >> ((n*4)%28)) % 9) - 4;
-  const edge = 'stroke="rgba(0,0,0,.30)" stroke-width="1.6" stroke-linejoin="round"';
+  const edge = `stroke="rgba(0,0,0,${edgeA.toFixed(2)})" stroke-width="${edgeW.toFixed(1)}" stroke-linejoin="round"`;
   // visual 字段可以覆盖图标形态（例如卤水：type=raw 用于物料平衡，但视觉是液体）
   const T = item.visual || item.type;
 
@@ -171,13 +158,21 @@ function makeIconSVG(item, size){
          iconInner(item)+`</svg>`;
 }
 
+/** 当前风格的缓存标识（换风格/调旋钮都会变，图标必须跟着重画） */
+function styleCacheTag(){
+  if(typeof styleState === 'undefined') return '';
+  return styleState.presetId + ':' + JSON.stringify(styleState.overrides || {});
+}
+
 /** 图标 URL：有自定义图标就用自定义，否则用生成的
- *  生成的 SVG 会做 URL 编码，成本不低，所以按 id+类型+颜色 缓存。
+ *  生成的 SVG 会做 URL 编码，成本不低，所以按 id+类型+颜色+风格 缓存。
+ *  —— 缓存键必须带风格，否则换了风格图标还是旧的。
  */
 const _iconURLCache = new Map();
 function iconURL(item){
   if(item.icon && item.icon.trim()) return item.icon.trim();
-  const key = (item.id||'') + '|' + (item.visual || item.type || '') + '|' + (item.color||'');
+  const key = styleCacheTag() + '|' + (item.id||'') + '|'
+            + (item.visual || item.type || '') + '|' + (item.color||'');
   const hit = _iconURLCache.get(key);
   if(hit) return hit;
   const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(makeIconSVG(item, 64));

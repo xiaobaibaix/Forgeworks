@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261021d">
-<link rel="stylesheet" href="../css/layout.css?v=20261021d">
-<link rel="stylesheet" href="../css/components.css?v=20261021d">
+<link rel="stylesheet" href="../css/theme.css?v=20261021e">
+<link rel="stylesheet" href="../css/layout.css?v=20261021e">
+<link rel="stylesheet" href="../css/components.css?v=20261021e">
 </head>
 <body>
 <div class="app">
@@ -41,52 +41,56 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261021d"></script>
-<script src="../js/data/seed.js?v=20261021d"></script>
-<script src="../js/data/prompts.js?v=20261021d"></script>
+<script src="../js/core/config.js?v=20261021e"></script>
+<script src="../js/core/color.js?v=20261021e"></script>
+<script src="../js/data/styles.js?v=20261021e"></script>
+<script src="../js/data/seed.js?v=20261021e"></script>
+<script src="../js/data/prompts.js?v=20261021e"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261021d"></script>
-<script src="../js/core/lookup.js?v=20261021d"></script>
+<script src="../js/core/state.js?v=20261021e"></script>
+<script src="../js/core/lookup.js?v=20261021e"></script>
+<script src="../js/core/style.js?v=20261021e"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261021d"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261021d"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261021d"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261021d"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261021d"></script>
+<script src="../js/vendor/three.min.js?v=20261021e"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261021e"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261021e"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261021e"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261021e"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261021d"></script>
-<script src="../js/engines/viewer3d.js?v=20261021d"></script>
-<script src="../js/engines/validate.js?v=20261021d"></script>
-<script src="../js/engines/solver.js?v=20261021d"></script>
-<script src="../js/engines/balance.js?v=20261021d"></script>
-<script src="../js/engines/csv.js?v=20261021d"></script>
-<script src="../js/core/io.js?v=20261021d"></script>
+<script src="../js/engines/icons.js?v=20261021e"></script>
+<script src="../js/engines/viewer3d.js?v=20261021e"></script>
+<script src="../js/engines/validate.js?v=20261021e"></script>
+<script src="../js/engines/solver.js?v=20261021e"></script>
+<script src="../js/engines/balance.js?v=20261021e"></script>
+<script src="../js/engines/csv.js?v=20261021e"></script>
+<script src="../js/core/io.js?v=20261021e"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261021d"></script>
-<script src="../js/ui/router.js?v=20261021d"></script>
-<script src="../js/ui/editor.js?v=20261021d"></script>
+<script src="../js/ui/table.js?v=20261021e"></script>
+<script src="../js/ui/router.js?v=20261021e"></script>
+<script src="../js/ui/editor.js?v=20261021e"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/elements.js?v=20261021d"></script>
-<script src="../js/views/items.js?v=20261021d"></script>
-<script src="../js/views/machines.js?v=20261021d"></script>
-<script src="../js/views/recipes.js?v=20261021d"></script>
-<script src="../js/views/techs.js?v=20261021d"></script>
-<script src="../js/views/eras.js?v=20261021d"></script>
-<script src="../js/views/assets.js?v=20261021d"></script>
-<script src="../js/views/prompts.js?v=20261021d"></script>
-<script src="../js/views/validate.js?v=20261021d"></script>
-<script src="../js/views/balance.js?v=20261021d"></script>
-<script src="../js/views/solve.js?v=20261021d"></script>
-<script src="../js/views/graph.js?v=20261021d"></script>
-<script src="../js/views/export.js?v=20261021d"></script>
+<script src="../js/views/style.js?v=20261021e"></script>
+<script src="../js/views/elements.js?v=20261021e"></script>
+<script src="../js/views/items.js?v=20261021e"></script>
+<script src="../js/views/machines.js?v=20261021e"></script>
+<script src="../js/views/recipes.js?v=20261021e"></script>
+<script src="../js/views/techs.js?v=20261021e"></script>
+<script src="../js/views/eras.js?v=20261021e"></script>
+<script src="../js/views/assets.js?v=20261021e"></script>
+<script src="../js/views/prompts.js?v=20261021e"></script>
+<script src="../js/views/validate.js?v=20261021e"></script>
+<script src="../js/views/balance.js?v=20261021e"></script>
+<script src="../js/views/solve.js?v=20261021e"></script>
+<script src="../js/views/graph.js?v=20261021e"></script>
+<script src="../js/views/export.js?v=20261021e"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261021d"></script>
+<script src="../js/main.js?v=20261021e"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -145,6 +149,160 @@
         try { var s = isoPreview(m, 0, 132); return !s || s.indexOf('<svg') !== 0; } catch(e){ return true; }
       });
       return bad.length === 0 ? S.machines.length + ' 个' : '失败 ' + bad.length;
+    });
+
+    /* ============================================================
+       风格引擎 —— 重点是验证「跨模块联动」真的接上了
+       ============================================================ */
+    check('风格预设齐全', function(){
+      var n = stylePresetList().length;
+      return n >= 6 ? n + ' 套' : '只有 ' + n + ' 套';
+    });
+
+    check('当前风格可解析', function(){
+      var st = getStyle();
+      return (st && st.palette && st.palette.structure)
+        ? st.name + ' / ' + Object.keys(st.palette.accent).length + ' 个强调色'
+        : false;
+    });
+
+    check('色板全部落在角色带内（统一性算法）', function(){
+      var bad = [];
+      var roles = ['structure','metal','metalDark','metalLite','glass','glow','hazard'];
+      try{
+        stylePresetList().forEach(function(p){
+          setStylePreset(p.id);
+          var st = getStyle();
+          roles.forEach(function(role){
+            var b = toneBand(role, st);
+            var f = fitColor(st.palette[role], role, st);
+            if(f.satAfter < b.sat[0]-0.6 || f.satAfter > b.sat[1]+0.6)
+              bad.push(p.id+'/'+role+' S='+f.satAfter.toFixed(1));
+            if(f.ligAfter < b.lig[0]-0.6 || f.ligAfter > b.lig[1]+0.6)
+              bad.push(p.id+'/'+role+' L='+f.ligAfter.toFixed(1));
+          });
+        });
+      }finally{ setStylePreset(DEFAULT_STYLE_ID); }
+      return bad.length === 0
+        ? roles.length + ' 角色 × ' + stylePresetList().length + ' 套全部合规'
+        : '违规：' + bad.slice(0, 3).join(' | ');
+    });
+
+    check('旋钮能把颜色推出带外再拉回', function(){
+      // 饱和度拉到 -40，structure 应该比默认更灰
+      var before = getStyle().palette.structure;
+      var sBefore = hexToHsl(before).s;
+      try{
+        setKnob('satBoost', -40);
+        var after = getStyle().palette.structure;
+        var sAfter = hexToHsl(after).s;
+        return sAfter < sBefore ? 'S ' + sBefore.toFixed(1) + '% → ' + sAfter.toFixed(1) + '%' : '旋钮无效';
+      }finally{ resetKnobs(); }
+    });
+
+    check('换风格 → 描述词跟着变', function(){
+      var m = S.machines[0], a, b;
+      try{
+        setStylePreset('voxel-industrial');
+        a = machinePrompt(m, {withTech:true});
+        setStylePreset('bio-xeno');
+        b = machinePrompt(m, {withTech:true});
+      }finally{ setStylePreset(DEFAULT_STYLE_ID); }
+      return a !== b ? '描述词随风格改写' : '描述词没变（风格没接上）';
+    });
+
+    check('换风格 → 图标跟着变', function(){
+      var it = S.items[0], a, b;
+      clearIconCache();
+      try{
+        setStylePreset('voxel-industrial');
+        a = iconURL(it);
+        setStylePreset('dieselpunk-foundry');
+        b = iconURL(it);
+      }finally{ setStylePreset(DEFAULT_STYLE_ID); clearIconCache(); }
+      return a !== b ? '图标配色随风格变' : '图标没变';
+    });
+
+    check('图标采用风格校正色（不是原始 item.color）', function(){
+      var st = getStyle();
+      var target = null;
+      S.items.forEach(function(it){
+        if(target) return;
+        var f = itemFitColor(it, st);
+        if(f.changed && Math.abs(f.satDelta) + Math.abs(f.ligDelta) > 8) target = it;
+      });
+      if(!target) return '所有物品色本就在带内，无需验证';
+      var svg = iconInner(target);
+      var orig = String(target.color).toLowerCase();
+      return svg.indexOf(orig) < 0
+        ? '原色 ' + orig + ' 已被替换为 ' + itemFitColor(target, st).hex
+        : '仍在用原色 ' + orig;
+    });
+
+    check('换风格 → 3D 材质跟着变', function(){
+      var m = S.machines[0];
+      var a = buildMachineParts(m, 'voxel-industrial').parts[0].mat.color;
+      var b = buildMachineParts(m, 'cleanroom-orbit').parts[0].mat.color;
+      return a !== b ? a + ' → ' + b : '材质没变';
+    });
+
+    check('3D 强调色跟随风格', function(){
+      var m = S.machines[0], a, b;
+      try{
+        setStylePreset('voxel-industrial');
+        a = buildMachineParts(m).accent;
+        setStylePreset('dieselpunk-foundry');
+        b = buildMachineParts(m).accent;
+      }finally{ setStylePreset(DEFAULT_STYLE_ID); }
+      return a !== b ? a + ' → ' + b : '强调色没变';
+    });
+
+    check('一致性检查可运行', function(){
+      var r = styleCheck();
+      if(typeof r.total !== 'number') return false;
+      var kd = Object.keys(r.byKind).map(function(k){
+        return k + ' ' + r.byKind[k].total + '(严重' + r.byKind[k].high + ')';
+      }).join(' / ');
+      return r.total + ' 处：' + kd;
+    });
+
+    check('风格可序列化', function(){
+      var j = JSON.stringify(styleToJson());
+      return j.length > 200 ? Math.round(j.length / 102.4) / 10 + ' KB' : '过短 ' + j.length;
+    });
+
+    check('配色修正表可生成且修正后合规', function(){
+      var t = stylePaletteFixTable();
+      var n = Object.keys(t).length;
+      if(!n) return '当前风格下无需修正';
+      // 修正后的每个色，按其被分配的**实际角色**检查是否落在对应带内
+      var st = getStyle(), bad = 0, checked = 0;
+      Object.keys(t).forEach(function(id){
+        var hx = String(t[id].after).match(/#[0-9a-fA-F]{6}/g) || [];
+        var roles = assignPaletteRoles(hx);   // 对修正后的色重新推角色
+        hx.forEach(function(h, i){
+          checked++;
+          var f = fitColor(h, roles[i], st);
+          if(Math.abs(f.satDelta) > 0.6 || Math.abs(f.ligDelta) > 0.6) bad++;
+        });
+      });
+      return bad === 0 ? n + ' 个建筑 / ' + checked + ' 个色，全部合规'
+                       : n + ' 个建筑，' + bad + '/' + checked + ' 个色仍不合规';
+    });
+
+    check('配色角色推断正确（按饱和度定强调色）', function(){
+      // 强调色在前 / 在后两种情况都要能认出来
+      var r1 = assignPaletteRoles(['#8b6b4a', '#3d3d3b']);   // 锈红在前
+      var r2 = assignPaletteRoles(['#6b6e73', '#e07b39']);   // 炉火橙在后
+      var r3 = assignPaletteRoles(['#e8eaec']);              // 单色低饱和
+      var ok = r1[0] === 'accent' && r2[1] === 'accent' && r3[0] === 'structure';
+      return ok ? '前/后/单色 三种情况均正确'
+                : '推断错误 r1=' + r1.join(',') + ' r2=' + r2.join(',') + ' r3=' + r3.join(',');
+    });
+
+    check('修正代码片段可生成', function(){
+      var s = styleFixSnippet();
+      return s.length > 40 ? s.split('\n').length + ' 行' : '片段过短';
     });
 
     // ---- three.js ----

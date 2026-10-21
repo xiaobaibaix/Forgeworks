@@ -32,6 +32,7 @@ function makeViews(){
     recipes:{title:'配方', sub:'生产链的核心', render:()=>renderRecipes()},
     techs:{title:'科技树', sub:'恒星纪元解锁链', render:()=>renderTechs()},
     eras:{title:'恒星纪元', sub:'元素与星球类型解锁', render:()=>renderEras()},
+    style:{title:'风格', sub:'项目美术风格的单一来源', render:()=>renderStyle()},
     assets:{title:'资源', sub:'物品图标与模型', render:()=>renderAssets()},
     prompts:{title:'美术需求', sub:'建筑/物品的生成描述词', render:()=>renderPrompts()},
     validate:{title:'校验', sub:'数据健康检查', render:()=>renderValidate()},
@@ -46,7 +47,7 @@ function renderNav(){
   const nav=document.getElementById('nav');
   const groups=[
     ['内容定义',['elements','items','machines','recipes','techs','eras']],
-    ['美术资源',['assets','prompts']],
+    ['美术资源',['style','assets','prompts']],
     ['分析工具',['validate','balance','solve','graph']],
     ['输出',['export']],
   ];

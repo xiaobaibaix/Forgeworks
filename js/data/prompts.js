@@ -314,24 +314,34 @@ function _joinParts(parts){ return parts.map(p=>'· '+p).join('\n'); }
  */
 function machinePrompt(m, opt){
   opt = opt || {};
+  const st = getStyle();                       // 风格引擎（js/core/style.js）
   const brief = MACHINE_BRIEFS[m.id] || {};
   const cat = CATEGORY_STYLE[m.cat] || {};
   const form = brief.form || cat.silhouette || '方盒状工业建筑';
   const parts = brief.parts || cat.parts || ['主体', '底座'];
-  const palette = brief.palette || ((cat.accent || '钢灰') + ' + 深钢灰');
   const fp = m.footprint || '1×1';
 
+  // 配色：优先用 MACHINE_BRIEFS 手写的文字描述（"锈红""深钢灰"这类质感词有用），
+  // 但把里面的十六进制色值校正进风格带 —— 保留质感，统一色值。
+  let palette;
+  if(brief.palette){
+    palette = fitBriefPalette(brief.palette, st).text;
+  }else{
+    palette = `${accentFor(m.cat, st)}（强调）+ ${st.palette.structure}（结构）`
+            + ` + ${st.palette.metal}（主体金属）`;
+  }
+
   let p = '';
-  p += `【主体】低多边形体素风格的工业建筑：${m.name}（${m.cat}类，占地 ${fp} 格）\n`;
+  p += `【主体】${st.form.body}的工业建筑：${m.name}（${m.cat}类，占地 ${fp} 格）\n`;
   p += `【形态】${form}\n`;
   p += `【必须包含的部件】\n${_joinParts(parts)}\n`;
   p += `【配色】${palette}\n`;
   if(brief.note) p += `【关键细节】${brief.note}\n`;
-  p += `【风格】${STYLE_BLOCK.render}；${STYLE_BLOCK.shading}\n`;
-  p += `【视角】${STYLE_BLOCK.camera}；${STYLE_BLOCK.background}\n`;
+  // 风格约束（精简版，完整版在风格页/导出里）
+  p += styleBrief(st, { withNegative:false });
   if(opt.withTech !== false){
-    p += `【技术规格】${TECH_SPEC.machine}\n`;
-    p += `【负向】${NEGATIVE.join('、')}\n`;
+    p += `【技术规格】${st.spec.machine}\n`;
+    p += `【负向】${st.negative.join('、')}\n`;
   }
   return p;
 }
@@ -341,18 +351,20 @@ function machinePrompt(m, opt){
  */
 function itemPrompt(it, opt){
   opt = opt || {};
+  const st = getStyle();
   const form = ITEM_FORM[it.visual || it.type] || '小型物件';
   const kind = typeLabel(it.type);
+  // 用风格校正后的颜色，保证「图标看到的」=「让 AI 生成的」
+  const fit = itemFitColor(it, st);
 
   let p = '';
-  p += `【主体】低多边形体素风格的游戏物品：${it.name}（${kind}，T${it.tier}）\n`;
+  p += `【主体】${st.form.body}的游戏物品：${it.name}（${kind}，T${it.tier}）\n`;
   p += `【形态】${form}\n`;
-  p += `【配色】主色 ${it.color}${it.desc ? '；' + it.desc : ''}\n`;
-  p += `【风格】${STYLE_BLOCK.render}；${STYLE_BLOCK.shading}\n`;
-  p += `【视角】${STYLE_BLOCK.camera}；${STYLE_BLOCK.background}\n`;
+  p += `【配色】主色 ${fit.hex}${it.desc ? '；' + it.desc : ''}\n`;
+  p += styleBrief(st, { withNegative:false });
   if(opt.withTech !== false){
-    p += `【技术规格】${TECH_SPEC.item}\n`;
-    p += `【负向】${NEGATIVE.join('、')}\n`;
+    p += `【技术规格】${st.spec.item}\n`;
+    p += `【负向】${st.negative.join('、')}\n`;
   }
   return p;
 }
@@ -416,18 +428,23 @@ const CATEGORY_MASSING = {
   ],
 };
 
-// 分类配色（体块用）
+// 分类配色（体块用）—— 保留作为兜底，实际渲染走风格引擎的 stylePalette()
 const MASSING_TONE = {
   base:   {top:'#c9c6bf', left:'#9d9a93', right:'#b5b2ab'},
   body:   {top:'#a8adb5', left:'#7c8188', right:'#9299a1'},
   accent: {top:'#ef9f27', left:'#b8761a', right:'#d68d21'},
   hot:    {top:'#e07b39', left:'#a85626', right:'#c66a30'},
 };
-// 按分类给体块染色
+// 按分类给体块染色（风格引擎不可用时兜底）
 const CATEGORY_TONE = {
   '采集':'#c9a227', '分离':'#6fa8c4', '冶炼':'#e07b39', '合金':'#9aa8b8',
   '化工':'#7fc47f', '加工':'#8a97a8', '组装':'#3fa887', '回收':'#b09a6a',
 };
+
+/** 把一个颜色拆成等轴测体块的三个面（顶面亮、左面暗、右面中） */
+function toneFaces(hex){
+  return { top: shade(hex, 7), left: shade(hex, -27), right: shade(hex, -13) };
+}
 
 /**
  * 画一个等轴测体块预览
@@ -440,7 +457,19 @@ function isoPreview(m, rot, size){
   const fp = String(m.footprint || '1×1').split(/[×xX]/).map(n=>parseFloat(n)||1);
   const W = fp[0], D = fp[1] || fp[0];
   const blocks = CATEGORY_MASSING[m.cat] || CATEGORY_MASSING['加工'];
-  const accentBase = CATEGORY_TONE[m.cat] || '#8a97a8';
+
+  // 配色跟随当前风格（风格引擎没加载时兜底到 CATEGORY_TONE）
+  let accentBase, faceBase, faceBody, faceHot;
+  if(typeof getStyle === 'function'){
+    const st = getStyle();
+    accentBase = accentFor(m.cat, st);
+    faceBase   = toneFaces(st.palette.structure);
+    faceBody   = toneFaces(st.palette.metal);
+    faceHot    = toneFaces(st.palette.glow);
+  }else{
+    accentBase = CATEGORY_TONE[m.cat] || '#8a97a8';
+    faceBase = MASSING_TONE.base; faceBody = MASSING_TONE.body; faceHot = MASSING_TONE.hot;
+  }
 
   // 视野自适应：格数越大缩放越小
   const scale = size / (Math.max(W,D) * 2.6 + 3.2);
@@ -479,8 +508,10 @@ function isoPreview(m, rot, size){
     const x0 = dx*W, y0 = dy*D;
     const hw = (w*W)/2, hd = (d*D)/2;
     const col = tone==='accent'
-      ? {top:accentBase, left:shadeHex(accentBase,-28), right:shadeHex(accentBase,-14)}
-      : MASSING_TONE[tone] || MASSING_TONE.body;
+      ? {top:accentBase, left:shade(accentBase,-28), right:shade(accentBase,-14)}
+      : tone==='hot' ? faceHot
+      : tone==='base' ? faceBase
+      : faceBody;
 
     const c = [[-hw,-hd],[hw,-hd],[hw,hd],[-hw,hd]];
     const top = c.map(([ddx,ddy])=>P(x0+ddx, y0+ddy, z0+h));

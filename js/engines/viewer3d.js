@@ -67,8 +67,15 @@ function resolveMaterial(role, accentColor, presetKey){
   // 容错：如果 role 其实是材质名（历史上误用过），直接用该材质，避免静默回退
   if(!ROLE_MAT[role] && MATERIALS[role]) return MATERIALS[role];
 
-  const preset = MATERIAL_PRESETS[presetKey] || MATERIAL_PRESETS.industrial;
-  const key = preset.map[role] || ROLE_MAT[role] || 'steel';
+  // presetKey 可能是「风格 id」，也可能是旧体系的「材质方案名」
+  let map = null;
+  if(typeof STYLE_PRESETS !== 'undefined' && STYLE_PRESETS[presetKey]){
+    map = STYLE_PRESETS[presetKey].matMap;
+  }
+  if(!map && MATERIAL_PRESETS[presetKey]) map = MATERIAL_PRESETS[presetKey].map;
+  if(!map) map = MATERIAL_PRESETS.industrial.map;
+
+  const key = map[role] || ROLE_MAT[role] || 'steel';
   const base = MATERIALS[key] || MATERIALS.steel;
   if(role === 'glow') return Object.assign({}, base, { color: accentColor, emissive: 1.0 });
   return base;
@@ -78,10 +85,22 @@ function resolveMaterial(role, accentColor, presetKey){
    二、建筑几何构成
    ============================================================ */
 
+// 兜底用的分类强调色。正常情况走风格引擎的 accentFor()，
+// 只有风格模块没加载时才用这份（否则 3D 预览和描述词会是两个色系）。
 const ACCENT_BY_CAT = {
   '采集':'#d9a441', '分离':'#5fa8c4', '冶炼':'#e07b39', '合金':'#8fa3b8',
   '化工':'#6fb86f', '加工':'#7d8b9e', '组装':'#3fa887', '回收':'#b09a6a',
 };
+
+/** 当前项目风格 id（风格模块没加载时返回 null） */
+function currentStyleId(){
+  return (typeof styleState !== 'undefined' && styleState) ? styleState.presetId : null;
+}
+/** 分类强调色：跟随项目风格 */
+function categoryAccent(cat){
+  if(typeof accentFor === 'function') return accentFor(cat);
+  return ACCENT_BY_CAT[cat] || '#8a97a8';
+}
 
 function parseFootprint(fp){
   const a = String(fp || '1×1').split(/[×xX]/).map(n => parseFloat(n) || 1);
@@ -97,11 +116,22 @@ function anim(kind, o){ return Object.assign({ kind: kind }, o); }
 function buildMachineParts(m, presetKey){
   const fp = parseFootprint(m.footprint);
   const W = fp[0], D = fp[1];
-  const accent = ACCENT_BY_CAT[m.cat] || '#8a97a8';
+  // 强调色跟随项目风格；没指定材质方案时也默认用当前风格
+  const accent = categoryAccent(m.cat);
+  const key = presetKey || currentStyleId() || 'industrial';
+  const tweak = (typeof matParamsFor === 'function') ? (matParamsFor(key) || null) : null;
   const parts = [];
 
   function push(p){
-    p.mat = resolveMaterial(p.role, accent, presetKey || 'industrial');
+    p.mat = resolveMaterial(p.role, accent, key);
+    // 应用风格/方案的全局材质微调（金属感、粗糙度、发光倍率）
+    if(tweak){
+      p.mat = Object.assign({}, p.mat, {
+        metal: Math.max(0, Math.min(1, (p.mat.metal||0) + (tweak.metalAdd||0))),
+        rough: Math.max(0, Math.min(1, (p.mat.rough||0) + (tweak.roughAdd||0))),
+        emissive: Math.max(0, Math.min(1.6, (p.mat.emissive||0) * (tweak.emissiveScale||1))),
+      });
+    }
     parts.push(p);
   }
   // 长方体
@@ -523,7 +553,8 @@ function createViewer3D(canvas, machine){
     autoRotate: false,
     playing: true,
     speed: 1,
-    preset: 'industrial',
+    // 默认跟随项目风格，而不是写死 'industrial'
+    preset: currentStyleId() || 'industrial',
     time: 0,
     disposed: false,
     needsRender: true,
@@ -1085,6 +1116,23 @@ function createViewer3D(canvas, machine){
           params: Object.assign({}, m.part.anim, { kind: undefined }),
         });
       });
+      // 风格元数据：UE 侧能追溯这批模型属于哪套风格、色板是什么
+      let styleMeta = null;
+      if(typeof getStyle === 'function'){
+        const stt = getStyle();
+        styleMeta = {
+          presetId: stt.id,
+          presetName: stt.name,
+          tagline: stt.tagline,
+          accent: categoryAccent(machine.cat),
+          palette: {
+            structure: stt.palette.structure, metal: stt.palette.metal,
+            metalDark: stt.palette.metalDark, metalLite: stt.palette.metalLite,
+            glow: stt.palette.glow, hazard: stt.palette.hazard,
+          },
+          knobs: stt.knobs,
+        };
+      }
       out.userData = {
         forgeworks: {
           generator: 'Forgeworks',
@@ -1097,6 +1145,7 @@ function createViewer3D(canvas, machine){
           pivot: 'bottom-center',
           materialSlots: materials.map(function(mm){ return mm.name; }),
           animations: animSpec,
+          style: styleMeta,
         },
       };
 
@@ -1158,8 +1207,21 @@ function open3DViewer(machineId){
     return;
   }
 
-  const presetOpts = Object.keys(MATERIAL_PRESETS)
-    .map(function(k){ return '<option value="'+k+'">'+MATERIAL_PRESETS[k].name+'</option>'; }).join('');
+  // 材质下拉 = 项目风格（推荐，与描述词同源）+ 旧材质方案（快速试效果）
+  const curStyle = currentStyleId();
+  let presetOpts = '';
+  if(typeof STYLE_PRESETS !== 'undefined'){
+    presetOpts += '<optgroup label="项目风格（与描述词同源）">'
+      + stylePresetList().map(function(p){
+          return '<option value="'+p.id+'">'+p.name+'</option>';
+        }).join('')
+      + '</optgroup>';
+  }
+  presetOpts += '<optgroup label="材质方案（仅改渲染，不改描述词）">'
+    + Object.keys(MATERIAL_PRESETS)
+        .map(function(k){ return '<option value="'+k+'">'+MATERIAL_PRESETS[k].name+'</option>'; }).join('')
+    + '</optgroup>';
+  const defaultKey = curStyle || 'industrial';
 
   document.getElementById('modal').innerHTML =
     '<header><h3>' + m.name + ' · 3D 预览</h3><span class="x" id="v3Close">×</span></header>' +
@@ -1243,7 +1305,9 @@ function open3DViewer(machineId){
     V.setSpeed(v);
     document.getElementById('v3SpeedVal').textContent = v.toFixed(1) + 'x';
   };
-  document.getElementById('v3Preset').onchange = function(e){ V.setPreset(e.target.value); };
+  const presetSel = document.getElementById('v3Preset');
+  presetSel.value = defaultKey;      // 默认选中项目风格
+  presetSel.onchange = function(e){ V.setPreset(e.target.value); };
   document.getElementById('v3Shot').onclick = function(){
     downloadDataURL(V.toPNG(), m.id + '_view3d.png');
     toast('已导出当前视角');
