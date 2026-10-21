@@ -36,6 +36,7 @@ VIEWS = makeViews();
 (function initSync(){
   if(typeof syncPing !== 'function') return;
   syncPing(true).then(function(online){
+    if(typeof renderProjectChip === 'function') renderProjectChip();
     if(!online) return;
     syncWatchEvents(function(){
       // 事件到来时，若正停在同步页就局部刷新（避免打断用户操作）

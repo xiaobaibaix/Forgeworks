@@ -14,6 +14,21 @@ function syncEscape(value){
   })[c]);
 }
 
+function _syncRecentHTML(proj){
+  const recent = (SYNC.projects && SYNC.projects.recent) || [];
+  if(!recent.length) return '';
+  const current = proj && proj.root;
+  return `<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+    <div style="font-size:11px;color:var(--text-3);margin-bottom:4px">最近项目</div>
+    ${recent.map(item=>`<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
+      <button class="sm" data-recent="${syncEscape(item.root)}" ${item.exists === false ? 'disabled' : ''}>${item.root === current ? '当前' : '打开'}</button>
+      <div style="min-width:0;flex:1">
+        <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${syncEscape(item.name || item.root)} <span class="pill">${item.kind === 'ue' ? 'UE' : '工作区'}</span>${item.exists === false ? ' <span style="color:var(--red);font-size:10.5px">目录不存在</span>' : ''}</div>
+        <div style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${syncEscape(item.root)}</div>
+      </div></div>`).join('')}
+  </div>`;
+}
+
 function renderSync(){
   const v = document.getElementById('view');
   const on = SYNC.online;
@@ -46,6 +61,7 @@ function renderSync(){
       ${proj && proj.root ? `
         <div style="font-size:12px;margin-top:6px">
           已绑定：<strong>${syncEscape(proj.name || '未命名项目')}</strong>
+          <span class="pill">${proj.kind === 'ue' ? 'UE 项目' : '工作区'}</span>
           <div style="font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:2px">${syncEscape(proj.root)}</div>
           <div style="font-size:11px;color:var(--text-3);margin-top:4px">
             工作区：<code>${syncEscape(proj.root)}/Forgeworks/</code>（_Source 中间文件 + _Sync 清单，不进 Content/）
@@ -54,17 +70,22 @@ function renderSync(){
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
           <button id="syRescan">重新扫描目录</button>
           <button id="syUnbind">解除绑定</button>
+          <button id="syPick">切换文件夹…</button>
         </div>
       ` : `
-        <p class="hint">绑定 UE 项目根目录（含 .uproject 的那层）。Bridge 会在里面创建
-        <code>Forgeworks/</code> 工作区：_Source 放中间文件（GLB/图标/元数据），_Sync 放同步清单。</p>
+        <p class="hint">选择任意文件夹作为工作区；含 <code>.uproject</code> 的目录会自动识别为 UE 项目。
+        Bridge 会在里面创建 <code>Forgeworks/</code>：_Source 放中间文件（GLB/图标/元数据），_Sync 放同步清单。</p>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="primary" id="syPick">选择文件夹并绑定…</button>
+        </div>
         <div style="display:flex;gap:8px;margin-top:8px">
-          <input id="syPath" placeholder="/path/to/StellarEra（UE 项目根）" spellcheck="false"
+          <input id="syPath" placeholder="/path/to/project（也可以直接输入路径）" spellcheck="false"
                  style="flex:1;font-family:var(--mono);font-size:12px">
-          <button class="primary" id="syBind">绑定</button>
+          <button id="syBind">绑定</button>
         </div>
         <div id="syBindErr" style="color:var(--red);font-size:11.5px;margin-top:6px"></div>
       `}
+      ${_syncRecentHTML(proj)}
     </div>
 
     ${proj ? `
@@ -137,6 +158,39 @@ function renderSync(){
   };
   const un = document.getElementById('syUnbind');
   if(un) un.onclick = async ()=>{ await syncUnbindProject(); render(); };
+
+  const pick = document.getElementById('syPick');
+  if(pick) pick.onclick = async ()=>{
+    const err = document.getElementById('syBindErr');
+    const label = pick.textContent;
+    pick.disabled = true; pick.textContent = '等待系统对话框…';
+    try{
+      const picked = await syncPickFolder();
+      if(picked && picked.ok && picked.path){
+        const r = await syncBindProject(picked.path);
+        if(r && r.ok){ render(); return; }
+        if(err) err.textContent = (r && r.error) || '绑定失败';
+        else syncLog('绑定失败：' + ((r && r.error) || ''), 'warn');
+      }else if(picked && !picked.cancelled && err){
+        err.textContent = picked.error || '没有选择目录';
+      }
+    }catch(e){
+      if(err) err.textContent = '选择失败：' + e.message;
+      else syncLog('选择失败：' + e.message, 'warn');
+    }finally{
+      if(pick.isConnected){ pick.disabled = false; pick.textContent = label; }
+    }
+  };
+
+  v.querySelectorAll('[data-recent]').forEach(button=>button.onclick = async ()=>{
+    if(button.dataset.recent === (proj && proj.root)) return;
+    button.disabled = true;
+    try{
+      const r = await syncBindProject(button.dataset.recent);
+      if(!r || !r.ok) syncLog('打开项目失败：' + ((r && r.error) || '未知错误'), 'warn');
+    }catch(e){ syncLog('打开项目失败：' + e.message, 'warn'); }
+    render();
+  });
 
   const resc = document.getElementById('syRescan') || document.getElementById('syReScan2');
   if(resc) resc.onclick = async ()=>{

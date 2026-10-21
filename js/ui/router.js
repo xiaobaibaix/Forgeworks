@@ -81,6 +81,7 @@ function renderNav(){
 
 function render(){
   renderNav();
+  if(typeof renderProjectChip==='function') renderProjectChip();
   const v=VIEWS[cur];
   document.getElementById('viewTitle').textContent=v.title;
   document.getElementById('viewSub').textContent=v.sub;

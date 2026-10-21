@@ -19,6 +19,7 @@ const SYNC = {
   checkedAt: 0,
   status: null,           // /api/status 的结果
   manifest: null,         // manifest 缓存（Bridge 在线时以它为准）
+  projects: { current: null, recent: [] },   // 当前项目 + 最近绑定过的目录
   ueAssets: [],
   conflicts: [],
   lastScan: null,
@@ -49,12 +50,32 @@ async function syncPing(force){
     if(!r.ok) throw new Error('HTTP ' + r.status);
     SYNC.status = await r.json();
     SYNC.online = !!(SYNC.status && SYNC.status.ok);
-    if(SYNC.online){ await syncLoadManifest(); await syncLoadUEAssets(); await syncLoadConflicts(); }
+    if(SYNC.online){
+      await syncLoadProjects();
+      await syncLoadManifest(); await syncLoadUEAssets(); await syncLoadConflicts();
+    }
   }catch(e){
     SYNC.online = false;
     SYNC.status = null;
   }
   return SYNC.online;
+}
+
+async function syncLoadProjects(){
+  if(!SYNC.online){ SYNC.projects = { current:null, recent:[] }; return SYNC.projects; }
+  try{
+    const r = await syncApi('projects');
+    SYNC.projects = (r && r.ok)
+      ? { current:r.current || null, recent:Array.isArray(r.recent) ? r.recent : [] }
+      : { current:null, recent:[] };
+  }catch(e){ SYNC.projects = { current:null, recent:[] }; }
+  return SYNC.projects;
+}
+
+/** 让 Bridge 弹系统目录选择框；返回 {ok, path} 或 {ok:false, cancelled:true} */
+async function syncPickFolder(){
+  if(!SYNC.online) return { ok:false, error:'Bridge 不在线' };
+  return syncApi('project/pick', {});
 }
 
 async function syncLoadManifest(){
@@ -96,9 +117,11 @@ async function syncBindProject(path){
   const r = await syncApi('project/bind', { path });
   if(r && r.ok){
     syncLog('已绑定项目：%s（%s）'.replace('%s', r.project.name).replace('%s', r.project.root), 'ok');
+    await syncLoadProjects();
     await syncLoadManifest();
     await syncLoadUEAssets();
     await syncLoadConflicts();
+    if(SYNC.status) SYNC.status.project = r.project;
   }
   return r;
 }
@@ -108,7 +131,25 @@ async function syncUnbindProject(){
   SYNC.manifest = null;
   SYNC.ueAssets = [];
   SYNC.conflicts = [];
+  if(SYNC.status) SYNC.status.project = null;
+  await syncLoadProjects();
   return r;
+}
+
+/** 侧栏顶部的项目切换器：始终可见，点开进入同步页 */
+function renderProjectChip(){
+  const el = document.getElementById('projectChip');
+  if(!el) return;
+  const project = SYNC.status && SYNC.status.project;
+  const name = project ? (project.name || project.root) : '未绑定项目';
+  const kind = project ? (project.kind === 'ue' ? 'UE 项目' : '工作区') : (SYNC.online ? '点击选择目录' : 'Bridge 未启动');
+  el.innerHTML = `<button class="sm" style="width:100%;text-align:left;line-height:1.45;white-space:normal"
+    title="${syncEscape(project ? project.root : '在同步页绑定项目目录')}">
+    <span style="display:block;font-size:11px;color:var(--text-3)">项目</span>
+    <span style="display:block;font-size:12px;overflow:hidden;text-overflow:ellipsis">${syncEscape(name)}</span>
+    <span style="display:block;font-size:10.5px;color:var(--text-3)">${syncEscape(kind)}</span>
+  </button>`;
+  el.querySelector('button').onclick = ()=>{ cur = 'sync'; render(); syncHash('sync'); };
 }
 
 /* ---------- 状态机（三把 hash，sync-design §4.3） ---------- */

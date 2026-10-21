@@ -243,14 +243,53 @@ def find_uproject(root):
     return None
 
 
+RECENT_LIMIT = 8
+
+
+def project_label(path, uproject):
+    if uproject:
+        return uproject[:-len('.uproject')]
+    return os.path.basename(path.rstrip(os.sep)) or path
+
+
+def current_project():
+    """当前绑定项目的描述（未绑定返回 None）。"""
+    root = project_root()
+    if not root:
+        return None
+    uproject = find_uproject(root)
+    return {
+        'root': root,
+        'name': project_label(root, uproject),
+        'uproject': uproject,
+        'kind': _state.get('projectKind') or ('ue' if uproject else 'workspace'),
+    }
+
+
+def remember_project(project):
+    saved = dict(project, boundAt=now_iso())
+    recent = [item for item in (_state.get('recentProjects') or []) if item.get('root') != project['root']]
+    recent.insert(0, saved)
+    _state['recentProjects'] = recent[:RECENT_LIMIT]
+
+
+def recent_projects():
+    rows = []
+    for item in (_state.get('recentProjects') or []):
+        root = item.get('root')
+        if root:
+            rows.append(dict(item, exists=os.path.isdir(root)))
+    return rows
+
+
 def bind_project(path):
-    """绑定项目目录：验证、建目录树、初始化 manifest。"""
+    """绑定目录：有 .uproject 视为 UE 项目，否则当作普通工作区。"""
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.isdir(path):
         return {'ok': False, 'error': '目录不存在: %s' % path}
     uproject = find_uproject(path)
-    if not uproject:
-        return {'ok': False, 'error': '目录里没有 .uproject（这不是一个 UE 项目根目录）: %s' % path}
+    kind = 'ue' if uproject else 'workspace'
+    label = project_label(path, uproject)
 
     fw = os.path.join(path, FW_DIR_NAME)
     made = []
@@ -266,7 +305,8 @@ def bind_project(path):
             'schemaVersion': 1,
             'forgeworksVersion': 'bridge-%s' % BRIDGE_VERSION,
             'project': {
-                'name': uproject[:-len('.uproject')],
+                'name': label,
+                'kind': kind,
                 'uproject': uproject,
                 'root': path,
                 'boundAt': now_iso(),
@@ -275,19 +315,53 @@ def bind_project(path):
         })
 
     _state['projectRoot'] = path
+    _state['projectKind'] = kind
     _state['boundAt'] = now_iso()
+    project = {'name': label, 'kind': kind, 'uproject': uproject, 'root': path}
+    remember_project(project)
     save_state()
-    push_event('project.bound', {'root': path, 'uproject': uproject})
-    return {'ok': True, 'project': {
-        'name': uproject[:-len('.uproject')], 'uproject': uproject, 'root': path,
-    }, 'fwDir': fw, 'created': made}
+    push_event('project.bound', {'root': path, 'uproject': uproject, 'kind': kind})
+    return {'ok': True, 'project': project, 'fwDir': fw, 'created': made}
 
 
 def unbind_project():
     _state.pop('projectRoot', None)
+    _state.pop('projectKind', None)
     save_state()
     push_event('project.unbound', None)
     return {'ok': True}
+
+
+PICK_PROMPT = '选择 Forgeworks 项目目录（含 .uproject 会识别为 UE 项目）'
+
+
+def pick_folder():
+    """弹系统原生的目录选择框。取消时返回 cancelled，而不是错误。"""
+    try:
+        if sys.platform == 'darwin':
+            out = subprocess.run(
+                ['osascript', '-e', 'POSIX path of (choose folder with prompt "%s")' % PICK_PROMPT],
+                capture_output=True, text=True, timeout=300)
+        elif os.name == 'nt':
+            script = ("Add-Type -AssemblyName System.Windows.Forms; "
+                      "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                      "$d.Description = '%s'; "
+                      "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }" % PICK_PROMPT)
+            out = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
+                                 capture_output=True, text=True, timeout=300)
+        else:
+            out = subprocess.run(['zenity', '--file-selection', '--directory', '--title=' + PICK_PROMPT],
+                                 capture_output=True, text=True, timeout=300)
+    except FileNotFoundError:
+        return {'ok': False, 'error': '当前系统没有可用的目录选择器，请手动输入路径'}
+    except subprocess.TimeoutExpired:
+        return {'ok': False, 'cancelled': True, 'error': '选择超时'}
+    if out.returncode != 0:
+        return {'ok': False, 'cancelled': True}
+    path = (out.stdout or '').strip()
+    if not path:
+        return {'ok': False, 'cancelled': True}
+    return {'ok': True, 'path': path}
 
 
 # ---------------------------------------------------------------------------
@@ -881,12 +955,10 @@ class BridgeHandler(SimpleHTTPRequestHandler):
 
     def _route_get(self, route):
         if route == 'status':
-            proj = None
-            if project_root():
-                proj = {'root': project_root(),
-                        'name': (find_uproject(project_root()) or '').replace('.uproject', '') or None}
-            self._json({'ok': True, 'bridge': BRIDGE_VERSION, 'project': proj,
+            self._json({'ok': True, 'bridge': BRIDGE_VERSION, 'project': current_project(),
                         'blender': blender_info()})
+        elif route == 'projects':
+            self._json({'ok': True, 'current': current_project(), 'recent': recent_projects()})
         elif route == 'project/info':
             mf = load_manifest()
             self._json({'ok': True, 'manifest': mf, 'root': project_root()})
@@ -983,6 +1055,11 @@ class BridgeHandler(SimpleHTTPRequestHandler):
         route = self.path[5:].split('?')[0]
         if route == 'project/bind':
             self._json(bind_project((body or {}).get('path', '')))
+        elif route == 'project/pick':
+            if not self._same_loopback_origin():
+                self._json({'ok': False, 'error': '目录选择只允许 Forgeworks 本地同源页面调用'}, 403)
+            else:
+                self._json(pick_folder())
         elif route == 'project/unbind':
             self._json(unbind_project())
         elif route == 'manifest/scan':
@@ -1122,9 +1199,10 @@ class BridgeHandler(SimpleHTTPRequestHandler):
         if not origin:
             return False
         parsed = urlparse(origin)
-        expected_host, expected_port = self.server.server_address[:2]
-        return (parsed.scheme == 'http' and parsed.hostname == expected_host
-                and parsed.port == expected_port and self.headers.get('Host') == '%s:%s' % (expected_host, expected_port))
+        port = self.server.server_address[1]
+        allowed_hosts = ('127.0.0.1:%d' % port, 'localhost:%d' % port)
+        return (parsed.scheme == 'http' and parsed.hostname in ('127.0.0.1', 'localhost')
+                and parsed.port == port and (self.headers.get('Host') or '') in allowed_hosts)
 
     def _json(self, obj, code=200):
         data = json.dumps(obj, ensure_ascii=False).encode('utf-8')
