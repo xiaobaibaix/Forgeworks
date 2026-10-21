@@ -121,8 +121,11 @@ function buildMachineParts(m, presetKey){
   const key = presetKey || currentStyleId() || 'industrial';
   const tweak = (typeof matParamsFor === 'function') ? (matParamsFor(key) || null) : null;
   const parts = [];
+  const roleCounts = {};
 
   function push(p){
+    roleCounts[p.role] = (roleCounts[p.role] || 0) + 1;
+    p.partId = m.id + ':' + p.role + ':' + roleCounts[p.role];
     p.mat = resolveMaterial(p.role, accent, key);
     // 应用风格/方案的全局材质微调（金属感、粗糙度、发光倍率）
     if(tweak){
@@ -710,6 +713,7 @@ function createViewer3D(canvas, machine){
 
       const g = partGeometry(p);
       const mesh = new THREE.Mesh(g, mat);
+      mesh.userData.fwPartId = p.partId;
 
       if(p.kind === 'pipe'){
         const a = new THREE.Vector3(p.a[0], p.a[1], p.a[2]);
@@ -722,11 +726,18 @@ function createViewer3D(canvas, machine){
         if(p.rotY) mesh.rotation.y = p.rotY;
       }
 
+      const override = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[p.partId];
+      if(override){
+        if(override.hidden) mesh.visible = false;
+        applyPartOverride(mesh, p, override);
+      }
+
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       group.add(mesh);
       meshes.push({
-        mesh: mesh, part: p, role: p.role,
+        mesh: mesh, part: p, role: p.role, id: p.partId,
+        baseMaterial: mat.clone(),
         base: {
           pos: mesh.position.clone(),
           rot: mesh.rotation.clone(),
@@ -734,6 +745,33 @@ function createViewer3D(canvas, machine){
         },
       });
     });
+  }
+
+  function applyPartOverride(mesh, part, override){
+    const transform = override.transform || {};
+    const pos = transform.position || {};
+    const rot = transform.rotation || {};
+    const scale = transform.scale || {};
+    mesh.position.x += Number(pos.x) || 0;
+    mesh.position.y += Number(pos.y) || 0;
+    mesh.position.z += Number(pos.z) || 0;
+    mesh.rotation.x += Number(rot.x) || 0;
+    mesh.rotation.y += Number(rot.y) || 0;
+    mesh.rotation.z += Number(rot.z) || 0;
+    mesh.scale.set(Number(scale.x) || 1, Number(scale.y) || 1, Number(scale.z) || 1);
+    const material = override.material || {};
+    if(material.color) mesh.material.color.set(material.color);
+    if(material.textureData && THREE.TextureLoader){
+      mesh.material.map = new THREE.TextureLoader().load(material.textureData, function(){ mesh.material.needsUpdate = true; });
+    }
+    if(Number.isFinite(material.metallic)) mesh.material.metalness = material.metallic;
+    if(Number.isFinite(material.roughness)) mesh.material.roughness = material.roughness;
+    if(Number.isFinite(material.emissive)) mesh.material.emissiveIntensity = material.emissive;
+    if(Number.isFinite(material.alpha)){
+      mesh.material.opacity = material.alpha;
+      mesh.material.transparent = material.alpha < 1;
+      mesh.material.needsUpdate = true;
+    }
   }
   buildMeshes();
 
@@ -984,6 +1022,10 @@ function createViewer3D(canvas, machine){
       const latest = geo.parts[i];
       if(!latest) continue;
       m.part = latest;
+      if(m.mesh.material) m.mesh.material.dispose();
+      m.baseMaterial.dispose();
+      m.baseMaterial = makeThreeMaterial(latest.mat);
+      m.mesh.material = m.baseMaterial.clone();
       const mat = m.mesh.material;
       const c = new THREE.Color(latest.mat.color);
       mat.color.copy(c);
@@ -1000,6 +1042,8 @@ function createViewer3D(canvas, machine){
       mat.opacity = latest.mat.alpha;
       mat.needsUpdate = true;
       m.part.anim = latest.anim;
+      const override = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[m.id];
+      if(override) applyPartOverride(m.mesh, latest, override);
     }
     rebuildParticles();
     state.needsRender = true;
@@ -1013,6 +1057,7 @@ function createViewer3D(canvas, machine){
       if(controls && controls.dispose) controls.dispose();
       for(let i=0;i<meshes.length;i++){
         if(meshes[i].mesh.material) meshes[i].mesh.material.dispose();
+        meshes[i].baseMaterial.dispose();
       }
       Object.keys(geoCache).forEach(function(k){ geoCache[k].dispose(); });
       groundGeo.dispose(); groundMat.dispose();
@@ -1032,6 +1077,26 @@ function createViewer3D(canvas, machine){
     getSpeed: function(){ return state.speed; },
     setPreset: applyPreset,
     getPreset: function(){ return state.preset; },
+    getParts: function(){
+      return meshes.map(function(entry){
+        return {id:entry.id, role:entry.role, kind:entry.part.kind, visible:entry.mesh.visible};
+      });
+    },
+    setPartOverride: function(id, override){
+      const entry = meshes.find(function(item){ return item.id === id; });
+      if(!entry) return false;
+      const mesh = entry.mesh;
+      mesh.position.copy(entry.base.pos);
+      mesh.rotation.copy(entry.base.rot);
+      mesh.quaternion.copy(entry.base.quat);
+      mesh.scale.set(1,1,1);
+      mesh.visible = !(override && override.hidden);
+      if(mesh.material !== entry.baseMaterial) mesh.material.dispose();
+      mesh.material = entry.baseMaterial.clone();
+      if(override) applyPartOverride(mesh, entry.part, override);
+      state.needsRender = true;
+      return true;
+    },
     reset: function(){
       placeCamera(HOME.yaw, HOME.pitch, HOME.dist);
       if(controls){ controls.target.copy(target); controls.update(); }
@@ -1058,8 +1123,11 @@ function createViewer3D(canvas, machine){
       const order = [];
       for(let i=0;i<meshes.length;i++){
         const m = meshes[i];
+        if(!m.mesh.visible) continue;
         const role = m.role || 'body';
-        if(!buckets[role]){ buckets[role] = { mat: m.mesh.material, geos: [] }; order.push(role); }
+        const override = machine.ui3d && machine.ui3d.parts && machine.ui3d.parts[m.id];
+        const key = override && override.material ? role + '_' + m.id : role;
+        if(!buckets[key]){ buckets[key] = { role:key, mat:m.mesh.material, geos:[] }; order.push(key); }
         m.mesh.updateWorldMatrix(true, false);
         const g = m.mesh.geometry.clone();
         g.applyMatrix4(m.mesh.matrixWorld);
@@ -1154,6 +1222,10 @@ function createViewer3D(canvas, machine){
         const meta = {
           materials: materials.length,
           vertices: finalGeo.attributes.position ? finalGeo.attributes.position.count : 0,
+          // 三角面数（质量门禁用：规格见风格预设 spec.machine，超限要告警）
+          triangles: finalGeo.index
+            ? Math.round(finalGeo.index.count / 3)
+            : (finalGeo.attributes.position ? Math.round(finalGeo.attributes.position.count / 3) : 0),
           sizeM: [ +size.x.toFixed(3), +size.y.toFixed(3), +size.z.toFixed(3) ],
           sizeCm: [ Math.round(size.x*100), Math.round(size.y*100), Math.round(size.z*100) ],
         };
@@ -1163,7 +1235,7 @@ function createViewer3D(canvas, machine){
       }, function(err){
         finalGeo.dispose();
         onDone(null, err);
-      }, { binary: true, onlyVisible: false });
+      }, { binary: true, onlyVisible: true });
     },
     _advance: function(seconds, step){
       const s = step || 0.016;
@@ -1246,6 +1318,7 @@ function open3DViewer(machineId){
           '</div>' +
           '<button class="sm" id="v3Auto">自动旋转</button>' +
           '<button class="sm" id="v3Reset">复位</button>' +
+          '<button class="sm" id="v3Parts">编辑部件</button>' +
           '<button class="sm" id="v3Shot">导出 PNG</button>' +
           '<button class="sm primary" id="v3Glb">导出 GLB</button>' +
         '</div>' +
@@ -1289,6 +1362,7 @@ function open3DViewer(machineId){
   document.getElementById('v3Close').onclick = close;
   document.getElementById('v3CloseBtn').onclick = close;
   document.getElementById('v3Reset').onclick = function(){ V.reset(); };
+  document.getElementById('v3Parts').onclick = function(){ close(); open3DEditor(m.id); };
   document.getElementById('v3Auto').onclick = function(e){
     const next = !V.getAutoRotate();
     V.setAutoRotate(next);

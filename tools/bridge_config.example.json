@@ -1,0 +1,14 @@
+{
+  "_说明": "复制为 tools/bridge_config.json 并填写。该文件已被 gitignore，密钥不会入库。",
+  "blender": {
+    "path": "",
+    "_path说明": "留空则自动探测（移动硬盘 /Volumes/*/app/Blender.app、/Applications 等）"
+  },
+  "providers": {
+    "_说明": "密钥只写在被 gitignore 的 tools/bridge_config.json。远程任务须在界面逐次确认。",
+    "tripo": { "api_key": "" },
+    "meshy": { "api_key": "" },
+    "ark":   { "api_key": "", "endpoint": "" },
+    "zhipu": { "api_key": "" }
+  }
+}

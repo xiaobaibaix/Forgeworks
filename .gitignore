@@ -13,3 +13,11 @@ exports/
 
 # 依赖（本项目无依赖，防止误提交）
 node_modules/
+
+# Python 字节码
+__pycache__/
+*.pyc
+
+# Bridge 本地状态与密钥（tools/bridge_config.example.json 是入库模板）
+tools/.bridge_state.json
+tools/bridge_config.json

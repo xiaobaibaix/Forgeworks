@@ -30,6 +30,21 @@ VIEWS = makeViews();
   const h=(location.hash||'').replace('#','');
   if(h && VIEWS[h]) cur=h;
 })();
+
+// 探测 Forge Bridge（tools/bridge.py）。异步、非阻塞：
+// 离线时 renderSync 会显示启动指引，其余功能完全不受影响。
+(function initSync(){
+  if(typeof syncPing !== 'function') return;
+  syncPing(true).then(function(online){
+    if(!online) return;
+    syncWatchEvents(function(){
+      // 事件到来时，若正停在同步页就局部刷新（避免打断用户操作）
+      if(cur === 'sync'){ syncLoadManifest().then(function(){ renderSyncLog(); renderSyncTable(); renderSyncSummary(); }); }
+    });
+    // 首次探测成功 → 若在同步页，整页重绘一次（显示绑定/导出区）
+    if(cur === 'sync') render();
+  });
+})();
 // 版本戳：直接从 main.js 自己的 src 里读 ?v=，保证与资源版本号一致
 (function(){
   const el = document.getElementById('buildStamp');

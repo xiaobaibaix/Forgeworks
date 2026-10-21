@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261021e">
-<link rel="stylesheet" href="../css/layout.css?v=20261021e">
-<link rel="stylesheet" href="../css/components.css?v=20261021e">
+<link rel="stylesheet" href="../css/theme.css?v=20261021s">
+<link rel="stylesheet" href="../css/layout.css?v=20261021s">
+<link rel="stylesheet" href="../css/components.css?v=20261021s">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261021s">
 </head>
 <body>
 <div class="app">
@@ -41,56 +42,62 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261021e"></script>
-<script src="../js/core/color.js?v=20261021e"></script>
-<script src="../js/data/styles.js?v=20261021e"></script>
-<script src="../js/data/seed.js?v=20261021e"></script>
-<script src="../js/data/prompts.js?v=20261021e"></script>
+<script src="../js/core/config.js?v=20261021s"></script>
+<script src="../js/core/color.js?v=20261021s"></script>
+<script src="../js/data/styles.js?v=20261021s"></script>
+<script src="../js/data/seed.js?v=20261021s"></script>
+<script src="../js/data/prompts.js?v=20261021s"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261021e"></script>
-<script src="../js/core/lookup.js?v=20261021e"></script>
-<script src="../js/core/style.js?v=20261021e"></script>
+<script src="../js/core/state.js?v=20261021s"></script>
+<script src="../js/core/lookup.js?v=20261021s"></script>
+<script src="../js/core/style.js?v=20261021s"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261021e"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261021e"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261021e"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261021e"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261021e"></script>
+<script src="../js/vendor/three.min.js?v=20261021s"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261021s"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261021s"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261021s"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261021s"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261021e"></script>
-<script src="../js/engines/viewer3d.js?v=20261021e"></script>
-<script src="../js/engines/validate.js?v=20261021e"></script>
-<script src="../js/engines/solver.js?v=20261021e"></script>
-<script src="../js/engines/balance.js?v=20261021e"></script>
-<script src="../js/engines/csv.js?v=20261021e"></script>
-<script src="../js/core/io.js?v=20261021e"></script>
+<script src="../js/engines/icons.js?v=20261021s"></script>
+<script src="../js/engines/viewer3d.js?v=20261021s"></script>
+<script src="../js/views/editor3d.js?v=20261021s"></script>
+<script src="../js/engines/validate.js?v=20261021s"></script>
+<script src="../js/engines/solver.js?v=20261021s"></script>
+<script src="../js/engines/balance.js?v=20261021s"></script>
+<script src="../js/engines/csv.js?v=20261021s"></script>
+<script src="../js/core/io.js?v=20261021s"></script>
+<script src="../js/sync.js?v=20261021s"></script>
+<script src="../js/pipeline.js?v=20261021s"></script>
+<script src="../js/pipeline-templates.js?v=20261021s"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261021e"></script>
-<script src="../js/ui/router.js?v=20261021e"></script>
-<script src="../js/ui/editor.js?v=20261021e"></script>
+<script src="../js/ui/table.js?v=20261021s"></script>
+<script src="../js/ui/router.js?v=20261021s"></script>
+<script src="../js/ui/editor.js?v=20261021s"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261021e"></script>
-<script src="../js/views/elements.js?v=20261021e"></script>
-<script src="../js/views/items.js?v=20261021e"></script>
-<script src="../js/views/machines.js?v=20261021e"></script>
-<script src="../js/views/recipes.js?v=20261021e"></script>
-<script src="../js/views/techs.js?v=20261021e"></script>
-<script src="../js/views/eras.js?v=20261021e"></script>
-<script src="../js/views/assets.js?v=20261021e"></script>
-<script src="../js/views/prompts.js?v=20261021e"></script>
-<script src="../js/views/validate.js?v=20261021e"></script>
-<script src="../js/views/balance.js?v=20261021e"></script>
-<script src="../js/views/solve.js?v=20261021e"></script>
-<script src="../js/views/graph.js?v=20261021e"></script>
-<script src="../js/views/export.js?v=20261021e"></script>
+<script src="../js/views/style.js?v=20261021s"></script>
+<script src="../js/views/elements.js?v=20261021s"></script>
+<script src="../js/views/items.js?v=20261021s"></script>
+<script src="../js/views/machines.js?v=20261021s"></script>
+<script src="../js/views/recipes.js?v=20261021s"></script>
+<script src="../js/views/techs.js?v=20261021s"></script>
+<script src="../js/views/eras.js?v=20261021s"></script>
+<script src="../js/views/assets.js?v=20261021s"></script>
+<script src="../js/views/prompts.js?v=20261021s"></script>
+<script src="../js/views/validate.js?v=20261021s"></script>
+<script src="../js/views/balance.js?v=20261021s"></script>
+<script src="../js/views/solve.js?v=20261021s"></script>
+<script src="../js/views/graph.js?v=20261021s"></script>
+<script src="../js/views/sync.js?v=20261021s"></script>
+<script src="../js/views/pipeline.js?v=20261021s"></script>
+<script src="../js/views/export.js?v=20261021s"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261021e"></script>
+<script src="../js/main.js?v=20261021s"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -368,10 +375,18 @@
       var t = v._advance(0.5);
       var png = v.toPNG();
       var dbg = v._debug();
+      var parts = v.getParts();
+      var uniqueParts = new Set(parts.map(function(part){ return part.id; }));
+      var unchanged = parts.length === uniqueParts.size && parts.length === dbg.meshes;
+      if(parts.length){
+        unchanged = unchanged && v.setPartOverride(parts[0].id, {transform:{position:{x:0.25}}});
+        unchanged = unchanged && v.setPartOverride(parts[0].id, null);
+      }
       v.dispose();
       cv.remove();
       if(!png || png.indexOf('data:image/png') !== 0) return 'PNG 导出失败';
       if(!(dbg.meshes > 0)) return '无网格';
+      if(!unchanged) return '部件 ID 不唯一或编辑接口复位失败';
       return '网格 ' + dbg.meshes + ' / 推进 ' + t.toFixed(2) + 's';
     });
 
@@ -384,9 +399,10 @@
       // 每行都应有 3D / 编辑 两个按钮
       var btn3d = document.querySelectorAll('[data-m3d]').length;
       var btnEdit = document.querySelectorAll('[data-medit]').length;
-      if(btn3d !== rows.length || btnEdit !== rows.length){
+      var btnPart = document.querySelectorAll('[data-medit3d]').length;
+      if(btn3d !== rows.length || btnEdit !== rows.length || btnPart !== rows.length){
         cur = prev;
-        return '按钮数不符: 3D=' + btn3d + ' 编辑=' + btnEdit + ' 行=' + rows.length;
+        return '按钮数不符: 3D=' + btn3d + ' 部件=' + btnPart + ' 编辑=' + btnEdit + ' 行=' + rows.length;
       }
       // 点第三行应弹出 3D 弹窗
       rows[2].dispatchEvent(new MouseEvent('click', {bubbles:true}));

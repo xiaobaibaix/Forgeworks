@@ -1,0 +1,27 @@
+.pipeline-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pipeline-toolbar label{display:flex;align-items:center;gap:6px}
+.pipeline-toolbar span{font-size:11px;color:var(--text-2)}
+.pipeline-shell{display:flex;gap:10px;min-height:620px;margin:12px 0}
+.pipeline-palette{width:125px;flex:0 0 125px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.pipeline-palette button{text-align:left}
+.pipeline-scroll{overflow:auto;flex:1;border:1px solid var(--border);border-radius:10px;background-color:var(--bg);background-image:radial-gradient(var(--border) .7px,transparent .7px);background-size:18px 18px}
+.pipeline-canvas{position:relative;min-width:100%;min-height:100%}
+.pipeline-canvas>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.pipeline-canvas>svg path{fill:none;stroke:var(--accent);stroke-width:2;opacity:.65}
+.pipeline-node{position:absolute;width:230px;min-height:165px;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 4px 16px #0002}
+.pipeline-node.selected{outline:2px solid var(--accent)}
+.pipeline-node header{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.pipeline-node header{cursor:grab;touch-action:none}
+.pipeline-node header:active{cursor:grabbing}
+.pipeline-node header span{font-family:var(--mono);font-size:10px;color:var(--text-2)}
+.pipeline-node small{display:block;margin:5px 0;color:var(--text-3);font-family:var(--mono);font-size:10px}
+.pipeline-node textarea,.pipeline-node input{width:100%;box-sizing:border-box;margin:4px 0}
+.pipeline-node-actions,.pipeline-ports{display:flex;gap:5px;margin-top:6px}
+.pipeline-node-actions button{font-size:10px;padding:4px 7px}
+.pipeline-ports select{width:100%;font-size:10px}
+.pipeline-error{color:var(--danger,#b54708);line-height:1.4}
+.pipeline-output{display:inline-block;margin-top:6px;font-size:10px;color:var(--accent)}
+.pipeline-edge-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:var(--text-2)}
+.pipeline-edge-list span{padding:4px 6px;border-radius:5px;background:var(--panel-2)}
+.pipeline-edge-list button{padding:2px 5px;font-size:9px}
+@media(max-width:760px){.pipeline-shell{min-height:500px}.pipeline-palette{width:95px;flex-basis:95px}}
