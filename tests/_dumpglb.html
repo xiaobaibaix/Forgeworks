@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>dump</title></head>
+<body>
+<pre id="r">PENDING</pre>
+
+<!-- 与 index.html 完全相同的加载顺序，保证环境一致 -->
+<script src="../js/core/config.js?v=20261021e"></script>
+<script src="../js/core/color.js?v=20261021e"></script>
+<script src="../js/data/styles.js?v=20261021e"></script>
+<script src="../js/data/seed.js?v=20261021e"></script>
+<script src="../js/data/prompts.js?v=20261021e"></script>
+<script src="../js/core/state.js?v=20261021e"></script>
+<script src="../js/core/lookup.js?v=20261021e"></script>
+<script src="../js/core/style.js?v=20261021e"></script>
+<script src="../js/vendor/three.min.js?v=20261021e"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261021e"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261021e"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261021e"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261021e"></script>
+<script src="../js/engines/icons.js?v=20261021e"></script>
+<script src="../js/engines/viewer3d.js?v=20261021e"></script>
+<script src="../js/core/io.js?v=20261021e"></script>
+<script src="../js/ui/table.js?v=20261021e"></script>
+
+<script>
+/* 用真实的 Forgeworks 管线导出一个 GLB，输出 base64 供外部抓取。
+   目的是验证「工具产出的 GLB → Blender 能否正确读取」这条链路。 */
+(function(){
+  var ID = location.hash.replace('#','') || 'MC_DRILL';
+  function finish(txt){
+    document.getElementById('r').textContent = 'DUMP_START\n' + txt + '\nDUMP_END';
+    document.title = 'DUMP_DONE';
+  }
+  try{
+    var m = machineOf(ID);
+    if(!m){ finish('ERR: no machine ' + ID); return; }
+
+    var cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 512;
+    document.body.appendChild(cv);
+
+    var V = createViewer3D(cv, m);
+    V.toGLB(function(result, err, meta){
+      if(err){ finish('ERR glb: ' + err.message); return; }
+      try{
+        var blob = (result instanceof Blob) ? result : new Blob([result]);
+        var fr = new FileReader();
+        fr.onload = function(){
+          var b64 = String(fr.result).split(',')[1] || '';
+          finish('ID=' + ID + '\nSIZE=' + blob.size
+               + '\nMETA=' + JSON.stringify(meta || {})
+               + '\nB64=' + b64);
+        };
+        fr.readAsDataURL(blob);
+      }catch(e){ finish('ERR read: ' + e.message); }
+    });
+  }catch(e){
+    finish('ERR init: ' + e.message + '\n' + (e.stack||''));
+  }
+})();
+</script>
+</body>
+</html>
