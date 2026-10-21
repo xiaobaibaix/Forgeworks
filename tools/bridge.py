@@ -46,7 +46,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlparse
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1239,9 +1239,8 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 pass
 
 
-class Bridge(HTTPServer):
-    allow_reuse_address = True
-    daemon_threads = True      # SSE 长连接需要多线程
+class Bridge(ThreadingHTTPServer):
+    allow_reuse_address = True   # SSE 长连接会占住线程，必须多线程
 
 
 def main():
