@@ -59,7 +59,10 @@
 
 ### 3D 体块查看
 
-点任意建筑的「3D 查看」，基于 three.js 实时渲染：
+在「机器」列表里**点击任意一行**，直接弹出该机器的 3D 预览；行尾的「编辑」按钮改参数。
+（「美术需求」页也有入口，但主入口是机器列表。）
+
+基于 three.js 实时渲染：
 
 - **轨道拖动** 360° 环绕、滚轮缩放、阻尼惯性、双击复位
 - **实时阴影** + 环境反射（RoomEnvironment 生成 PMREM）
@@ -303,20 +306,22 @@ import_all()
 bash tests/run.sh
 ```
 
-它用 Chrome/Edge headless 打开 `tests/smoke.html`，检查 30 项：
+它用 Chrome/Edge headless 打开 `tests/smoke.html`，检查 32 项：
 
 - 数据加载、VIEWS 构建、13 个视图逐个渲染不报错
+- 机器列表 32 行点击均可打开 3D、每行都有 3D/编辑按钮
 - 32 个建筑 + 75 个物品的描述词全部能生成
 - 32 个建筑体块构建、82 个动画部件合法、32 个建筑带粒子配置
+- 几何体类型多样（非方块图元 ≥5 种，每个建筑非方块占比 ≥1/3）
 - three.js / OrbitControls / GLTFExporter 加载正常
-- 3D 渲染器可创建并渲染、GLB 导出有效
+- 3D 渲染器可创建并渲染、GLB 结构与占地约束正确
 - 75 个物品图标全部能生成
 - 物料平衡、CSV、Markdown 导出正常
 
 输出：
 
 ```json
-{ "summary": { "total": 30, "pass": 30, "fail": 0, "runtimeErrors": 0 } }
+{ "summary": { "total": 32, "pass": 32, "fail": 0, "runtimeErrors": 0 } }
 ```
 
 > headless 下 WebGL 需要 SwiftShader 软件渲染，`run.sh` 已经带上

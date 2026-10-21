@@ -1196,6 +1196,7 @@ function open3DViewer(machineId){
       '</div>' +
     '</div>' +
     '<footer>' +
+      '<button id="v3Edit">编辑参数</button>' +
       '<button id="v3CopyPrompt">复制描述词</button>' +
       '<button class="primary" id="v3CloseBtn">关闭</button>' +
     '</footer>';
@@ -1265,6 +1266,10 @@ function open3DViewer(machineId){
         : '';
       toast('已导出 ' + m.id + '.glb' + info);
     });
+  };
+  document.getElementById('v3Edit').onclick = function(){
+    close();                                  // 先释放 WebGL 上下文
+    openEditor('machines', m.id);
   };
   document.getElementById('v3CopyPrompt').onclick = function(){
     copyText(machinePrompt(m, {withTech:true}));

@@ -217,6 +217,28 @@
       return '网格 ' + dbg.meshes + ' / 推进 ' + t.toFixed(2) + 's';
     });
 
+    check('机器列表点击打开 3D', function(){
+      var prev = cur;
+      cur = 'machines';
+      VIEWS.machines.render();
+      var rows = document.querySelectorAll('#view tbody tr');
+      if(!rows.length) { cur = prev; return '机器列表无数据行'; }
+      // 每行都应有 3D / 编辑 两个按钮
+      var btn3d = document.querySelectorAll('[data-m3d]').length;
+      var btnEdit = document.querySelectorAll('[data-medit]').length;
+      if(btn3d !== rows.length || btnEdit !== rows.length){
+        cur = prev;
+        return '按钮数不符: 3D=' + btn3d + ' 编辑=' + btnEdit + ' 行=' + rows.length;
+      }
+      // 点第三行应弹出 3D 弹窗
+      rows[2].dispatchEvent(new MouseEvent('click', {bubbles:true}));
+      var opened = !!document.getElementById('v3Canvas');
+      if(_activeViewer){ try{ _activeViewer.dispose(); }catch(e){} _activeViewer = null; }
+      closeModal();
+      cur = prev;
+      return opened ? 'ok（' + rows.length + ' 行均可点）' : '点击未打开 3D';
+    });
+
     check('图标生成', function(){
       var bad = S.items.filter(function(it){
         try { var u = iconURL(it); return !u || u.indexOf('data:') !== 0; } catch(e){ return true; }
