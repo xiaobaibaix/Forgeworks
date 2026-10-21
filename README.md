@@ -136,6 +136,23 @@ python3 tools/serve.py        # http://127.0.0.1:8787
 > 别用 `python3 -m http.server` —— 它不发送 `Cache-Control`，浏览器会缓存 JS，
 > 改完代码刷新页面跑的仍是旧版本，很难排查。侧栏底部有版本戳可以确认。
 
+**改完 JS/CSS 后打一次版本戳**（把所有 `?v=` 查询串统一刷新，绕过浏览器缓存）：
+
+```bash
+python3 tools/stamp.py        # 自动生成：20261021c -> 20261021d
+python3 tools/stamp.py --show # 只看当前版本号
+```
+
+脚本会改写 `index.html` 和 `tests/smoke.html` 里的 37 处资源引用，
+同一天多次打戳自动递进字母序号。界面左下角的版本戳是**运行时从 `main.js`
+自己的 `src` 里读出来的**，所以打完戳会自动跟上，不用改第二处。
+
+打开时把版本号带上最保险：
+
+```
+http://127.0.0.1:8787/index.html?v=20261021d
+```
+
 支持的 URL hash：`#balance` `#prompts` `#assets` `#graph` 等，可直接打开指定视图。
 
 ---
@@ -177,6 +194,18 @@ Forgeworks/
     │   └── editor.js       编辑弹窗
     ├── views/              13 个视图，每个一个文件
     └── main.js             启动
+├── tools/
+│   ├── serve.py            静态服务器（发 no-store，禁用缓存）
+│   ├── stamp.py            版本戳打戳（统一刷新 ?v= 查询串）
+│   ├── import_datatables.py  UE Python 导入脚本
+│   └── DT_*.csv            导出的 DataTable 样例
+├── tests/
+│   ├── smoke.html          真实浏览器自测页（32 项检查）
+│   └── run.sh              冒烟测试入口
+└── docs/
+    ├── ue-import.md        UE 导入指南
+    ├── sample-content.json 内容样例
+    └── screenshots/        效果截图
 ```
 
 ### 加载顺序很重要
