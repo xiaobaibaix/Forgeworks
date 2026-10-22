@@ -37,9 +37,14 @@ function loadState(){
   normalizeAssets(s);
   return s;
 }
+function saveLocalState(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); return true; }
+  catch(e){ console.warn('save local fail', e); return false; }
+}
 function saveState(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); toast('已保存到浏览器本地'); }
-  catch(e){ toast('保存失败：'+e.message); }
+  if(!saveLocalState()){ toast('保存失败：浏览器本地存储不可用'); return; }
+  const toProject = typeof syncScheduleContentSave === 'function' && syncScheduleContentSave();
+  toast(toProject ? '已保存到项目' : '已保存到浏览器本地');
 }
 function toast(msg){
   const t = document.getElementById('toast');

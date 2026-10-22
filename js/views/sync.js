@@ -23,9 +23,58 @@ function _syncRecentHTML(proj){
     ${recent.map(item=>`<div style="display:flex;align-items:center;gap:8px;padding:4px 0">
       <button class="sm" data-recent="${syncEscape(item.root)}" ${item.exists === false ? 'disabled' : ''}>${item.root === current ? '当前' : '打开'}</button>
       <div style="min-width:0;flex:1">
-        <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${syncEscape(item.name || item.root)} <span class="pill">${item.kind === 'ue' ? 'UE' : '工作区'}</span>${item.exists === false ? ' <span style="color:var(--red);font-size:10.5px">目录不存在</span>' : ''}</div>
+        <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${syncEscape(item.name || item.root)} <span class="pill">${item.kind === 'ue' ? 'UE' : 'Forgeworks'}</span>${item.exists === false ? ' <span style="color:var(--red);font-size:10.5px">目录不存在</span>' : ''}</div>
         <div style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${syncEscape(item.root)}</div>
       </div></div>`).join('')}
+  </div>`;
+}
+
+function syncUECardHTML(){
+  const target = SYNC.status && SYNC.status.ueTarget;
+  const manifest = SYNC.ueManifest;
+  const counts = syncUESummary();
+  const exportedCount = manifest && manifest.assets ? Object.keys(manifest.assets).length : 0;
+  const publishedAt = manifest && manifest.publishedAt
+    ? String(manifest.publishedAt).replace('T', ' ').slice(0, 16) : '';
+  return `<div class="card">
+    <h3>UE 导出目标</h3>
+    ${target ? `
+      <div style="font-size:12px;margin-top:6px">
+        已设置：<strong>${syncEscape(target.name || target.root)}</strong>
+        <span class="pill">${target.kind === 'ue' ? 'UE 项目' : '文件夹'}</span>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:2px">${syncEscape(target.root)}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">
+          只复制 GLB 与清单到 <code>${syncEscape(target.forgeworksRoot || target.root + '/Forgeworks')}</code>；
+          描述词、生成管线、预览等内部资料留在 Forgeworks 项目里。
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">
+          UE 清单：${exportedCount} 个资产${publishedAt ? ' · 最近导出 ' + syncEscape(publishedAt) : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="primary" id="syUEPublishAll" ${_syncBusy ? 'disabled' : ''}>
+          导出全部机器（${S.machines.length}）</button>
+        <button id="syUEPublishStale" ${_syncBusy ? 'disabled' : ''}>只导出待更新/未导出</button>
+        <button id="syUERefreshManifest">刷新 UE 清单</button>
+        <button id="syUETargetPick">更换目标…</button>
+      </div>
+      <div id="syUEProgress" style="font-size:11.5px;color:var(--text-2);margin-top:8px"></div>
+      <div style="margin-top:8px;font-size:12px">
+        已导出 ${counts.exported} · 待导出 ${counts.stale} · 未导出 ${counts.none}
+      </div>
+    ` : `
+      <p class="hint">
+        选择一个 UE 项目目录作为导出目标。导出时 Bridge 会把 GLB 与清单复制到
+        <code>&lt;UE项目&gt;/Forgeworks/</code>，不会写入 Content/，也不会带出描述词与管线。
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input id="syUePath" placeholder="/path/to/YourUEProject（含 .uproject）" spellcheck="false"
+               style="flex:1;min-width:200px;font-family:var(--mono);font-size:12px">
+        <button class="primary" id="syUeSet">设置目标</button>
+        <button id="syUePick">选择文件夹…</button>
+      </div>
+      <div id="syUeErr" style="color:var(--red);font-size:11.5px;margin-top:6px"></div>
+    `}
   </div>`;
 }
 
@@ -56,10 +105,10 @@ function renderSync(){
             <b>启动 Bridge</b><p>在 Forgeworks 目录运行 <code>python3 tools/bridge.py</code>，然后刷新本页。</p>
           </div></div>
           <div class="setup-step"><span class="n">02</span><div>
-            <b>绑定项目目录</b><p>选一个 UE 项目或任意工作区文件夹，资产会写进其中的 <code>Forgeworks/</code>。</p>
+            <b>新建或打开项目</b><p>Forgeworks 项目独立保存设计数据、描述词、管线与资源文件。</p>
           </div></div>
           <div class="setup-step"><span class="n">03</span><div>
-            <b>导出并核对</b><p>导出 GLB、图标与清单；后续改动会自动标记为「待更新」。</p>
+            <b>导出到 UE</b><p>设置 UE 导出目标后，只把 GLB 和清单复制过去。</p>
           </div></div>
         </div>
       `}
@@ -67,44 +116,71 @@ function renderSync(){
 
     ${on ? `
     <div class="card">
-      <h3>项目绑定</h3>
+      <h3>Forgeworks 项目</h3>
       ${proj && proj.root ? `
         <div style="font-size:12px;margin-top:6px">
-          已绑定：<strong>${syncEscape(proj.name || '未命名项目')}</strong>
-          <span class="pill">${proj.kind === 'ue' ? 'UE 项目' : '工作区'}</span>
+          已打开：<strong>${syncEscape(proj.name || '未命名项目')}</strong>
+          <span class="pill">Forgeworks 项目</span>
           <div style="font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:2px">${syncEscape(proj.root)}</div>
           <div style="font-size:11px;color:var(--text-3);margin-top:4px">
-            工作区：<code>${syncEscape(proj.root)}/Forgeworks/</code>（_Source 中间文件 + _Sync 清单，不进 Content/）
+            项目保存全部设计数据与生成资源（描述词、生成管线、预览、GLB 等）；
+            UE 只接收导出的副本。内容：<code>project.json</code>，资源：<code>_Source/</code>，清单：<code>_Sync/</code>。
+          </div>
+          <div id="syContentState" style="font-size:11px;color:var(--text-3);margin-top:4px">
+            ${SYNC.contentRoot === proj.root
+              ? (SYNC.contentSavedAt
+                  ? '项目内容已保存（' + syncEscape(new Date(SYNC.contentSavedAt).toLocaleTimeString('zh-CN')) + '）'
+                  : (SYNC.content ? '已载入项目内容' : '项目尚无内容，保存后会写入'))
+              : '正在载入项目内容…'}
           </div>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="primary" id="sySaveProject">保存项目</button>
           <button id="syRescan">重新扫描目录</button>
-          <button id="syUnbind">解除绑定</button>
-          <button id="syPick">切换文件夹…</button>
+          <button id="syPick">打开其他项目…</button>
+          <button id="syUnbind">关闭项目</button>
         </div>
       ` : `
-        <p class="hint">选择任意文件夹作为工作区；含 <code>.uproject</code> 的目录会自动识别为 UE 项目。
-        Bridge 会在里面创建 <code>Forgeworks/</code>：_Source 放中间文件（GLB/图标/元数据），_Sync 放同步清单。</p>
-        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-          <button class="primary" id="syPick">选择文件夹并绑定…</button>
+        <p class="hint">
+          Forgeworks 项目是一个独立的资源工程：设计数据、描述词、生成管线、贴图和导出的 GLB 都保存在项目目录里。
+          UE 项目只是导出目标，不会收到描述词、管线等内部资料。
+        </p>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">新建项目</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="syNewParent" placeholder="父目录，例如 /Users/you/Projects" spellcheck="false"
+                   style="flex:1;min-width:200px;font-family:var(--mono);font-size:12px">
+            <button id="syNewPickParent">选择父目录…</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+            <input id="syNewName" placeholder="项目名称" spellcheck="false" style="flex:1;min-width:160px;font-size:12px">
+            <button class="primary" id="syNewCreate">新建项目</button>
+          </div>
+          <div id="syNewErr" style="color:var(--red);font-size:11.5px;margin-top:6px"></div>
         </div>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <input id="syPath" placeholder="/path/to/project（也可以直接输入路径）" spellcheck="false"
-                 style="flex:1;font-family:var(--mono);font-size:12px">
-          <button id="syBind">绑定</button>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px">打开已有项目</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="syPath" placeholder="/path/to/ForgeworksProject" spellcheck="false"
+                   style="flex:1;min-width:200px;font-family:var(--mono);font-size:12px">
+            <button id="syBind">打开</button>
+            <button id="syPick">选择文件夹…</button>
+          </div>
+          <div id="syBindErr" style="color:var(--red);font-size:11.5px;margin-top:6px"></div>
         </div>
-        <div id="syBindErr" style="color:var(--red);font-size:11.5px;margin-top:6px"></div>
       `}
       ${_syncRecentHTML(proj)}
     </div>
 
+    ${proj ? syncUECardHTML() : ''}
+
     ${proj ? `
     <div class="card">
-      <h3>资产导出</h3>
+      <h3>项目资源</h3>
       <p class="hint">
-        导出会把每个机器的 GLB（含风格材质）+ 等轴测预览写进
-        <code>_Source/Machines/&lt;ID&gt;/</code>，并记录三把 hash 用于判断「待更新」。
-        导出前会做质量门禁（三角面 vs 风格规格）。
+        资源生成写进当前 Forgeworks 项目的 <code>_Source/Machines/&lt;ID&gt;/</code>：
+        GLB（含风格材质）、等轴测预览与 hash 记录。这些是项目的完整资源，
+        比导出给 UE 的内容多；导出到 UE 时只挑选其中的 GLB。
       </p>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="primary" id="syExportAll" ${_syncBusy ? 'disabled' : ''}>
@@ -178,22 +254,74 @@ function renderSync(){
     texRefresh.disabled = false;
   };
 
-  /* ---------- 绑定 ---------- */
+  /* ---------- 项目 ---------- */
   const bindBtn = document.getElementById('syBind');
   if(bindBtn) bindBtn.onclick = async ()=>{
     const p = document.getElementById('syPath').value.trim();
-    if(!p){ document.getElementById('syBindErr').textContent = '请输入路径'; return; }
-    bindBtn.disabled = true; bindBtn.textContent = '绑定中…';
+    const err = document.getElementById('syBindErr');
+    if(!p){ err.textContent = '请输入路径'; return; }
+    bindBtn.disabled = true; bindBtn.textContent = '打开中…';
     try{
-      const r = await syncBindProject(p);
-      if(!r.ok) document.getElementById('syBindErr').textContent = r.error || '绑定失败';
+      const r = await syncOpenProject(p);
+      if(!r.ok) err.textContent = r.error || '打开失败';
       else render();
     }catch(e){
-      document.getElementById('syBindErr').textContent = '请求失败：' + e.message;
-    }finally{ bindBtn.disabled = false; bindBtn.textContent = '绑定'; }
+      err.textContent = '请求失败：' + e.message;
+    }finally{
+      if(bindBtn.isConnected){ bindBtn.disabled = false; bindBtn.textContent = '打开'; }
+    }
   };
   const un = document.getElementById('syUnbind');
   if(un) un.onclick = async ()=>{ await syncUnbindProject(); render(); };
+
+  const saveBtn = document.getElementById('sySaveProject');
+  if(saveBtn) saveBtn.onclick = async ()=>{
+    saveBtn.disabled = true; saveBtn.textContent = '保存中…';
+    try{
+      await syncSaveProjectNow();
+      render();
+    }finally{
+      if(saveBtn.isConnected){ saveBtn.disabled = false; saveBtn.textContent = '保存项目'; }
+    }
+  };
+
+  const newPickParent = document.getElementById('syNewPickParent');
+  if(newPickParent) newPickParent.onclick = async ()=>{
+    const err = document.getElementById('syNewErr');
+    const label = newPickParent.textContent;
+    newPickParent.disabled = true; newPickParent.textContent = '等待系统对话框…';
+    try{
+      const picked = await syncPickFolder();
+      if(picked && picked.ok && picked.path){
+        document.getElementById('syNewParent').value = picked.path;
+      }else if(picked && !picked.cancelled && err){
+        err.textContent = picked.error || '没有选择目录';
+      }
+    }catch(e){
+      if(err) err.textContent = '选择失败：' + e.message;
+    }finally{
+      if(newPickParent.isConnected){ newPickParent.disabled = false; newPickParent.textContent = label; }
+    }
+  };
+
+  const newCreate = document.getElementById('syNewCreate');
+  if(newCreate) newCreate.onclick = async ()=>{
+    const parent = document.getElementById('syNewParent').value.trim();
+    const name = document.getElementById('syNewName').value.trim();
+    const err = document.getElementById('syNewErr');
+    if(!parent){ err.textContent = '请选择父目录'; return; }
+    if(!name){ err.textContent = '请输入项目名称'; return; }
+    newCreate.disabled = true; newCreate.textContent = '创建中…';
+    try{
+      const r = await syncCreateProject(parent, name);
+      if(!r.ok) err.textContent = r.error || '创建失败';
+      else render();
+    }catch(e){
+      err.textContent = '请求失败：' + e.message;
+    }finally{
+      if(newCreate.isConnected){ newCreate.disabled = false; newCreate.textContent = '新建项目'; }
+    }
+  };
 
   const pick = document.getElementById('syPick');
   if(pick) pick.onclick = async ()=>{
@@ -203,10 +331,10 @@ function renderSync(){
     try{
       const picked = await syncPickFolder();
       if(picked && picked.ok && picked.path){
-        const r = await syncBindProject(picked.path);
+        const r = await syncOpenProject(picked.path);
         if(r && r.ok){ render(); return; }
-        if(err) err.textContent = (r && r.error) || '绑定失败';
-        else syncLog('绑定失败：' + ((r && r.error) || ''), 'warn');
+        if(err) err.textContent = (r && r.error) || '打开失败';
+        else syncLog('打开项目失败：' + ((r && r.error) || ''), 'warn');
       }else if(picked && !picked.cancelled && err){
         err.textContent = picked.error || '没有选择目录';
       }
@@ -222,11 +350,70 @@ function renderSync(){
     if(button.dataset.recent === (proj && proj.root)) return;
     button.disabled = true;
     try{
-      const r = await syncBindProject(button.dataset.recent);
+      const r = await syncOpenProject(button.dataset.recent);
       if(!r || !r.ok) syncLog('打开项目失败：' + ((r && r.error) || '未知错误'), 'warn');
     }catch(e){ syncLog('打开项目失败：' + e.message, 'warn'); }
     render();
   });
+
+  /* ---------- UE 导出 ---------- */
+  const ueSet = document.getElementById('syUeSet');
+  if(ueSet) ueSet.onclick = async ()=>{
+    const path = document.getElementById('syUePath').value.trim();
+    const err = document.getElementById('syUeErr');
+    if(!path){ err.textContent = '请输入 UE 项目路径'; return; }
+    ueSet.disabled = true; ueSet.textContent = '设置中…';
+    try{
+      const r = await syncSetUETarget(path);
+      if(!r.ok) err.textContent = r.error || '设置失败';
+      else render();
+    }catch(e){
+      err.textContent = '请求失败：' + e.message;
+    }finally{
+      if(ueSet.isConnected){ ueSet.disabled = false; ueSet.textContent = '设置目标'; }
+    }
+  };
+  const uePick = document.getElementById('syUePick');
+  if(uePick) uePick.onclick = async ()=>{
+    const err = document.getElementById('syUeErr');
+    if(err) err.textContent = '';
+    try{
+      const picked = await syncPickFolder();
+      if(picked && picked.ok && picked.path){
+        const r = await syncSetUETarget(picked.path);
+        if(r && r.ok){ render(); return; }
+        if(err) err.textContent = (r && r.error) || '设置失败';
+      }else if(picked && !picked.cancelled && err){
+        err.textContent = picked.error || '没有选择目录';
+      }
+    }catch(e){
+      if(err) err.textContent = '选择失败：' + e.message;
+    }
+  };
+  const ueTargetPick = document.getElementById('syUETargetPick');
+  if(ueTargetPick) ueTargetPick.onclick = async ()=>{
+    try{
+      const picked = await syncPickFolder();
+      if(picked && picked.ok && picked.path){
+        const r = await syncSetUETarget(picked.path);
+        if(!r.ok) syncLog('设置 UE 导出目标失败：' + ((r && r.error) || ''), 'warn');
+        render();
+      }
+    }catch(e){ syncLog('设置 UE 导出目标失败：' + e.message, 'warn'); }
+  };
+  const ueRefreshManifest = document.getElementById('syUERefreshManifest');
+  if(ueRefreshManifest) ueRefreshManifest.onclick = async ()=>{
+    await syncLoadUEManifest();
+    render();
+  };
+  const uePublishAll = document.getElementById('syUEPublishAll');
+  if(uePublishAll) uePublishAll.onclick = ()=>_doPublishUE(S.machines.map(m=>m.id));
+  const uePublishStale = document.getElementById('syUEPublishStale');
+  if(uePublishStale) uePublishStale.onclick = ()=>{
+    const ids = S.machines.filter(m=>machineUEState(m).state !== 'exported').map(m=>m.id);
+    if(!ids.length){ toast('UE 侧已是最新'); return; }
+    _doPublishUE(ids);
+  };
 
   const resc = document.getElementById('syRescan') || document.getElementById('syReScan2');
   if(resc) resc.onclick = async ()=>{
@@ -340,6 +527,34 @@ async function _doExport(ids){
   }
 }
 
+/* ---------- UE 导出执行 ---------- */
+
+async function _doPublishUE(ids){
+  if(_syncBusy) return;
+  _syncBusy = true;
+  const prog = document.getElementById('syUEProgress');
+  if(prog) prog.textContent = '正在导出 ' + ids.length + ' 个资产…';
+  try{
+    const r = await syncPublishUE(ids);
+    if(!r.ok){
+      const detail = (r.errors || []).map(e=>e.id + '：' + e.error).join('；');
+      syncLog('导出到 UE 失败：' + (detail || r.error || '未知错误'), 'warn');
+      toast('导出到 UE 失败');
+    }else{
+      const msg = 'UE 导出完成：' + (r.published || []).length + ' 个' +
+        ((r.skipped || []).length ? '，跳过 ' + r.skipped.length + ' 个' : '');
+      syncLog(msg, 'ok');
+      toast(msg);
+    }
+  }catch(e){
+    syncLog('导出到 UE 中断：' + e.message, 'warn');
+    toast('导出到 UE 中断：' + e.message);
+  }finally{
+    _syncBusy = false;
+    render();
+  }
+}
+
 /* ---------- 汇总条 ---------- */
 
 function renderSyncSummary(){
@@ -363,6 +578,7 @@ function renderSyncTable(){
     { t:'ID', w:'120px', f:r=>`<code>${syncEscape(r.m.id)}</code>` },
     { t:'名称', w:'110px', f:r=>syncEscape(r.m.name) },
     { t:'状态', w:'96px', f:r=>syncStateTag(r.s.state) },
+    { t:'UE', w:'88px', f:r=>ueStateTag(machineUEState(r.m).state) },
     { t:'Blender', w:'90px', f:r=>{
         const b = r.s.rec && r.s.rec.meta && r.s.rec.meta.blender;
         if(b && b.state === 'ready'){

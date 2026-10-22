@@ -5,8 +5,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 import uuid
+
+ASSET_KIND_DIRS = {'machine': 'Machines', 'item': 'Items/Icons', 'data': 'Data'}
 
 NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
@@ -88,34 +91,94 @@ def validate_graph(graph):
     return by_id, list(reversed(order))
 
 
-def pipeline_root(forgeworks_root, asset_id):
+def normalize_kind(kind):
+    kind = str(kind or 'machine')
+    if kind not in ASSET_KIND_DIRS:
+        raise ValueError('资产类型非法: %s' % kind)
+    return kind
+
+
+def _valid_asset_id(asset_id):
     if not re.fullmatch(r'[A-Za-z0-9_]{1,64}', str(asset_id or '')):
         raise ValueError('资产 ID 非法')
-    return os.path.join(forgeworks_root, '_Source', 'pipeline', asset_id)
+    return asset_id
 
 
-def load_graph(forgeworks_root, asset_id):
-    path = os.path.join(pipeline_root(forgeworks_root, asset_id), 'graph.json')
+def pipeline_root(forgeworks_root, asset_id, kind='machine'):
+    """存档落在资产自己的文件夹：_Source/<Kind>/<ID>/pipeline/"""
+    asset_id = _valid_asset_id(asset_id)
+    kind = normalize_kind(kind)
+    return os.path.join(forgeworks_root, '_Source', *ASSET_KIND_DIRS[kind].split('/'), asset_id, 'pipeline')
+
+
+def legacy_pipeline_root(forgeworks_root, asset_id):
+    return os.path.join(forgeworks_root, '_Source', 'pipeline', _valid_asset_id(asset_id))
+
+
+def _graph_path(forgeworks_root, asset_id, kind):
+    return os.path.join(pipeline_root(forgeworks_root, asset_id, kind), 'graph.json')
+
+
+def _read_graph_file(path):
+    with open(path, encoding='utf-8') as stream:
+        return json.load(stream)
+
+
+def load_graph(forgeworks_root, asset_id, kind='machine'):
+    kind = normalize_kind(kind)
     try:
-        with open(path, encoding='utf-8') as stream:
-            graph = json.load(stream)
+        graph = _read_graph_file(_graph_path(forgeworks_root, asset_id, kind))
     except FileNotFoundError:
-        graph = {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0, 'nodes': [], 'edges': [], 'updatedAt': None}
+        try:
+            graph = _read_graph_file(os.path.join(legacy_pipeline_root(forgeworks_root, asset_id), 'graph.json'))
+        except FileNotFoundError:
+            graph = {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0, 'nodes': [], 'edges': [], 'updatedAt': None}
     validate_graph(graph)
     return graph
 
 
-def save_graph(forgeworks_root, asset_id, graph):
+def archive_info(forgeworks_root, asset_id, kind='machine'):
+    kind = normalize_kind(kind)
+    root = pipeline_root(forgeworks_root, asset_id, kind)
+    exists = os.path.isfile(os.path.join(root, 'graph.json'))
+    legacy = os.path.isfile(os.path.join(legacy_pipeline_root(forgeworks_root, asset_id), 'graph.json'))
+    return {'kind': kind, 'path': os.path.relpath(root, forgeworks_root).replace(os.sep, '/'),
+            'exists': exists, 'legacy': bool(legacy and not exists)}
+
+
+def _migrate_legacy_outputs(forgeworks_root, asset_id, root):
+    legacy_outputs = os.path.join(legacy_pipeline_root(forgeworks_root, asset_id), 'outputs')
+    if not os.path.isdir(legacy_outputs):
+        return
+    target = os.path.join(root, 'outputs')
+    os.makedirs(target, exist_ok=True)
+    for name in os.listdir(legacy_outputs):
+        source = os.path.join(legacy_outputs, name)
+        destination = os.path.join(target, name)
+        if os.path.isfile(source) and not os.path.exists(destination):
+            shutil.copy2(source, destination)
+
+
+def _write_prompt(root, graph):
+    text = next((str(node.get('params', {}).get('text', '')) for node in graph['nodes'] if node['type'] == 'prompt'), '')
+    with open(os.path.join(root, 'prompt.txt'), 'w', encoding='utf-8') as stream:
+        stream.write(text)
+
+
+def save_graph(forgeworks_root, asset_id, graph, kind='machine'):
     by_id, order = validate_graph(graph)
+    kind = normalize_kind(kind)
     graph = dict(graph, assetId=asset_id, revision=int(graph.get('revision') or 0) + 1,
                  updatedAt=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
-    root = pipeline_root(forgeworks_root, asset_id)
+    root = pipeline_root(forgeworks_root, asset_id, kind)
     os.makedirs(root, exist_ok=True)
+    _migrate_legacy_outputs(forgeworks_root, asset_id, root)
     path = os.path.join(root, 'graph.json')
     tmp = path + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as stream:
         json.dump(graph, stream, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
+    _write_prompt(root, graph)
     previous = {}
     for node_id in order:
         node = by_id[node_id]
@@ -135,8 +198,17 @@ def save_graph(forgeworks_root, asset_id, graph):
     return graph
 
 
-def execute_local(forgeworks_root, asset_id, target_id=None, through=False):
-    graph = load_graph(forgeworks_root, asset_id)
+def resolve_output(forgeworks_root, asset_id, kind, filename):
+    for root in (pipeline_root(forgeworks_root, asset_id, kind), legacy_pipeline_root(forgeworks_root, asset_id)):
+        path = os.path.join(root, 'outputs', filename)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine'):
+    kind = normalize_kind(kind)
+    graph = load_graph(forgeworks_root, asset_id, kind)
     by_id, order = validate_graph(graph)
     if target_id and target_id not in by_id:
         raise ValueError('目标节点不存在')
@@ -172,7 +244,7 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False):
             source = by_id.get(edge.get('from')) if edge else None
             source_output = (((source or {}).get('result') or {}).get('providerTask') or {}).get('output') or {}
             image_path = source_output.get('imagePath')
-            if image_path and os.path.isfile(os.path.join(pipeline_root(forgeworks_root, asset_id), image_path)):
+            if image_path and os.path.isfile(os.path.join(pipeline_root(forgeworks_root, asset_id, kind), image_path)):
                 node.setdefault('result', {})['state'] = 'done'
                 node['result']['output'] = {'imagePath': image_path}
             else:
@@ -186,9 +258,11 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False):
             node['result']['error'] = '导出需通过同步导出流程并满足 validate 门禁'
         outputs[node_id] = node.get('result', {}).get('output')
     graph['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-    root = pipeline_root(forgeworks_root, asset_id)
+    root = pipeline_root(forgeworks_root, asset_id, kind)
+    os.makedirs(root, exist_ok=True)
     with open(os.path.join(root, 'graph.json'), 'w', encoding='utf-8') as stream:
         json.dump(graph, stream, ensure_ascii=False, indent=2)
+    _write_prompt(root, graph)
     return {'graph': graph, 'ran': order}
 
 

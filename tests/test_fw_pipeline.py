@@ -1,3 +1,4 @@
+import json
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,51 @@ class PipelineGraphTest(unittest.TestCase):
         graph['nodes'].append({'id': 'bogus', 'type': 'bogus', 'params': {}})
         with self.assertRaises(ValueError):
             fw_pipeline.validate_graph(graph)
+
+    def test_archive_lives_in_asset_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = fw_pipeline.starter_graph('M1')
+            graph['nodes'][0]['params']['text'] = '重型钻机'
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            archive = Path(directory) / '_Source' / 'Machines' / 'M1' / 'pipeline'
+            self.assertTrue((archive / 'graph.json').is_file())
+            self.assertEqual((archive / 'prompt.txt').read_text(encoding='utf-8'), '重型钻机')
+            info = fw_pipeline.archive_info(directory, 'M1', 'machine')
+            self.assertTrue(info['exists'])
+            self.assertEqual(info['path'], '_Source/Machines/M1/pipeline')
+
+    def test_item_archive_uses_items_icons_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fw_pipeline.save_graph(directory, 'I1', fw_pipeline.starter_graph('I1'), kind='item')
+            self.assertTrue((Path(directory) / '_Source' / 'Items' / 'Icons' / 'I1' / 'pipeline' / 'graph.json').is_file())
+
+    def test_legacy_graph_is_still_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / '_Source' / 'pipeline' / 'M1'
+            legacy.mkdir(parents=True)
+            graph = fw_pipeline.starter_graph('M1')
+            graph['revision'] = 7
+            (legacy / 'graph.json').write_text(json.dumps(graph), encoding='utf-8')
+            loaded = fw_pipeline.load_graph(directory, 'M1', kind='machine')
+            self.assertEqual(loaded['revision'], 7)
+            self.assertTrue(fw_pipeline.archive_info(directory, 'M1', 'machine')['legacy'])
+
+    def test_output_resolves_from_asset_folder_then_legacy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            name = 'model_task_1234.glb'
+            legacy = Path(directory) / '_Source' / 'pipeline' / 'M1' / 'outputs'
+            legacy.mkdir(parents=True)
+            (legacy / name).write_bytes(b'legacy')
+            self.assertEqual(fw_pipeline.resolve_output(directory, 'M1', 'machine', name), str(legacy / name))
+            archive = Path(directory) / '_Source' / 'Machines' / 'M1' / 'pipeline' / 'outputs'
+            archive.mkdir(parents=True)
+            (archive / name).write_bytes(b'archive')
+            self.assertEqual(fw_pipeline.resolve_output(directory, 'M1', 'machine', name), str(archive / name))
+
+    def test_invalid_kind_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                fw_pipeline.pipeline_root(directory, 'M1', 'bogus')
 
 
 if __name__ == '__main__':

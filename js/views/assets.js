@@ -73,6 +73,8 @@ function renderAssets(){
       </div>
       ${hasCustom?`<div style="font-size:9.5px;color:var(--blue);margin-top:4px">自定义图标</div>`:''}
       ${hasMesh?`<div style="font-size:9.5px;color:var(--accent);margin-top:2px">已绑模型</div>`:''}
+      <button class="sm" data-genicon="${it.id}"
+        style="margin-top:6px;font-size:10px;padding:3px 8px">生成图标 →</button>
     </div>`;
   });
   h+=`</div>`;
@@ -107,6 +109,12 @@ function renderAssets(){
     c.onmouseenter=()=>{ c.style.borderColor='var(--accent)'; c.style.transform='translateY(-1px)'; };
     c.onmouseleave=()=>{ c.style.borderColor='var(--border)'; c.style.transform='none'; };
     c.onclick=()=>openEditor('items', c.dataset.item);
+  });
+  v.querySelectorAll('[data-genicon]').forEach(b=>{
+    b.onclick=function(e){
+      e.stopPropagation();
+      pipelineEnter(b.dataset.genicon, {view:'assets', assetId:b.dataset.genicon});
+    };
   });
   document.getElementById('asSheet').onclick=()=>exportIconSheet();
   document.getElementById('asAtlas').onclick=()=>exportAtlasJSON();

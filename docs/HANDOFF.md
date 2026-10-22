@@ -541,3 +541,45 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - **根因**：`.pipeline-node` 没有 `z-index`，未形成堆叠上下文，而 `.pipeline-port` 的 `z-index:2` 直接参与画布层级——任何卡片的端口都会盖住所有卡片。端口压住别人的「删除」按钮时，点击被端口接管（开始拉线），删除永远不触发。
 - **修复**：卡片 `z-index:1` 自成一堆叠层，端口只在卡片内部浮起；选中卡片 `z-index:3`，拖动中加 `.dragging` 提到 `z-index:4`。
 - **验证**：构造「A 的输出端口正好压住 B 的删除按钮」，修复前 `elementsFromPoint` 命中端口，修复后命中按钮；真实鼠标拖入节点后点击删除可移除；重叠卡片截图中端口不再浮到前景卡片上。冒烟页 55/55、runtimeErrors 0；Python 4/4。版本戳 `?v=20261021e`。未提交。
+
+## 15. Forgeworks 项目工程 / UE 导出目标分离（2026-10-22）
+
+**用户要求**：真正存各种资源的应是一个独立「项目工程」（类似商业软件），而不是直接写进 UE 项目目录；导出时才把 UE 用得到的部分复制过去。描述词、生成管线、预览等 UE 不用的东西留在项目里。需要「新建项目 / 打开项目 / 导出到 UE」。
+
+### 两层目录
+
+```
+<Forgeworks 项目>/
+├── forgeworks.project.json     项目标记（名称、创建时间）
+├── project.json                全部内容（主存储；localStorage 仅离线兜底）
+├── _Source/{Machines,Items/Icons,Materials,Data}/
+└── _Sync/{manifest.json,tool_versions,conflicts}/
+
+<UE 项目>/Forgeworks/
+├── _Source/Machines/<ID>/<ID>.glb    只复制 mesh 角色
+└── _Sync/{manifest.json,ue_assets.json}
+```
+
+- `project.json` 由 Bridge 读写；内容变更防抖 400ms 回写，`contentRoot === 项目根` 才允许写，避免旧数据覆盖新项目。
+- **导出到 UE** 只复制 GLB + 导出清单；`preview` / `thumbnail` / `pipeline` / `prompt` 不复制。`meta`（contentHash/styleHash/sizeCm）原样带去，用于 `stale` 判定与尺寸校验。
+- 导出状态机在项目层比较：项目 `contentHash/styleHash` vs UE manifest → `none | stale | exported`；同步表新增 UE 列。
+- **旧版迁移**：旧状态指向 `<UE>` 时，项目根迁移为 `<UE>/Forgeworks`（补写项目标记），且**不自动设 UE 目标**（导出根等于项目根会自拷贝）。`set_ue_target` / `publish_to_ue` 均拒绝相同目录。
+- UE 侧 `ue/fw_registry.py` 改为本地优先：先找 `PROJECT_ROOT/Forgeworks`，找不到再问 `/api/project/info`。
+
+### Bridge API
+
+`GET /api/project/info`、`GET|POST /api/project/content`、`POST /api/project/bind`（原 `bind_project`，语义改为项目根）、`POST /api/project/create`、`POST /api/project/ue-target`、`POST /api/project/publish`、`GET /api/ue/manifest`。**升级后必须重启 `tools/bridge.py` 才会出现新路由。**
+
+### 前端
+
+- `js/sync.js`：`SYNC.projects / content / contentRoot / ueManifest`，`syncCreateProject / syncOpenProject / syncSetUETarget / syncPublishUE / syncUnbindProject`，内容防抖保存与 SSE 重载。
+- `js/views/sync.js`：「Forgeworks 项目」卡（打开态/新建/打开/最近项目）、「UE 导出目标」卡（设置/更换/导出全部/只导出待更新）、资源表 UE 列。
+- `js/core/state.js`：保存时优先写项目，失败回退 localStorage。
+- 侧栏底部项目 chip 显示当前项目与 UE 就绪状态。
+
+### 测试与验证
+
+- 新增 `tests/test_bridge_projects.py` 4 项：独立项目创建/打开、旧版迁移不设 UE 目标、旧版 UE 根不能当导出目标、发布只带 mesh。
+- `tests/test_fw_blender.py` 改用 `open_project`。Python 全套通过；`node --check` 通过。
+- Playwright 隔离环境实测（8788 端口 + `/tmp` 工程）：新建项目 → 设置 UE 目标 → 导出 MC_HAND（项目内得到 GLB + SVG/PNG 预览）→ 发布到 UE；UE 目录只有 `MC_HAND.glb` 与 `_Sync/manifest.json`，无 preview/pipeline/prompt；表格 UE 列变为「已导出」，汇总显示 `已导出 1 · 待导出 0 · 未导出 31`。
+- 隔离环境已清理；用户本机 8787 的 Bridge 需重启才能加载新路由。未提交。

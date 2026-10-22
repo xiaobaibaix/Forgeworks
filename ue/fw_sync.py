@@ -7,6 +7,8 @@ import datetime
 
 BRIDGE_URL = 'http://127.0.0.1:8787'
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EXPORT_ROOT = os.path.join(PROJECT_ROOT, 'Forgeworks')
+EXPORT_MANIFEST = os.path.join(EXPORT_ROOT, '_Sync', 'manifest.json')
 MACHINE_ID = re.compile(r'^[A-Za-z0-9_]+$')
 
 
@@ -63,11 +65,22 @@ def validate_measured_size(expected, measured):
 
 
 def _read_manifest():
+    """优先读导出目录里的 manifest；未发布过才回退到 Bridge 的项目 manifest。"""
+    if os.path.isfile(EXPORT_MANIFEST):
+        with open(EXPORT_MANIFEST, encoding='utf-8') as stream:
+            manifest = json.load(stream)
+        return manifest, EXPORT_ROOT
     with urllib.request.urlopen(BRIDGE_URL + '/api/manifest', timeout=5) as response:
         result = json.loads(response.read().decode('utf-8'))
     if not result.get('ok') or not result.get('manifest'):
-        raise RuntimeError('Forgeworks Bridge 未绑定 UE 项目')
-    return result['manifest']
+        raise RuntimeError('尚未从 Forgeworks 导出资产')
+    manifest = result['manifest']
+    project = manifest.get('project') or {}
+    root = project.get('root')
+    if not root:
+        raise RuntimeError('manifest 未记录项目根目录')
+    return manifest, project.get('forgeworksRoot') or (
+        root if os.path.basename(root) == 'Forgeworks' else os.path.join(root, 'Forgeworks'))
 
 
 def _post_report(payload):
@@ -79,6 +92,22 @@ def _post_report(payload):
     )
     with urllib.request.urlopen(request, timeout=5) as response:
         return json.loads(response.read().decode('utf-8'))
+
+
+def _record_export(asset_id, ue):
+    """把导入结果写回导出目录的 manifest，Bridge 不在线也不影响 UE 侧记录。"""
+    if not os.path.isfile(EXPORT_MANIFEST):
+        return
+    with open(EXPORT_MANIFEST, encoding='utf-8') as stream:
+        manifest = json.load(stream)
+    record = (manifest.get('assets') or {}).get(asset_id)
+    if not record:
+        return
+    record['ue'] = ue
+    temp_path = EXPORT_MANIFEST + '.tmp'
+    with open(temp_path, 'w', encoding='utf-8') as stream:
+        json.dump(manifest, stream, ensure_ascii=False, indent=2)
+    os.replace(temp_path, EXPORT_MANIFEST)
 
 
 def _set_if_supported(target, property_name, value):
@@ -104,11 +133,7 @@ def _measure_mesh(unreal, asset_path):
 def import_assets(asset_ids=None):
     import unreal
 
-    manifest = _read_manifest()
-    project_root = (manifest.get('project') or {}).get('root')
-    if not project_root:
-        raise RuntimeError('manifest 未记录 UE 项目根目录')
-    forgeworks_root = os.path.join(project_root, 'Forgeworks')
+    manifest, forgeworks_root = _read_manifest()
     plan = build_import_plan(manifest, forgeworks_root, asset_ids)
     manager_class = getattr(unreal, 'InterchangeManager', None)
     if not manager_class:
@@ -143,9 +168,11 @@ def import_assets(asset_ids=None):
                 'materialSlots': measured['materialSlots'],
                 'sourceSha1': item['sha1'],
             }
-            response = _post_report({'id': item['id'], 'ue': ue})
-            if not response.get('ok'):
-                raise RuntimeError(response.get('error', 'Bridge rejected UE report'))
+            _record_export(item['id'], ue)
+            try:
+                _post_report({'id': item['id'], 'ue': ue})
+            except Exception as error:
+                unreal.log_warning('[Forgeworks] Bridge report skipped: %s' % error)
             reports.append({'id': item['id'], 'ok': True, 'ue': ue})
         except Exception as exception:
             reports.append({'id': item['id'], 'ok': False, 'error': str(exception)})

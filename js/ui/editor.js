@@ -70,6 +70,7 @@ function renderEditorForm(coll, d, isNew){
                 上传图标<input type="file" id="iconFile" accept="image/*" style="display:none">
               </label>
               <button class="sm" id="iconClear" ${hasCustom?'':'disabled'}>恢复自动生成</button>
+              <button class="sm" id="iconGen" ${isNew?'disabled':''}>生成图标 →</button>
             </div>
             <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
               上传的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
@@ -120,6 +121,13 @@ function renderEditorForm(coll, d, isNew){
                    color:document.getElementById('f_color').value, icon:''};
       prev.innerHTML = iconHTML(tmp, 52);
       toast('已恢复自动生成（待保存）');
+    };
+    document.getElementById('iconGen').onclick = ()=>{
+      if(!d) return;
+      if(!confirm('进入生成管线？当前未保存的修改会丢失。')) return;
+      const fromView = cur;
+      closeModal();
+      pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor'});
     };
     // 类型/颜色变化时刷新自动图标预览
     const refreshAuto = ()=>{

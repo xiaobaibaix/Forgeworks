@@ -116,60 +116,65 @@ function fwUvCheckerTexture(){
 function fwPartTriangles(p){
   switch(p.kind){
     case 'box': return 12;
-    case 'cyl': case 'cone': case 'prism': return (p.seg || p.sides || 20) * 4;
-    case 'sphere': return 20 * 14 * 2 - 40;
-    case 'dome': return 20 * 10 * 2 - 20;
-    case 'torus': return 8 * 28 * 2;
-    case 'torusV': return 8 * 24 * 2;
-    case 'pipe': return 12 * 4;
+    case 'cyl': case 'cone': return (p.seg || 20) * 4;
+    case 'prism': return (p.sides || 6) * 4;
+    case 'sphere': return (p.seg || 20) * (p.segH || 14) * 2 - (p.seg || 20) * 2;
+    case 'dome': return (p.seg || 20) * (p.segH || 10) * 2 - (p.seg || 20);
+    case 'torus': return (p.segT || 8) * (p.seg || 28) * 2;
+    case 'torusV': return (p.segT || 8) * (p.seg || 24) * 2;
+    case 'pipe': return (p.seg || 12) * 4;
     default: return 12;
   }
 }
 
-function fwPartVolume(p){
-  if(p.kind === 'box') return p.s[0] * p.s[1] * p.s[2];
-  if(p.kind === 'cyl' || p.kind === 'cone' || p.kind === 'prism') return Math.PI * p.r * p.r * (p.h || 0.1);
-  if(p.kind === 'sphere') return 4 / 3 * Math.PI * Math.pow(p.r, 3);
-  if(p.kind === 'dome') return 2 / 3 * Math.PI * Math.pow(p.r, 3);
-  if(p.kind === 'torus' || p.kind === 'torusV') return 2 * Math.PI * Math.PI * p.r * p.tube * p.tube;
-  if(p.kind === 'pipe'){
-    const len = Math.hypot(p.b[0]-p.a[0], p.b[1]-p.a[1], p.b[2]-p.a[2]);
-    return Math.PI * p.r * p.r * len;
+/**
+ * 单个图元降到指定 LOD 细分：只改面数，部件集合不变。
+ * 方块没有可减的面，低模档位维持 12 面。
+ */
+function fwLodPart(p, level){
+  if(!(level > 0)) return p;
+  const low = level >= 2;
+  const radial = function(base, min){
+    return Math.max(min, Math.round(base * (low ? 0.3 : 0.55)));
+  };
+  const q = Object.assign({}, p);
+  switch(p.kind){
+    case 'cyl': case 'cone':
+      q.seg = radial(p.seg || 20, low ? 4 : 6);
+      break;
+    case 'prism':
+      q.sides = radial(p.sides || 6, 3);
+      break;
+    case 'sphere':
+      q.seg = low ? 8 : 12; q.segH = low ? 6 : 8;
+      break;
+    case 'dome':
+      q.seg = low ? 8 : 12; q.segH = low ? 4 : 6;
+      break;
+    case 'torus': case 'torusV':
+      q.seg = low ? 8 : 12; q.segT = low ? 4 : 6;
+      break;
+    case 'pipe':
+      q.seg = low ? 6 : 8;
+      break;
   }
-  return 0.001;
+  return q;
 }
 
 /**
- * 派生三档 LOD：按体积从最小的细节件开始隐藏（基座与最大主件永不移除）。
+ * 派生三档 LOD：保持全部部件，只按档位降低图元细分（面数）。
  * 这是 UE 自动 LOD / decimate 的预览近似，导出时仍以 L0 为准。
  */
 function fwLodPlan(machine, presetKey){
   const geo = buildMachineParts(machine, presetKey);
-  const items = geo.parts.map(function(p){
-    return { id:p.partId, role:p.role, volume:fwPartVolume(p), triangles:fwPartTriangles(p) };
-  });
-  const candidates = items.filter(function(item){ return item.role !== 'base'; })
-                          .sort(function(a, b){ return a.volume - b.volume; });
-  const keep = candidates.length ? candidates[candidates.length - 1] : null;
-  const total = items.reduce(function(sum, item){ return sum + item.triangles; }, 0);
+  const total = geo.parts.reduce(function(sum, p){ return sum + fwPartTriangles(p); }, 0);
   const levels = [0, 1, 2].map(function(level){
-    const ratio = level === 0 ? 0 : level === 1 ? 0.35 : 0.6;
-    const hidden = new Set();
-    let budget = Math.floor(candidates.length * ratio);
-    for(let i = 0; i < candidates.length && budget > 0; i++){
-      if(candidates[i] === keep) continue;
-      hidden.add(candidates[i].id);
-      budget--;
-    }
-    const visible = items.filter(function(item){ return !hidden.has(item.id); });
-    return {
-      level: level,
-      hidden: hidden,
-      parts: visible.length,
-      triangles: visible.reduce(function(sum, item){ return sum + item.triangles; }, 0),
-    };
+    const triangles = geo.parts.reduce(function(sum, p){
+      return sum + fwPartTriangles(fwLodPart(p, level));
+    }, 0);
+    return { level: level, parts: geo.parts.length, triangles: triangles };
   });
-  return { parts: items.length, totalTriangles: total, geometry: geo, levels: levels };
+  return { parts: geo.parts.length, totalTriangles: total, geometry: geo, levels: levels };
 }
 
 /* ---------- 资产方面汇总 ---------- */
@@ -211,9 +216,9 @@ function fwAssetAspects(machine, presetKey){
     },
     lod: {
       levels: plan.levels.map(function(level){
-        return { level: level.level, parts: level.parts, triangles: level.triangles, hidden: level.hidden.size };
+        return { level: level.level, parts: level.parts, triangles: level.triangles };
       }),
-      source: 'footprint + part volume',
+      source: 'segment decimation',
     },
     collision: {
       type: 'box',

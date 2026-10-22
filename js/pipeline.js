@@ -1,4 +1,4 @@
-const PIPELINE = {assetId:null, graph:null, providers:{}, selected:null, busy:false, source:'local', zoom:1};
+const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null};
 const PIPELINE_STORE_PREFIX = 'fw.pipeline.';
 
 const PIPELINE_NODE_LABELS = {
@@ -68,6 +68,11 @@ function pipelineLocalRead(assetId){
 function pipelineLocalWrite(assetId, graph){
   try{ localStorage.setItem(PIPELINE_STORE_PREFIX + assetId, JSON.stringify(graph)); return true; }
   catch(_){ return false; }
+}
+
+function pipelineHasArchive(assetId){
+  const graph = pipelineLocalRead(assetId);
+  return !!(graph && graph.nodes && graph.nodes.length);
 }
 
 function pipelineBlankGraph(assetId){
@@ -146,31 +151,92 @@ function pipelineTopoOrder(graph){
   return order;
 }
 
+function pipelineGraphTime(graph){
+  const value = graph && graph.updatedAt ? Date.parse(graph.updatedAt) : 0;
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** 远端空白图不能覆盖本地存档；两边都有内容时取更新时间较新的一份 */
+function pipelinePickGraph(remote, local){
+  const remoteNodes = remote && Array.isArray(remote.nodes) ? remote.nodes.length : 0;
+  const localNodes = local && Array.isArray(local.nodes) ? local.nodes.length : 0;
+  if(!remoteNodes) return localNodes ? local : remote;
+  if(!localNodes) return remote;
+  return pipelineGraphTime(local) > pipelineGraphTime(remote) ? local : remote;
+}
+
 async function pipelineLoad(assetId){
   PIPELINE.assetId = assetId;
+  const target = pipelineAssetTarget(assetId);
+  PIPELINE.kind = target ? target.kind : 'machine';
   PIPELINE.providers = {};
   PIPELINE.source = 'local';
-  let graph = null;
+  PIPELINE.archive = null;
+  const local = pipelineLocalRead(assetId);
+  let remote = null;
   if(pipelineBridgeReady()){
     try{
-      const result = await pipelineApi('pipeline/graph/' + encodeURIComponent(assetId));
-      graph = result.graph;
-      PIPELINE.source = 'bridge';
+      const result = await pipelineApi('pipeline/graph/' + encodeURIComponent(assetId) + '?kind=' + encodeURIComponent(PIPELINE.kind));
+      remote = result.graph;
+      PIPELINE.archive = result.archive || null;
     }catch(_){ /* 读不到就退回浏览器本地图 */ }
     try{
       const providers = await pipelineApi('pipeline/providers');
       PIPELINE.providers = providers.providers || {};
     }catch(_){ PIPELINE.providers = {}; }
   }
-  PIPELINE.graph = graph || pipelineLocalRead(assetId) || pipelineBlankGraph(assetId);
+  PIPELINE.graph = pipelinePickGraph(remote, local) || pipelineBlankGraph(assetId);
+  PIPELINE.source = remote && PIPELINE.graph === remote ? 'bridge' : 'local';
+  if(PIPELINE.source === 'bridge' && PIPELINE.graph.nodes.length) pipelineLocalWrite(assetId, PIPELINE.graph);
+  const localWins = !!(local && local.nodes.length)
+    && !(remote && remote.nodes.length && pipelineGraphTime(remote) >= pipelineGraphTime(local));
+  if(pipelineBridgeReady() && localWins){
+    try{
+      const saved = await pipelineApi('pipeline/graph/save', {assetId, kind:PIPELINE.kind, graph:PIPELINE.graph});
+      PIPELINE.graph = saved.graph;
+      PIPELINE.source = 'bridge';
+      PIPELINE.archive = saved.archive || PIPELINE.archive;
+    }catch(_){ /* 迁移失败时继续用本地存档 */ }
+  }
   PIPELINE.selected = PIPELINE.graph.nodes[0] && PIPELINE.graph.nodes[0].id || null;
+}
+
+function pipelineEnter(assetId, returnTo){
+  PIPELINE.assetId = assetId;
+  PIPELINE.graph = null;
+  PIPELINE.selected = null;
+  PIPELINE.returnTo = returnTo || null;
+  PIPELINE.zoom = 1;
+  PIPELINE.pan.x = 0;
+  PIPELINE.pan.y = 0;
+  cur = 'pipeline';
+  render();
+}
+
+function pipelineReturnLabel(){
+  const target = PIPELINE.returnTo;
+  if(!target) return '';
+  if(target.modal === '3d') return '← 返回 3D 预览';
+  if(target.modal === 'editor') return '← 返回图标编辑';
+  return '← 返回资源页';
+}
+
+function pipelineReturn(){
+  const target = PIPELINE.returnTo;
+  if(!target) return;
+  PIPELINE.returnTo = null;
+  cur = target.view || 'assets';
+  render();
+  if(target.modal === '3d') open3DViewer(target.assetId);
+  else if(target.modal === 'editor') openEditor('items', target.assetId);
 }
 
 async function pipelineCreateTemplate(template){
   if(pipelineBridgeReady()){
     try{
-      const result = await pipelineApi('pipeline/graph/template', {assetId:PIPELINE.assetId, template});
+      const result = await pipelineApi('pipeline/graph/template', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, template});
       PIPELINE.graph = result.graph;
+      PIPELINE.archive = result.archive || PIPELINE.archive;
       PIPELINE.source = 'bridge';
       PIPELINE.selected = 'prompt';
       renderPipelineView();
@@ -188,8 +254,9 @@ async function pipelineSave(options){
   const quiet = !!(options && options.quiet);
   if(pipelineBridgeReady()){
     try{
-      const result = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, graph:PIPELINE.graph});
+      const result = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, graph:PIPELINE.graph});
       PIPELINE.graph = result.graph;
+      PIPELINE.archive = result.archive || PIPELINE.archive;
       PIPELINE.source = 'bridge';
       if(quiet){ pipelinePaintChrome(); return; }
       renderPipelineView();
@@ -208,11 +275,21 @@ function pipelineAddNode(type, x, y){
   let index = 1;
   while(PIPELINE.graph.nodes.some(node=>node.id===type+'_'+index)) index++;
   const id = type + '_' + index;
-  const nodeX = Number.isFinite(x) ? Math.max(0, x - PIPELINE_NODE_WIDTH / 2) : 100 + (index % 4) * 280;
-  const nodeY = Number.isFinite(y) ? Math.max(0, y - 70) : 100 + Math.floor(index / 4) * 190;
-  PIPELINE.graph.nodes.push({id, type, x:nodeX, y:nodeY, params:{}});
+  const nodeX = Number.isFinite(x) ? x - PIPELINE_NODE_WIDTH / 2 : 100 + (index % 4) * 280;
+  const nodeY = Number.isFinite(y) ? y - 70 : 100 + Math.floor(index / 4) * 190;
+  const node = {id, type, x:nodeX, y:nodeY, params:{}};
+  PIPELINE.graph.nodes.push(node);
   PIPELINE.selected = id;
-  pipelineSave().catch(error => toast(error.message));
+  const canvas = document.querySelector('.pipeline-canvas');
+  if(!canvas){ pipelineSave().catch(error => toast(error.message)); return; }
+  canvas.insertAdjacentHTML('beforeend', pipelineNodeCard(node));
+  const card = canvas.lastElementChild;
+  document.querySelectorAll('.pipeline-node').forEach(item=>item.classList.toggle('selected', item.dataset.node === id));
+  canvas.style.width = Math.max(parseFloat(canvas.style.width) || 1700, nodeX + 260) + 'px';
+  canvas.style.height = Math.max(parseFloat(canvas.style.height) || 650, nodeY + 210) + 'px';
+  pipelineWireCard(card);
+  pipelineApplyZoom();
+  pipelineSave({quiet:true}).catch(error => toast(error.message));
 }
 
 function pipelineReachable(fromId, targetId){
@@ -268,13 +345,28 @@ function pipelineRemoveEdge(index){
 
 function pipelineRemoveNode(nodeId){
   const node=PIPELINE.graph.nodes.find(item=>item.id===nodeId);
-  const state=node&&node.result&&node.result.providerTask&&node.result.providerTask.state;
+  if(!node) return;
+  const state=node.result&&node.result.providerTask&&node.result.providerTask.state;
   if(state==='queued'||state==='running'){toast('Provider 任务尚在运行，当前不能取消或删除这个节点');return;}
-  PIPELINE.graph.nodes=PIPELINE.graph.nodes.filter(node=>node.id!==nodeId);
+  PIPELINE.graph.nodes=PIPELINE.graph.nodes.filter(item=>item.id!==nodeId);
   PIPELINE.graph.edges=PIPELINE.graph.edges.filter(edge=>edge.from!==nodeId&&edge.to!==nodeId);
-  PIPELINE.selected=PIPELINE.graph.nodes[0]&&PIPELINE.graph.nodes[0].id||null;
-  pipelineSave().catch(error=>toast(error.message));
+  if(PIPELINE.selected===nodeId) PIPELINE.selected=null;
+  const card=[...document.querySelectorAll('.pipeline-node')].find(item=>item.dataset.node===nodeId);
+  if(!card){ pipelineSave().catch(error=>toast(error.message)); return; }
+  card.remove();
+  pipelineSave({quiet:true}).catch(error=>toast(error.message));
 }
+
+document.addEventListener('keydown', event=>{
+  if(event.key!=='Delete' && event.key!=='Backspace') return;
+  if(!PIPELINE.graph || !PIPELINE.selected) return;
+  if(!PIPELINE.graph.nodes.some(node=>node.id===PIPELINE.selected)) return;
+  if(!document.querySelector('.pipeline-canvas')) return;
+  if(typeof modalState!=='undefined' && modalState) return;
+  if(event.target && event.target.closest && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+  event.preventDefault();
+  pipelineRemoveNode(PIPELINE.selected);
+});
 
 function pipelineDragCard(card){
   const header=card.querySelector('header');
@@ -286,8 +378,8 @@ function pipelineDragCard(card){
     card.classList.add('dragging');
     header.setPointerCapture(event.pointerId);
     const move=next=>{
-      node.x=Math.max(0,baseX+(next.clientX-startX)/PIPELINE.zoom);
-      node.y=Math.max(0,baseY+(next.clientY-startY)/PIPELINE.zoom);
+      node.x=baseX+(next.clientX-startX)/PIPELINE.zoom;
+      node.y=baseY+(next.clientY-startY)/PIPELINE.zoom;
       card.style.left=node.x+'px';card.style.top=node.y+'px';pipelinePaintEdges();
     };
     const end=()=>{card.classList.remove('dragging');header.removeEventListener('pointermove',move);header.removeEventListener('pointerup',end);header.removeEventListener('pointercancel',end);pipelineSave({quiet:true}).catch(error=>toast(error.message));};
@@ -321,7 +413,10 @@ function pipelinePaintMeta(){
   if(!meta || !PIPELINE.graph) return;
   const assets = (SYNC.manifest && SYNC.manifest.assets) || {};
   const manifest = assets[PIPELINE.assetId] && assets[PIPELINE.assetId].state || '未导出';
-  meta.textContent = ` · graph rev ${PIPELINE.graph.revision||0} · ${PIPELINE.graph.nodes.length} 节点 / ${PIPELINE.graph.edges.length} 连线 · 存储 ${PIPELINE.source==='bridge'?'Bridge 项目目录':'浏览器本地'} · manifest ${manifest}`;
+  const archive = PIPELINE.source === 'bridge' && PIPELINE.archive
+    ? PIPELINE.archive.path + (PIPELINE.archive.legacy ? '（旧存档，下次保存迁入）' : '')
+    : '浏览器本地';
+  meta.textContent = ` · graph rev ${PIPELINE.graph.revision||0} · ${PIPELINE.graph.nodes.length} 节点 / ${PIPELINE.graph.edges.length} 连线 · 存档 ${archive} · manifest ${manifest}`;
 }
 
 function pipelinePaintEdgeList(){
@@ -339,14 +434,12 @@ function pipelinePaintChrome(){
 }
 
 function pipelineApplyZoom(){
-  const zoomer = document.querySelector('.pipeline-zoomer');
   const canvas = document.querySelector('.pipeline-canvas');
-  if(!zoomer || !canvas) return;
-  const width = canvas.offsetWidth || 1700;
-  const height = canvas.offsetHeight || 650;
-  canvas.style.transform = `scale(${PIPELINE.zoom})`;
-  zoomer.style.width = (width * PIPELINE.zoom) + 'px';
-  zoomer.style.height = (height * PIPELINE.zoom) + 'px';
+  if(!canvas) return;
+  const {x, y} = PIPELINE.pan;
+  canvas.style.transform = `translate(${x}px, ${y}px) scale(${PIPELINE.zoom})`;
+  const scroll = document.querySelector('.pipeline-scroll');
+  if(scroll) scroll.style.backgroundPosition = `${x}px ${y}px`;
   const label = document.getElementById('pipelineZoomReset');
   if(label) label.textContent = Math.round(PIPELINE.zoom * 100) + '%';
 }
@@ -365,14 +458,13 @@ function pipelineWheel(event){
   event.preventDefault();
   const next = Math.min(PIPELINE_ZOOM_MAX, Math.max(PIPELINE_ZOOM_MIN, PIPELINE.zoom * Math.exp(-event.deltaY * 0.0015)));
   if(next === PIPELINE.zoom) return;
-  const rect = canvas.getBoundingClientRect();
-  const localX = (event.clientX - rect.left) / PIPELINE.zoom;
-  const localY = (event.clientY - rect.top) / PIPELINE.zoom;
+  const base = scroll.getBoundingClientRect();
+  const cursorX = event.clientX - base.left;
+  const cursorY = event.clientY - base.top;
+  PIPELINE.pan.x = cursorX - (cursorX - PIPELINE.pan.x) / PIPELINE.zoom * next;
+  PIPELINE.pan.y = cursorY - (cursorY - PIPELINE.pan.y) / PIPELINE.zoom * next;
   PIPELINE.zoom = next;
   pipelineApplyZoom();
-  const base = scroll.getBoundingClientRect();
-  scroll.scrollLeft = localX * next - (event.clientX - base.left);
-  scroll.scrollTop = localY * next - (event.clientY - base.top);
 }
 
 function pipelinePanCanvas(scroll){
@@ -383,13 +475,14 @@ function pipelinePanCanvas(scroll){
     event.preventDefault();
     const startX = event.clientX;
     const startY = event.clientY;
-    const baseLeft = scroll.scrollLeft;
-    const baseTop = scroll.scrollTop;
+    const baseX = PIPELINE.pan.x;
+    const baseY = PIPELINE.pan.y;
     scroll.classList.add('panning');
     scroll.setPointerCapture(event.pointerId);
     const move = next => {
-      scroll.scrollLeft = baseLeft - (next.clientX - startX);
-      scroll.scrollTop = baseTop - (next.clientY - startY);
+      PIPELINE.pan.x = baseX + (next.clientX - startX);
+      PIPELINE.pan.y = baseY + (next.clientY - startY);
+      pipelineApplyZoom();
     };
     const end = () => {
       scroll.classList.remove('panning');
@@ -519,11 +612,12 @@ function pipelineStartWire(port, event){
   document.addEventListener('keydown', cancel, true);
 }
 
-function pipelineAssetTarget(){
+function pipelineAssetTarget(assetId){
   if(typeof S === 'undefined') return null;
-  const machine = (S.machines || []).find(item => item.id === PIPELINE.assetId);
+  const id = assetId || PIPELINE.assetId;
+  const machine = (S.machines || []).find(item => item.id === id);
   if(machine) return {kind:'machine', machine};
-  const item = (S.items || []).find(value => value.id === PIPELINE.assetId);
+  const item = (S.items || []).find(value => value.id === id);
   if(item) return {kind:'item', item};
   return null;
 }
@@ -564,7 +658,7 @@ function pipelineStageSummary(node){
   const output = node.result && node.result.output;
   if(!output) return '';
   if(node.type === 'uv') return (output.channels || []).join(',');
-  if(node.type === 'lod') return (output.levels || []).map(level => 'L' + level.level + ' ' + level.parts + ' 件').join(' / ');
+  if(node.type === 'lod') return (output.levels || []).map(level => 'L' + level.level + ' ' + level.triangles + ' 面').join(' / ');
   if(node.type === 'collision') return (output.size || []).join('×') + ' m';
   if(node.type === 'animation') return output.parts + ' 件' + (output.kinds && output.kinds.length ? ' · ' + output.kinds.join('、') : '');
   if(node.type === 'metadata') return (output.formats || []).join(' / ');
@@ -624,14 +718,15 @@ async function pipelineRun(nodeId, through){
   if(!pipelineBridgeReady()){ pipelineRunLocal(nodeId, through); return; }
   pipelineDeriveLocalStages();
   try{
-    const saved = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, graph:PIPELINE.graph});
+    const saved = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, graph:PIPELINE.graph});
     PIPELINE.graph = saved.graph;
+    PIPELINE.archive = saved.archive || PIPELINE.archive;
     PIPELINE.source = 'bridge';
   }catch(_){ pipelineRunLocal(nodeId, through); return; }
   PIPELINE.busy = true;
   renderPipelineView();
   try{
-    const result = await pipelineApi('pipeline/run', {assetId:PIPELINE.assetId,nodeId,through:!!through});
+    const result = await pipelineApi('pipeline/run', {assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId,through:!!through});
     PIPELINE.graph = result.graph;
     const blocked = PIPELINE.graph.nodes.filter(node => node.result && node.result.state === 'blocked').length;
     toast(blocked ? '本地步骤已执行；远程生成/GLB 校验等待 Provider 或模型输入' : '流水线步骤已执行');
@@ -649,7 +744,7 @@ async function pipelineSubmitRemote(nodeId){
   if(!window.confirm(`此操作会调用 Tripo，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）；最终以任务实耗为准。现在提交？`)) return;
   try{
     await pipelineSave();
-    const result=await pipelineApi('pipeline/provider/submit',{assetId:PIPELINE.assetId,nodeId,confirmRemote:true});
+    const result=await pipelineApi('pipeline/provider/submit',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId,confirmRemote:true});
     PIPELINE.graph=result.graph;
     toast('已提交 Tripo 任务：'+result.taskId);
     renderPipelineView();
@@ -659,11 +754,29 @@ async function pipelineSubmitRemote(nodeId){
 async function pipelinePollRemote(nodeId){
   if(!pipelineBridgeReady()){toast('查询远程任务需要 Bridge 在线并绑定项目');return;}
   try{
-    const result=await pipelineApi('pipeline/provider/poll',{assetId:PIPELINE.assetId,nodeId});
+    const result=await pipelineApi('pipeline/provider/poll',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId});
     PIPELINE.graph=result.graph;
     toast('Tripo 状态：'+result.task.state+(result.task.progress!=null?' · '+result.task.progress+'%':''));
     renderPipelineView();
   }catch(error){toast(error.message);}
+}
+
+function pipelineWireCard(card){
+  pipelineDragCard(card);
+  card.onclick=event=>{
+    if(event.target.closest('button,select,input,textarea,.pipeline-port')) return;
+    if(PIPELINE.selected===card.dataset.node) return;
+    PIPELINE.selected=card.dataset.node;
+    document.querySelectorAll('.pipeline-node').forEach(item=>item.classList.toggle('selected',item.dataset.node===PIPELINE.selected));
+  };
+  pipelineWirePorts(card);
+  card.querySelectorAll('[data-run]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRun(button.dataset.run,false);});
+  card.querySelectorAll('[data-through]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRun(button.dataset.through,true);});
+  card.querySelectorAll('[data-remote]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineSubmitRemote(button.dataset.remote);});
+  card.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
+  card.querySelectorAll('[data-delete-node]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRemoveNode(button.dataset.deleteNode);});
+  card.querySelectorAll('[data-param="text"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);if(node){node.params.text=input.value;pipelineSave({quiet:true}).catch(error=>toast(error.message));}});
+  card.querySelectorAll('[data-param="json"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);try{node.params=JSON.parse(input.value);pipelineSave({quiet:true}).catch(error=>toast(error.message));}catch(_){toast('参数必须是合法 JSON');}});
 }
 
 function pipelineNodeCard(node){
@@ -674,7 +787,7 @@ function pipelineNodeCard(node){
     : `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
   const taskOutput=node.result&&node.result.providerTask&&node.result.providerTask.output||node.result&&node.result.output||{};
   const outputFile=taskOutput.modelPath||taskOutput.imagePath;
-  const outputLink=outputFile&&pipelineBridgeReady()?`<a class="pipeline-output" href="/api/pipeline/output/${encodeURIComponent(PIPELINE.assetId)}/${encodeURIComponent(outputFile.split('/').pop())}" download>下载输出</a>`:'';
+  const outputLink=outputFile&&pipelineBridgeReady()?`<a class="pipeline-output" href="/api/pipeline/output/${encodeURIComponent(PIPELINE.assetId)}/${encodeURIComponent(outputFile.split('/').pop())}?kind=${encodeURIComponent(PIPELINE.kind)}" download>下载输出</a>`:'';
   const history=(node.result&&node.result.history||[]).map(item=>`<small>旧版本 ${pipelineEscape(item.taskId)} ${pipelineEscape(item.output&&item.output.modelPath||item.output&&item.output.imagePath||'')}</small>`).join('');
   const stageSummary=pipelineStageSummary(node);
   const inPorts=pipelinePorts(node.type,'in').map(port=>`<span class="pipeline-port pipeline-port-in" data-in-node="${pipelineEscape(node.id)}" data-in-port="${pipelineEscape(port)}" title="输入 ${pipelineEscape(port)}" style="top:${pipelinePortTop(node.type,'in',port)}px"></span>`).join('');
@@ -691,8 +804,6 @@ function pipelineNodeCard(node){
 function renderPipelineView(){
   const view=document.getElementById('view');
   if(!view) return;
-  const oldScroll=document.querySelector('.pipeline-scroll');
-  const keepScroll=oldScroll?{left:oldScroll.scrollLeft,top:oldScroll.scrollTop}:null;
   const bridgeReady=pipelineBridgeReady();
   const candidates=[...S.machines.map(machine=>({id:machine.id,name:machine.name,kind:'machine'})),...S.items.map(item=>({id:item.id,name:item.name,kind:'item'}))];
   if(!candidates.length){view.innerHTML='<div class="card"><p>当前没有可建立流水线的机器或物品。</p></div>';return;}
@@ -712,10 +823,11 @@ function renderPipelineView(){
   const edgeSvg=pipelineEdgeSvg();
   view.innerHTML=`<div class="pipeline-toolbar card">
     <div class="pt-field"><label for="pipelineAsset">资产</label>
-      <select id="pipelineAsset">${candidates.map(item=>`<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}</option>`).join('')}</select></div>
+      <select id="pipelineAsset">${candidates.map(item=>`<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}${pipelineHasArchive(item.id)?' · 已存档':''}</option>`).join('')}</select></div>
     <div class="pt-field"><label for="pipelineTemplate">模板</label>
       <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}">${template.label}</option>`).join('')}</select></div>
     <div class="pt-btns">
+      ${PIPELINE.returnTo?`<button id="pipelineBack">${pipelineReturnLabel()}</button>`:''}
       <button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineZoomReset" title="滚轮缩放 · 按住右键拖动平移 · 点击复位">100%</button><button id="pipelineRunAll" class="primary">运行全部（本地节点）</button>
     </div>
     <div class="pt-note">
@@ -724,25 +836,27 @@ function renderPipelineView(){
         : 'Bridge 未连接（离线只能编辑与运行本地步骤）'}</span>
       ${bridgeReady
         ? '<span>远程任务需逐次确认；额度预估按当前公开价目，最终以任务实耗为准。</span>'
-        : '<span>图保存在本机浏览器；启动 Bridge 并绑定项目后，同一资产自动改用项目目录里的图。</span>'}
+        : '<span>每个资产单独存档在本机浏览器；启动 Bridge 并打开项目后，自动写回该资产文件夹下的 pipeline/。</span>'}
     </div>
   </div>
   <div class="pipeline-shell"><aside class="pipeline-palette"><b>节点</b>${Object.entries(PIPELINE_NODE_LABELS).map(([type,label])=>`<button data-add="${type}">${label}</button>`).join('')}</aside>
-  <div class="pipeline-scroll"><div class="pipeline-zoomer"><div class="pipeline-canvas" style="width:${Math.max(1700,...PIPELINE.graph.nodes.map(node=>(Number(node.x)||0)+260))}px;height:${Math.max(650,...PIPELINE.graph.nodes.map(node=>(Number(node.y)||0)+210))}px"><svg>${edgeSvg}</svg>${PIPELINE.graph.nodes.map(pipelineNodeCard).join('')}</div></div></div></div>
+  <div class="pipeline-scroll"><div class="pipeline-canvas" style="width:${Math.max(1700,...PIPELINE.graph.nodes.map(node=>(Number(node.x)||0)+260))}px;height:${Math.max(650,...PIPELINE.graph.nodes.map(node=>(Number(node.y)||0)+210))}px"><svg>${edgeSvg}</svg>${PIPELINE.graph.nodes.map(pipelineNodeCard).join('')}</div></div></div>
   <div class="card"><b>${pipelineEscape(selected&&selected.name||PIPELINE.assetId)}</b><span id="pipelineMeta"></span>
-  <div style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);margin-top:4px">工作区：${pipelineEscape(bridgeReady&&SYNC.status.project.root ? SYNC.status.project.root+'/Forgeworks' : '未绑定（浏览器本地）')}</div>
+  <div style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);margin-top:4px">项目：${pipelineEscape(bridgeReady&&SYNC.status.project.root ? SYNC.status.project.root : '未打开（浏览器本地）')}</div>
   <div class="pipeline-ports-hint">拖动节点两侧圆点连线：左侧输入端口各保留一条连线（新连线替换旧的），右侧输出可同时接多个下游；拖动中按 Esc 取消。滚轮缩放，按住右键拖动平移，工具条上的百分比按钮复位视角。</div>
   <div class="pipeline-edge-list">${PIPELINE.graph.edges.map((edge,index)=>`<span>${pipelineEscape(edge.from)}.${pipelineEscape(edge.out)} → ${pipelineEscape(edge.to)}.${pipelineEscape(edge.in)} <button data-remove-edge="${index}">断开</button></span>`).join('')}</div></div>`;
   document.getElementById('pipelineAsset').onchange=async event=>{PIPELINE.graph=null;await pipelineLoad(event.target.value);renderPipelineView();};
+  const pipelineBackButton=document.getElementById('pipelineBack');
+  if(pipelineBackButton)pipelineBackButton.onclick=pipelineReturn;
   document.getElementById('pipelineMake').onclick=()=>pipelineCreateTemplate(document.getElementById('pipelineTemplate').value).catch(error=>toast(error.message));
   document.getElementById('pipelineEstimate').onclick=()=>{const kind=document.getElementById('pipelineTemplate').value;const count=kind==='machine'?S.machines.length:S.items.length;const estimate=pipelineEstimate(kind,count);toast(`${estimate.assets} 个资产：约 ${estimate.lowCredits}–${estimate.highCredits} credits（$${estimate.lowUsd.toFixed(2)}–$${estimate.highUsd.toFixed(2)}）；以任务实际实耗为准`);};
   document.getElementById('pipelineSave').onclick=()=>pipelineSave().catch(error=>toast(error.message));
   document.getElementById('pipelineArrange').onclick=pipelineArrange;
   document.getElementById('pipelineZoomReset').onclick=()=>{
     PIPELINE.zoom=1;
+    PIPELINE.pan.x=0;
+    PIPELINE.pan.y=0;
     pipelineApplyZoom();
-    const scroll=view.querySelector('.pipeline-scroll');
-    if(scroll){scroll.scrollLeft=0;scroll.scrollTop=0;}
   };
   document.getElementById('pipelineRunAll').onclick=()=>pipelineRun(null,false);
   view.querySelectorAll('[data-add]').forEach(button=>button.addEventListener('pointerdown',event=>{
@@ -750,29 +864,12 @@ function renderPipelineView(){
     event.preventDefault();
     pipelineStartPaletteDrag(button,event);
   }));
-  view.querySelectorAll('[data-node]').forEach(card=>{
-    pipelineDragCard(card);
-    card.onclick=event=>{
-      if(event.target.closest('button,select,input,textarea,.pipeline-port')) return;
-      if(PIPELINE.selected===card.dataset.node) return;
-      PIPELINE.selected=card.dataset.node;
-      view.querySelectorAll('.pipeline-node').forEach(item=>item.classList.toggle('selected',item.dataset.node===PIPELINE.selected));
-    };
-  });
-  pipelineWirePorts(view);
+  view.querySelectorAll('[data-node]').forEach(pipelineWireCard);
   const scroll=view.querySelector('.pipeline-scroll');
   if(scroll){
     pipelinePanCanvas(scroll);
     pipelineApplyZoom();
-    if(keepScroll){scroll.scrollLeft=keepScroll.left;scroll.scrollTop=keepScroll.top;}
   }
   pipelinePaintMeta();
-  view.querySelectorAll('[data-run]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRun(button.dataset.run,false);});
-  view.querySelectorAll('[data-through]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRun(button.dataset.through,true);});
-  view.querySelectorAll('[data-remote]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineSubmitRemote(button.dataset.remote);});
-  view.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
   view.querySelectorAll('[data-remove-edge]').forEach(button=>button.onclick=()=>pipelineRemoveEdge(Number(button.dataset.removeEdge)));
-  view.querySelectorAll('[data-delete-node]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRemoveNode(button.dataset.deleteNode);});
-  view.querySelectorAll('[data-param="text"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===input.closest('[data-node]').dataset.node);if(node){node.params.text=input.value;pipelineSave({quiet:true}).catch(error=>toast(error.message));}});
-  view.querySelectorAll('[data-param="json"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===input.closest('[data-node]').dataset.node);try{node.params=JSON.parse(input.value);pipelineSave({quiet:true}).catch(error=>toast(error.message));}catch(_){toast('参数必须是合法 JSON');}});
 }

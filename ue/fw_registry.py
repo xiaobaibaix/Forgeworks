@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import urllib.request
 
 
 BRIDGE_URL = 'http://127.0.0.1:8787'
@@ -9,11 +10,15 @@ SAFE_OBJECT_PATH = re.compile(r'^/Game/Forgeworks/Machines/([A-Za-z0-9_]+)/([A-Z
 
 
 def target_forgeworks_root():
+    local = os.path.join(PROJECT_ROOT, 'Forgeworks')
+    if os.path.isdir(local):
+        return local
     with urllib.request.urlopen(BRIDGE_URL + '/api/project/info', timeout=5) as response:
         info = json.loads(response.read().decode('utf-8'))
     if not info.get('ok') or not info.get('root'):
-        raise RuntimeError('Forgeworks Bridge 未绑定 UE 项目')
-    return os.path.join(info['root'], 'Forgeworks')
+        raise RuntimeError('尚未从 Forgeworks 导出资产')
+    root = info['root']
+    return root if os.path.basename(root) == 'Forgeworks' else os.path.join(root, 'Forgeworks')
 
 
 def normalize_assets(assets):

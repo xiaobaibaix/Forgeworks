@@ -6,6 +6,53 @@
 
 ---
 
+## 0.1 架构更新（2026-10-22 已实现）：Forgeworks 项目工程与 UE 导出目标分离
+
+工具产出的东西 UE 并不全用（描述词、生成管线、预览、hash 记录等只对 Forgeworks 有意义）。因此存储根从「UE 项目里的 `Forgeworks/`」改为独立的 **Forgeworks 项目工程**，UE 只在导出时接收副本。§2.4、§3 描述的是拆分前的单根设计，目录语义以下面为准。
+
+### 两层目录
+
+```
+<Forgeworks 项目>/                       ← 新建/打开的项目工程，存全部设计数据
+├── forgeworks.project.json              ← 项目标记（含名称、创建时间）
+├── project.json                         ← 全部内容数据（替代 localStorage 作为主存储）
+├── _Source/
+│   ├── Machines/<ID>/                   ← GLB + 预览 SVG/PNG + pipeline/prompt
+│   ├── Items/Icons/  Materials/  Data/
+└── _Sync/                               ← manifest.json、tool_versions、conflicts
+
+<UE 项目>/Forgeworks/                     ← 仅导出目标，可随时更换
+├── _Source/Machines/<ID>/<ID>.glb       ← 只复制 mesh 角色
+└── _Sync/
+    ├── manifest.json                    ← 导出清单（保留 meta：contentHash/styleHash/sizeCm）
+    └── ue_assets.json                   ← UE 侧 AssetRegistry 快照
+```
+
+### 行为约定
+
+- **新建项目**：选父目录 + 名称，创建上述目录树并写入项目标记与初始内容。
+- **打开项目**：选项目根（含 `forgeworks.project.json`）或旧版 `<UE>/Forgeworks`；旧版自动迁移为项目根。
+- **UE 导出目标**：独立设置，必须含 `.uproject`；**不能与当前项目根相同**（否则等于自拷贝）。
+- **导出到 UE**：只复制 `files.mesh`（GLB）与导出的 manifest，`preview` / `thumbnail` / `pipeline` / `prompt` 留在项目里。`meta` 原样带过去，用于计算 `stale`（contentHash/styleHash 变化）与尺寸校验。
+- 项目内容变更 → 防抖 400ms 写回 `project.json`；localStorage 仅作离线兜底。
+- 导出状态机仍在项目层比较：项目 `contentHash`/`styleHash` vs UE manifest 的 `meta` → `none | stale | exported`。
+
+### Bridge API（新增/变更）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/project/info` | 当前项目根与 UE 目标（UE 侧脚本本地优先读取） |
+| GET/POST | `/api/project/content` | 读写 `project.json` |
+| POST | `/api/project/bind` | 打开/绑定项目（原名 `bind`，语义改为项目根） |
+| POST | `/api/project/create` | 新建项目 `{parent, name}` |
+| POST | `/api/project/ue-target` | 设置 UE 导出目标 `{path}` |
+| POST | `/api/project/publish` | 导出到 UE `{ids?}` |
+| GET | `/api/ue/manifest` | 读 UE 目标下的 manifest |
+
+> 旧版运行中的 Bridge 不含这些路由，升级后需重启 `tools/bridge.py`。
+
+---
+
 ## 0. 给决策者的三句话
 
 1. **能做，但要纠正一个前提**：浏览器无法直接生成 `.uasset`（UE 的二进制资产格式），所以"导出到 UE 项目文件夹"的正确形态是——工具产出**中间格式 + 清单**，由 UE 侧的脚本负责把它们变成 `.uasset`。这是硬限制，绕不过去。

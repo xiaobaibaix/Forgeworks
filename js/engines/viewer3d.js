@@ -652,30 +652,39 @@ function createViewer3D(canvas, machine){
 
   /* ---------- 几何体工厂 ---------- */
   const geoCache = {};
-  function partGeometry(p){
-    const key = JSON.stringify(p.kind === 'pipe'
-      ? ['pipe', p.r, Math.hypot(p.b[0]-p.a[0], p.b[1]-p.a[1], p.b[2]-p.a[2]).toFixed(3)]
-      : [p.kind, p.s, p.r, p.r1, p.r2, p.h, p.tube, p.sides, p.seg]);
+  function partGeometry(p, lod){
+    const lp = (typeof fwLodPart === 'function') ? fwLodPart(p, lod || 0) : p;
+    const key = JSON.stringify(lp.kind === 'pipe'
+      ? ['pipe', lp.r, Math.hypot(lp.b[0]-lp.a[0], lp.b[1]-lp.a[1], lp.b[2]-lp.a[2]).toFixed(3), lp.seg || 12]
+      : [lp.kind, lp.s, lp.r, lp.r1, lp.r2, lp.h, lp.tube, lp.sides, lp.seg, lp.segH, lp.segT]);
     if(geoCache[key]) return geoCache[key];
 
     let g;
-    switch(p.kind){
-      case 'cyl':   g = new THREE.CylinderGeometry(p.r, p.r, p.h, p.seg || 20); break;
-      case 'cone':  g = new THREE.CylinderGeometry(p.r1, p.r2, p.h, p.seg || 20); break;
-      case 'sphere':g = new THREE.SphereGeometry(p.r, 20, 14); break;
-      case 'dome':  g = new THREE.SphereGeometry(p.r, 20, 10, 0, Math.PI*2, 0, Math.PI/2); break;
-      case 'torus': g = new THREE.TorusGeometry(p.r, p.tube, 8, 28); g.rotateX(Math.PI/2); break;
-      case 'torusV':g = new THREE.TorusGeometry(p.r, p.tube, 8, 24); break;
-      case 'prism': g = new THREE.CylinderGeometry(p.r, p.r, p.h, p.sides || 6); break;
+    switch(lp.kind){
+      case 'cyl':   g = new THREE.CylinderGeometry(lp.r, lp.r, lp.h, lp.seg || 20); break;
+      case 'cone':  g = new THREE.CylinderGeometry(lp.r1, lp.r2, lp.h, lp.seg || 20); break;
+      case 'sphere':g = new THREE.SphereGeometry(lp.r, lp.seg || 20, lp.segH || 14); break;
+      case 'dome':  g = new THREE.SphereGeometry(lp.r, lp.seg || 20, lp.segH || 10, 0, Math.PI*2, 0, Math.PI/2); break;
+      case 'torus': g = new THREE.TorusGeometry(lp.r, lp.tube, lp.segT || 8, lp.seg || 28); g.rotateX(Math.PI/2); break;
+      case 'torusV':g = new THREE.TorusGeometry(lp.r, lp.tube, lp.segT || 8, lp.seg || 24); break;
+      case 'prism': g = new THREE.CylinderGeometry(lp.r, lp.r, lp.h, lp.sides || 6); break;
       case 'pipe': {
-        const len = Math.hypot(p.b[0]-p.a[0], p.b[1]-p.a[1], p.b[2]-p.a[2]);
-        g = new THREE.CylinderGeometry(p.r, p.r, len, 12);
+        const len = Math.hypot(lp.b[0]-lp.a[0], lp.b[1]-lp.a[1], lp.b[2]-lp.a[2]);
+        g = new THREE.CylinderGeometry(lp.r, lp.r, len, lp.seg || 12);
         break;
       }
-      default:      g = new THREE.BoxGeometry(p.s[0], p.s[1], p.s[2]);
+      default:      g = new THREE.BoxGeometry(lp.s[0], lp.s[1], lp.s[2]);
     }
     geoCache[key] = g;
     return g;
+  }
+
+  // 低多边形图元用平面着色保留硬边；高段数曲面才用平滑法线
+  function flatShadingFor(p, lod){
+    if(lod > 0) return true;
+    if(p.kind === 'box' || p.kind === 'prism') return true;
+    if(p.kind === 'cyl' || p.kind === 'cone') return (p.seg || 20) <= 8;
+    return false;
   }
 
   function makeThreeMaterial(mat){
@@ -706,6 +715,7 @@ function createViewer3D(canvas, machine){
   const group = new THREE.Group();
   scene.add(group);
   const meshes = [];
+  let appliedLod = -1;
 
   const UP = new THREE.Vector3(0,1,0);
 
@@ -718,15 +728,7 @@ function createViewer3D(canvas, machine){
     }
     geo.parts.forEach(function(p){
       const mat = makeThreeMaterial(p.mat);
-      // 着色模式：低多边形图元（方块/棱柱/低段数锥）用平面着色保留硬边，
-      // 高段数曲面才用平滑法线。否则 4 段锥屋顶会被照成一颗圆顶。
-      if(p.kind === 'box' || p.kind === 'prism'){
-        mat.flatShading = true;
-      }else if(p.kind === 'cyl' || p.kind === 'cone'){
-        mat.flatShading = (p.seg || 20) <= 8;
-      }else{
-        mat.flatShading = false;
-      }
+      mat.flatShading = flatShadingFor(p, 0);
       mat.needsUpdate = true;
 
       const g = partGeometry(p);
@@ -756,7 +758,6 @@ function createViewer3D(canvas, machine){
       const entry = {
         mesh: mesh, part: p, role: p.role, id: p.partId, matKey: p.mat.key,
         baseMaterial: mat.clone(),
-        lodHidden: false,
         entryHidden: !!(override && override.hidden),
         base: {
           pos: mesh.position.clone(),
@@ -767,6 +768,7 @@ function createViewer3D(canvas, machine){
       snapshotStyle(entry);
       meshes.push(entry);
     });
+    appliedLod = -1;   // 网格重建后强制按当前档位重设几何
   }
 
   /** 记录「真实材质」快照：图层开关都从它还原，白模/线框不会污染导出 */
@@ -887,16 +889,17 @@ function createViewer3D(canvas, machine){
 
   function applyLod(){
     const level = Math.max(0, Math.min(2, Number(state.layers.lod) || 0));
-    let hidden = null;
-    if(level > 0 && typeof fwLodPlan === 'function'){
-      const plan = fwLodPlan(machine, state.preset);
-      hidden = plan.levels[level] ? plan.levels[level].hidden : null;
-    }
+    const changed = level !== appliedLod;
     for(let i=0;i<meshes.length;i++){
       const entry = meshes[i];
-      entry.lodHidden = !!(hidden && hidden.has(entry.id));
-      entry.mesh.visible = !entry.entryHidden && !entry.lodHidden;
+      if(changed){
+        entry.mesh.geometry = partGeometry(entry.part, level);
+        entry.mesh.material.flatShading = flatShadingFor(entry.part, level);
+        entry.mesh.material.needsUpdate = true;
+      }
+      entry.mesh.visible = !entry.entryHidden;
     }
+    appliedLod = level;
   }
 
   /** 导出材质始终是「真实材質 + 部件覆盖」，不受白模/线框/贴图开关影响 */
@@ -1252,7 +1255,7 @@ function createViewer3D(canvas, machine){
         parts: plan.parts,
         totalTriangles: plan.totalTriangles,
         levels: plan.levels.map(function(level){
-          return { level:level.level, parts:level.parts, triangles:level.triangles, hidden:level.hidden.size };
+          return { level:level.level, parts:level.parts, triangles:level.triangles };
         }),
       };
     },
@@ -1323,7 +1326,8 @@ function createViewer3D(canvas, machine){
         const key = override && override.material ? role + '_' + m.id : role;
         if(!buckets[key]){ buckets[key] = { role:key, mat:exportMaterial(m), matKey:m.matKey, geos:[] }; order.push(key); }
         m.mesh.updateWorldMatrix(true, false);
-        const g = m.mesh.geometry.clone();
+        // 导出始终按 L0 全量，预览里切到低模不影响资产
+        const g = partGeometry(m.part, 0).clone();
         g.applyMatrix4(m.mesh.matrixWorld);
         // 统一去掉多余属性，保证可合并
         if(g.attributes.uv2) g.deleteAttribute('uv2');
@@ -1527,7 +1531,7 @@ function open3DViewer(machineId){
           '<label><input type="checkbox" data-layer="particles"> 粒子</label>' +
           '<label><input type="checkbox" data-layer="animations"> 动画</label>' +
           '<div class="v3-layers-row"><span>LOD</span>' +
-            '<select id="v3Lod"><option value="0">L0 全量</option><option value="1">L1 轻量</option><option value="2">L2 最省</option></select>' +
+            '<select id="v3Lod"><option value="0">L0 原始面数</option><option value="1">L1 低模</option><option value="2">L2 极低模</option></select>' +
           '</div>' +
           '<div class="v3-layers-row"><span>碰撞高</span>' +
             '<input type="number" id="v3CollH" step="0.1" min="0" placeholder="自动">' +
@@ -1549,6 +1553,7 @@ function open3DViewer(machineId){
           '<button class="sm" id="v3Auto">自动旋转</button>' +
           '<button class="sm" id="v3Reset">复位</button>' +
           '<button class="sm" id="v3Parts">编辑部件</button>' +
+          '<button class="sm" id="v3Gen">生成模型</button>' +
           '<button class="sm" id="v3Shot">导出 PNG</button>' +
           '<button class="sm primary" id="v3Glb">导出 GLB</button>' +
         '</div>' +
@@ -1646,6 +1651,11 @@ function open3DViewer(machineId){
   document.getElementById('v3CloseBtn').onclick = close;
   document.getElementById('v3Reset').onclick = function(){ V.reset(); };
   document.getElementById('v3Parts').onclick = function(){ close(); open3DEditor(m.id); };
+  document.getElementById('v3Gen').onclick = function(){
+    const fromView = cur;
+    close();
+    pipelineEnter(m.id, { view: fromView, assetId: m.id, modal: '3d' });
+  };
   document.getElementById('v3Auto').onclick = function(e){
     const next = !V.getAutoRotate();
     V.setAutoRotate(next);

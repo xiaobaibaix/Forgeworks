@@ -125,7 +125,7 @@ class BlenderPipelineTest(unittest.TestCase):
             bridge.STATE_FILE = str(temp / 'bridge-state.json')
             bridge._state.clear()
             try:
-                self.assertTrue(bridge.bind_project(str(project))['ok'])
+                self.assertTrue(bridge.open_project(str(project))['ok'])
                 server = bridge.Bridge(('127.0.0.1', 0), bridge.BridgeHandler)
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()

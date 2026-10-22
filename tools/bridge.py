@@ -60,6 +60,9 @@ _provider_spec.loader.exec_module(fw_providers)
 _texture_spec = importlib.util.spec_from_file_location('fw_textures', os.path.join(ROOT, 'tools', 'fw_textures.py'))
 fw_textures = importlib.util.module_from_spec(_texture_spec)
 _texture_spec.loader.exec_module(fw_textures)
+_project_spec = importlib.util.spec_from_file_location('fw_project', os.path.join(ROOT, 'tools', 'fw_project.py'))
+fw_project = importlib.util.module_from_spec(_project_spec)
+_project_spec.loader.exec_module(fw_project)
 
 BRIDGE_VERSION = '0.1.0'
 STATE_FILE = os.path.join(ROOT, 'tools', '.bridge_state.json')
@@ -69,11 +72,6 @@ CONFIG_FILE = os.path.join(ROOT, 'tools', 'bridge_config.json')
 FW_DIR_NAME = 'Forgeworks'                 # 项目根下
 SOURCE_DIR = '_Source'
 SYNC_DIR = '_Sync'
-SOURCE_TREE = {
-    'Machines': None,
-    'Items/Icons': None,
-    'Data': None,
-}
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -210,14 +208,35 @@ def blender_info():
 # ---------------------------------------------------------------------------
 
 def project_root():
-    """当前绑定的项目根目录（未绑定返回 None）。"""
+    """当前 Forgeworks 项目根目录（未打开返回 None）。"""
     p = _state.get('projectRoot')
-    return p if p and os.path.isdir(p) else None
+    if not p or not os.path.isdir(p):
+        return None
+    if fw_project.is_project(p):
+        return p
+    found = fw_project.detect_project(p)
+    return found['root'] if found else None
 
 
 def fw_dir():
-    p = project_root()
+    return project_root()
+
+
+def ue_project_root():
+    p = _state.get('ueProjectRoot')
+    return p if p and os.path.isdir(p) else None
+
+
+def ue_export_root():
+    p = ue_project_root()
     return os.path.join(p, FW_DIR_NAME) if p else None
+
+
+def current_ue_target():
+    p = ue_project_root()
+    if not p:
+        return None
+    return fw_project.ue_target_info(p)
 
 
 def source_dir():
@@ -256,17 +275,9 @@ def project_label(path, uproject):
 
 
 def current_project():
-    """当前绑定项目的描述（未绑定返回 None）。"""
+    """当前 Forgeworks 项目的描述（未打开返回 None）。"""
     root = project_root()
-    if not root:
-        return None
-    uproject = find_uproject(root)
-    return {
-        'root': root,
-        'name': project_label(root, uproject),
-        'uproject': uproject,
-        'kind': _state.get('projectKind') or ('ue' if uproject else 'workspace'),
-    }
+    return fw_project.project_info(root) if root else None
 
 
 def remember_project(project):
@@ -285,57 +296,131 @@ def recent_projects():
     return rows
 
 
-def bind_project(path):
-    """绑定目录：有 .uproject 视为 UE 项目，否则当作普通工作区。"""
-    path = os.path.abspath(os.path.expanduser(path))
-    if not os.path.isdir(path):
-        return {'ok': False, 'error': '目录不存在: %s' % path}
-    uproject = find_uproject(path)
-    kind = 'ue' if uproject else 'workspace'
-    label = project_label(path, uproject)
-
-    fw = os.path.join(path, FW_DIR_NAME)
-    made = []
-    for sub in [SOURCE_DIR, SYNC_DIR] + ['%s/%s' % (SOURCE_DIR, k) for k in SOURCE_TREE]:
-        d = os.path.join(path, FW_DIR_NAME, sub)
-        if not os.path.isdir(d):
-            os.makedirs(d, exist_ok=True)
-            made.append(sub)
-
-    mf_path = os.path.join(fw, SYNC_DIR, 'manifest.json')
-    if not os.path.isfile(mf_path):
-        write_json(mf_path, {
-            'schemaVersion': 1,
-            'forgeworksVersion': 'bridge-%s' % BRIDGE_VERSION,
-            'project': {
-                'name': label,
-                'kind': kind,
-                'uproject': uproject,
-                'root': path,
-                'boundAt': now_iso(),
-            },
-            'assets': {},
-        })
-
-    _state['projectRoot'] = path
-    _state['projectKind'] = kind
+def _remember_current(project, ue_target=None):
+    _state['projectRoot'] = project['root']
+    _state.pop('projectKind', None)
+    if ue_target:
+        _state['ueProjectRoot'] = ue_target['root']
+    else:
+        _state.pop('ueProjectRoot', None)
     _state['boundAt'] = now_iso()
-    project = {'name': label, 'kind': kind, 'uproject': uproject, 'root': path}
     remember_project(project)
     save_state()
-    push_event('project.bound', {'root': path, 'uproject': uproject, 'kind': kind})
-    return {'ok': True, 'project': project, 'fwDir': fw, 'created': made}
+
+
+def open_project(path):
+    """打开 Forgeworks 项目；旧版 <UE>/Forgeworks 布局自动迁移识别。"""
+    path = os.path.abspath(os.path.expanduser(str(path or '')))
+    if not os.path.isdir(path):
+        return {'ok': False, 'error': '目录不存在: %s' % path}
+    found = fw_project.detect_project(path)
+    if not found and find_uproject(path):
+        root = os.path.join(path, FW_DIR_NAME)
+        fw_project.initialize_project(root, project_label(path, find_uproject(path)), BRIDGE_VERSION)
+        found = {'root': root, 'kind': 'legacy', 'ueRoot': path}
+    if not found:
+        return {'ok': False, 'error': '不是 Forgeworks 项目（缺少 %s）' % fw_project.PROJECT_MARKER}
+    root = found['root']
+    if not fw_project.is_project(root):
+        label = project_label(found['ueRoot'], find_uproject(found['ueRoot'])) if found.get('ueRoot') else None
+        fw_project.initialize_project(root, label, BRIDGE_VERSION)
+    project = fw_project.project_info(root)
+    ue_target = None
+    ue_root = found.get('ueRoot')
+    if ue_root:
+        try:
+            candidate = fw_project.prepare_ue_target(ue_root)
+            # 旧版 <UE>/Forgeworks 布局里项目目录就是导出目录，不能再当作导出目标
+            if os.path.realpath(candidate['forgeworksRoot']) != os.path.realpath(root):
+                ue_target = candidate
+        except ValueError:
+            ue_target = None
+    _remember_current(project, ue_target)
+    push_event('project.opened', {'root': root, 'name': project['name']})
+    return {'ok': True, 'project': project, 'fwDir': root, 'ueTarget': ue_target, 'created': []}
+
+
+def create_project(parent, name):
+    try:
+        result = fw_project.create_project(parent, name, BRIDGE_VERSION)
+    except (OSError, ValueError) as error:
+        return {'ok': False, 'error': str(error)}
+    project = result['project']
+    _state['projectRoot'] = result['root']
+    _state.pop('projectKind', None)
+    _state.pop('ueProjectRoot', None)
+    _state['boundAt'] = now_iso()
+    remember_project(project)
+    save_state()
+    push_event('project.created', {'root': result['root'], 'name': project['name']})
+    return {'ok': True, 'project': project, 'fwDir': result['root'], 'ueTarget': None, 'created': []}
+
+
+def _same_as_project(export_root):
+    root = fw_dir()
+    return bool(root and export_root) and os.path.realpath(export_root) == os.path.realpath(root)
+
+
+def set_ue_target(path):
+    try:
+        target = fw_project.prepare_ue_target(path)
+    except ValueError as error:
+        return {'ok': False, 'error': str(error)}
+    if _same_as_project(os.path.join(target['root'], FW_DIR_NAME)):
+        return {'ok': False, 'error': '该目录就是当前 Forgeworks 项目，请选择另一个 UE 导出目标'}
+    _state['ueProjectRoot'] = target['root']
+    save_state()
+    push_event('project.ue_target', {'root': target['root'], 'uproject': target['uproject']})
+    return {'ok': True, 'ueTarget': target}
+
+
+def publish_to_ue(asset_ids=None):
+    root, target = fw_dir(), ue_export_root()
+    if not root:
+        return {'ok': False, 'error': '未打开 Forgeworks 项目'}
+    if not target:
+        return {'ok': False, 'error': '尚未设置 UE 导出目标'}
+    if _same_as_project(target):
+        return {'ok': False, 'error': 'UE 导出目标与当前 Forgeworks 项目相同，请重新设置'}
+    result = fw_project.publish_to_ue(root, ue_project_root(), asset_ids, BRIDGE_VERSION)
+    if result.get('published'):
+        push_event('asset.published', {'assets': result['published'], 'target': ue_project_root()})
+    return result
 
 
 def unbind_project():
     _state.pop('projectRoot', None)
     _state.pop('projectKind', None)
+    _state.pop('ueProjectRoot', None)
     save_state()
     push_event('project.unbound', None)
     return {'ok': True}
 
 
-PICK_PROMPT = '选择 Forgeworks 项目目录（含 .uproject 会识别为 UE 项目）'
+def normalize_bound_project():
+    """把旧版「状态指向 UE 项目根」迁移为「Forgeworks 项目根」。"""
+    root = _state.get('projectRoot')
+    if not root or fw_project.is_project(root):
+        return
+    found = fw_project.detect_project(root)
+    if not found:
+        return
+    fw_root = found['root']
+    if not fw_project.is_project(fw_root):
+        ue_root = found.get('ueRoot')
+        label = project_label(ue_root, find_uproject(ue_root)) if ue_root else None
+        fw_project.initialize_project(fw_root, label, BRIDGE_VERSION)
+    _state['projectRoot'] = fw_root
+    ue_root = found.get('ueRoot')
+    # 旧布局的 Forgeworks 目录同时是导出目录，迁移后不自动绑定 UE 目标
+    if ue_root and os.path.realpath(os.path.join(ue_root, FW_DIR_NAME)) != os.path.realpath(fw_root):
+        _state['ueProjectRoot'] = ue_root
+    else:
+        _state.pop('ueProjectRoot', None)
+    save_state()
+
+
+PICK_PROMPT = '选择 Forgeworks 项目文件夹或 UE 导出目标'
 
 
 def pick_folder():
@@ -675,7 +760,7 @@ def _blender_worker():
 
 def _mark_blender_error(job, error):
     asset_id, _, mesh_sha1, _, bound_root = job
-    manifest_file = os.path.join(bound_root, FW_DIR_NAME, SYNC_DIR, 'manifest.json')
+    manifest_file = os.path.join(bound_root, SYNC_DIR, 'manifest.json')
     with _manifest_lock:
         manifest = read_json(manifest_file, None)
         rec = (manifest or {}).get('assets', {}).get(asset_id)
@@ -702,7 +787,7 @@ def _queue_blender_check(asset_id, mesh_path, mesh_sha1, expected_materials, bou
 
 def _process_blender_job(job):
     asset_id, mesh_path, mesh_sha1, expected_materials, bound_root = job
-    project_dir = os.path.join(bound_root, FW_DIR_NAME)
+    project_dir = bound_root
     source_path = os.path.join(project_dir, SOURCE_DIR)
     manifest_file = os.path.join(project_dir, SYNC_DIR, 'manifest.json')
     mesh_file = os.path.join(source_path, 'Machines', asset_id, mesh_path)
@@ -959,12 +1044,26 @@ class BridgeHandler(SimpleHTTPRequestHandler):
     def _route_get(self, route):
         if route == 'status':
             self._json({'ok': True, 'bridge': BRIDGE_VERSION, 'project': current_project(),
-                        'blender': blender_info()})
+                        'ueTarget': current_ue_target(), 'blender': blender_info()})
         elif route == 'projects':
-            self._json({'ok': True, 'current': current_project(), 'recent': recent_projects()})
+            self._json({'ok': True, 'current': current_project(), 'ueTarget': current_ue_target(),
+                        'recent': recent_projects()})
         elif route == 'project/info':
             mf = load_manifest()
-            self._json({'ok': True, 'manifest': mf, 'root': project_root()})
+            self._json({'ok': True, 'manifest': mf, 'root': project_root(),
+                        'ueTarget': current_ue_target()})
+        elif route == 'project/content':
+            root = fw_dir()
+            if not root:
+                self._json({'ok': False, 'error': '未打开 Forgeworks 项目'}, 409)
+            else:
+                self._json({'ok': True, 'content': fw_project.load_content(root)})
+        elif route == 'ue/manifest':
+            target = ue_export_root()
+            if not target:
+                self._json({'ok': False, 'error': '尚未设置 UE 导出目标'}, 409)
+            else:
+                self._json({'ok': True, 'manifest': read_json(os.path.join(target, SYNC_DIR, 'manifest.json'), None)})
         elif route == 'manifest':
             self._json({'ok': True, 'manifest': load_manifest()})
         elif route == 'ue/assets':
@@ -1022,9 +1121,11 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             }, 'remoteExecutionAvailable': bool(tripo_config.get('api_key'))})
         elif route.startswith('pipeline/graph/'):
             asset_id = route.rsplit('/', 1)[-1]
+            kind = (self._query().get('kind') or ['machine'])[0]
             try:
-                graph = fw_pipeline.load_graph(fw_dir(), asset_id)
-                self._json({'ok': True, 'graph': graph})
+                graph = fw_pipeline.load_graph(fw_dir(), asset_id, kind)
+                self._json({'ok': True, 'graph': graph,
+                            'archive': fw_pipeline.archive_info(fw_dir(), asset_id, kind)})
             except (ValueError, TypeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route.startswith('pipeline/output/'):
@@ -1034,8 +1135,9 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     raise ValueError('流水线输出只允许本地同源访问')
                 if len(parts) != 4 or not re.fullmatch(r'[A-Za-z0-9_]{1,64}', parts[2]) or not re.fullmatch(r'(model|image)_task_[A-Za-z0-9_-]{4,128}\.(glb|png|jpg|webp)', parts[3]):
                     raise ValueError('输出路径非法')
-                path = os.path.join(fw_pipeline.pipeline_root(fw_dir(), parts[2]), 'outputs', parts[3])
-                if not os.path.isfile(path) or os.path.getsize(path) > 150 * 1024 * 1024:
+                kind = (self._query().get('kind') or ['machine'])[0]
+                path = fw_pipeline.resolve_output(fw_dir(), parts[2], kind, parts[3])
+                if not path or os.path.getsize(path) > 150 * 1024 * 1024:
                     raise ValueError('输出文件不存在或过大')
                 with open(path, 'rb') as stream:
                     data = stream.read()
@@ -1086,7 +1188,29 @@ class BridgeHandler(SimpleHTTPRequestHandler):
         body = self._read_body()
         route = self.path[5:].split('?')[0]
         if route == 'project/bind':
-            self._json(bind_project((body or {}).get('path', '')))
+            self._json(open_project((body or {}).get('path', '')))
+        elif route == 'project/create':
+            b = body or {}
+            self._json(create_project(b.get('parent'), b.get('name')))
+        elif route == 'project/ue-target':
+            self._json(set_ue_target((body or {}).get('path', '')))
+        elif route == 'project/publish':
+            b = body or {}
+            ids = b.get('ids')
+            if ids is not None and not isinstance(ids, list):
+                self._json({'ok': False, 'error': 'ids 必须是数组'}, 400)
+            else:
+                self._json(publish_to_ue(ids))
+        elif route == 'project/content':
+            root = fw_dir()
+            if not root:
+                self._json({'ok': False, 'error': '未打开 Forgeworks 项目'}, 409)
+            else:
+                try:
+                    fw_project.save_content(root, (body or {}).get('content'))
+                    self._json({'ok': True})
+                except ValueError as error:
+                    self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'project/pick':
             if not self._same_loopback_origin():
                 self._json({'ok': False, 'error': '目录选择只允许 Forgeworks 本地同源页面调用'}, 403)
@@ -1109,23 +1233,28 @@ class BridgeHandler(SimpleHTTPRequestHandler):
         elif route == 'pipeline/graph/save':
             b = body or {}
             try:
-                graph = fw_pipeline.save_graph(fw_dir(), b.get('assetId'), b.get('graph'))
+                kind = b.get('kind') or 'machine'
+                graph = fw_pipeline.save_graph(fw_dir(), b.get('assetId'), b.get('graph'), kind)
                 push_event('pipeline.graph_saved', {'id': b.get('assetId'), 'revision': graph['revision']})
-                self._json({'ok': True, 'graph': graph})
+                self._json({'ok': True, 'graph': graph,
+                            'archive': fw_pipeline.archive_info(fw_dir(), b.get('assetId'), kind)})
             except (ValueError, TypeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/graph/template':
             b = body or {}
             try:
+                kind = b.get('kind') or 'machine'
                 graph = fw_pipeline.starter_graph(b.get('assetId'), b.get('template', 'machine'))
-                graph = fw_pipeline.save_graph(fw_dir(), b.get('assetId'), graph)
-                self._json({'ok': True, 'graph': graph})
+                graph = fw_pipeline.save_graph(fw_dir(), b.get('assetId'), graph, kind)
+                self._json({'ok': True, 'graph': graph,
+                            'archive': fw_pipeline.archive_info(fw_dir(), b.get('assetId'), kind)})
             except (ValueError, TypeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/run':
             b = body or {}
             try:
-                result = fw_pipeline.execute_local(fw_dir(), b.get('assetId'), b.get('nodeId'), bool(b.get('through')))
+                result = fw_pipeline.execute_local(fw_dir(), b.get('assetId'), b.get('nodeId'), bool(b.get('through')),
+                                                   b.get('kind') or 'machine')
                 push_event('pipeline.progress', {'id': b.get('assetId'), 'ran': result['ran']})
                 self._json({'ok': True, **result})
             except (ValueError, TypeError) as error:
@@ -1138,7 +1267,8 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 if b.get('confirmRemote') is not True:
                     raise ValueError('需要用户明确确认可能产生 Provider 费用')
                 asset_id, node_id = b.get('assetId'), b.get('nodeId')
-                graph = fw_pipeline.load_graph(fw_dir(), asset_id)
+                kind = b.get('kind') or 'machine'
+                graph = fw_pipeline.load_graph(fw_dir(), asset_id, kind)
                 nodes, _ = fw_pipeline.validate_graph(graph)
                 node = nodes.get(node_id)
                 if not node or node.get('type') not in ('textToImage', 'imageTo3D'):
@@ -1165,7 +1295,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     node['result'].setdefault('history', []).append(previous_task)
                 node.setdefault('result', {})['providerTask'] = task
                 node['result']['state'] = 'queued'
-                result = fw_pipeline.save_graph(fw_dir(), asset_id, graph)
+                result = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
                 push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': 'queued', 'taskId': task['taskId']})
                 self._json({'ok': True, 'graph': result, 'taskId': task['taskId'], 'state': 'queued'})
             except (ValueError, TypeError, RuntimeError) as error:
@@ -1176,7 +1306,8 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 if not self._same_loopback_origin():
                     raise ValueError('Provider 任务仅允许 Forgeworks 本地同源页面查询')
                 asset_id, node_id = b.get('assetId'), b.get('nodeId')
-                graph = fw_pipeline.load_graph(fw_dir(), asset_id)
+                kind = b.get('kind') or 'machine'
+                graph = fw_pipeline.load_graph(fw_dir(), asset_id, kind)
                 nodes, _ = fw_pipeline.validate_graph(graph)
                 node = nodes.get(node_id)
                 task = (node or {}).get('result', {}).get('providerTask') or {}
@@ -1192,7 +1323,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 output = result.get('output') or {}
                 if state == 'success' and node['type'] == 'textToImage':
                     image_data, extension = fw_providers.download_image(output.get('generated_image_url'))
-                    output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id), 'outputs')
+                    output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
                     os.makedirs(output_dir, exist_ok=True)
                     filename = 'image_' + task['taskId'] + '.' + extension
                     with open(os.path.join(output_dir, filename), 'wb') as stream:
@@ -1200,14 +1331,14 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     task['output'] = {'imagePath': 'outputs/' + filename, 'size': len(image_data)}
                 if state == 'success' and node['type'] == 'imageTo3D':
                     data = fw_providers.download_model(output.get('model_url'))
-                    output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id), 'outputs')
+                    output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
                     os.makedirs(output_dir, exist_ok=True)
                     filename = 'model_' + task['taskId'] + '.glb'
                     with open(os.path.join(output_dir, filename), 'wb') as stream:
                         stream.write(data)
                     task['output'] = {'modelPath': 'outputs/' + filename, 'size': len(data)}
                 task['error'] = str(result.get('error_message') or '')[:300]
-                result_graph = fw_pipeline.save_graph(fw_dir(), asset_id, graph)
+                result_graph = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
                 push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': state,
                                                   'progress': task.get('progress')})
                 self._json({'ok': True, 'graph': result_graph, 'task': task})
@@ -1308,6 +1439,7 @@ class Bridge(ThreadingHTTPServer):
 
 def main():
     os.chdir(ROOT)
+    normalize_bound_project()
     start_source_watcher()
     httpd = Bridge(('127.0.0.1', PORT), BridgeHandler)
     print('Forgeworks Bridge v%s' % BRIDGE_VERSION)
@@ -1316,7 +1448,9 @@ def main():
     bl = blender_info()
     print('  Blender: %s' % (bl['path'] or '未找到（缩略图/校验功能降级）'))
     proj = project_root()
-    print('  项目: %s' % (proj or '未绑定（在界面「同步」页绑定）'))
+    print('  项目: %s' % (proj or '未打开（在界面「同步」页新建/打开项目）'))
+    ue_target = ue_project_root()
+    print('  UE 导出目标: %s' % (ue_target or '未设置'))
     print('  Ctrl+C 停止')
     try:
         httpd.serve_forever()

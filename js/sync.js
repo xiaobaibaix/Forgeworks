@@ -18,8 +18,13 @@ const SYNC = {
   online: false,          // Bridge 是否在线
   checkedAt: 0,
   status: null,           // /api/status 的结果
-  manifest: null,         // manifest 缓存（Bridge 在线时以它为准）
-  projects: { current: null, recent: [] },   // 当前项目 + 最近绑定过的目录
+  manifest: null,         // 项目 manifest 缓存（Bridge 在线时以它为准）
+  ueManifest: null,       // UE 导出目标里的 manifest（只含已发布资产）
+  projects: { current: null, recent: [] },   // 当前项目 + 最近打开过的项目
+  content: null,          // 项目内容（project.json 的缓存）
+  contentRoot: null,      // 已载入内容的项目根，防止未载入时用本地数据覆盖项目
+  contentTimer: null,
+  contentSavedAt: 0,
   ueAssets: [],
   conflicts: [],
   lastScan: null,
@@ -52,7 +57,9 @@ async function syncPing(force){
     SYNC.online = !!(SYNC.status && SYNC.status.ok);
     if(SYNC.online){
       await syncLoadProjects();
-      await syncLoadManifest(); await syncLoadUEAssets(); await syncLoadConflicts();
+      await syncLoadProjectContent();
+      await syncLoadManifest(); await syncLoadUEManifest();
+      await syncLoadUEAssets(); await syncLoadConflicts();
     }
   }catch(e){
     SYNC.online = false;
@@ -68,6 +75,10 @@ async function syncLoadProjects(){
     SYNC.projects = (r && r.ok)
       ? { current:r.current || null, recent:Array.isArray(r.recent) ? r.recent : [] }
       : { current:null, recent:[] };
+    if(r && r.ok && SYNC.status){
+      SYNC.status.project = r.current || null;
+      SYNC.status.ueTarget = r.ueTarget || null;
+    }
   }catch(e){ SYNC.projects = { current:null, recent:[] }; }
   return SYNC.projects;
 }
@@ -105,33 +116,172 @@ async function syncLoadConflicts(){
   return SYNC.conflicts;
 }
 
+/* ---------- 项目内容（project.json） ---------- */
+
+/** 载入项目内容；force=true 时即使已载入也重新读。项目没有内容时保留当前 S。 */
+async function syncLoadProjectContent(force){
+  const proj = SYNC.status && SYNC.status.project;
+  if(!SYNC.online || !proj || !proj.root){ SYNC.contentRoot = null; return null; }
+  if(!force && SYNC.contentRoot === proj.root) return SYNC.content;
+  try{
+    const r = await syncApi('project/content');
+    const content = (r && r.ok && r.content) ? r.content : null;
+    SYNC.contentRoot = proj.root;
+    SYNC.content = content;
+    if(content && Array.isArray(content.items) && Array.isArray(content.recipes)){
+      S = content;
+      normalizeAssets(S);
+      syncSaveLocal();
+      if(typeof clearCostCache === 'function') clearCostCache();
+      if(typeof clearIconCache === 'function') clearIconCache();
+    }
+    return content;
+  }catch(e){
+    SYNC.contentRoot = null;
+    syncLog('读取项目内容失败，暂时只保存到浏览器：' + e.message, 'warn');
+    return null;
+  }
+}
+
+function syncSaveLocal(){
+  if(typeof saveLocalState === 'function') return saveLocalState();
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); return true; }catch(e){ return false; }
+}
+
+/** 内容未载入时不写项目，避免用本地旧数据覆盖项目文件。 */
+function syncScheduleContentSave(){
+  const proj = SYNC.status && SYNC.status.project;
+  if(!SYNC.online || !proj || !proj.root) return false;
+  if(SYNC.contentRoot !== proj.root) return false;
+  clearTimeout(SYNC.contentTimer);
+  SYNC.contentTimer = setTimeout(function(){ syncFlushContent(); }, 400);
+  return true;
+}
+
+async function syncFlushContent(){
+  if(SYNC.contentTimer){ clearTimeout(SYNC.contentTimer); SYNC.contentTimer = null; }
+  const root = SYNC.contentRoot;
+  const proj = SYNC.status && SYNC.status.project;
+  if(!SYNC.online || !root || !proj || proj.root !== root) return { ok:false, skipped:true };
+  try{
+    const r = await syncApi('project/content', { content: S });
+    if(r && r.ok){ SYNC.contentSavedAt = Date.now(); SYNC.content = S; return r; }
+    syncLog('项目内容保存失败：' + ((r && r.error) || '未知错误'), 'warn');
+    return r;
+  }catch(e){
+    syncLog('项目内容保存失败：' + e.message, 'warn');
+    return { ok:false, error: e.message };
+  }
+}
+
+/** 立即保存（浏览器本地备份 + 项目文件）。 */
+async function syncSaveProjectNow(){
+  syncSaveLocal();
+  return syncFlushContent();
+}
+
+/* ---------- UE 导出目标 ---------- */
+
+async function syncLoadUEManifest(){
+  const target = SYNC.status && SYNC.status.ueTarget;
+  if(!SYNC.online || !target){ SYNC.ueManifest = null; return null; }
+  try{
+    const r = await syncApi('ue/manifest');
+    SYNC.ueManifest = (r && r.ok) ? r.manifest : null;
+  }catch(e){ SYNC.ueManifest = null; }
+  return SYNC.ueManifest;
+}
+
+/** UE 侧状态：none=未导出，stale=设计已变，exported=与设计一致。 */
+function machineUEState(m){
+  const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[m.id];
+  if(!rec) return { state:'none', rec:null };
+  const meta = rec.meta || {};
+  const stale = (meta.contentHash && meta.contentHash !== machineContentHash(m))
+             || (meta.styleHash   && meta.styleHash   !== machineStyleHash(m));
+  return { state: stale ? 'stale' : 'exported', rec };
+}
+
+function syncProjectReady(){
+  return !!(SYNC.online && SYNC.status && SYNC.status.project);
+}
+
 async function syncResolveConflict(conflict, choice){
   const result = await syncApi('conflicts/resolve', {id:conflict.id, conflictId:conflict.conflictId, choice});
   if(result && result.ok){ await syncLoadManifest(); await syncLoadConflicts(); }
   return result;
 }
 
-/* ---------- 绑定项目 ---------- */
+/* ---------- 项目管理 ---------- */
 
-async function syncBindProject(path){
+function syncProjectsPayload(r){
+  if(!r || !r.ok) return;
+  if(SYNC.status){
+    SYNC.status.project = r.project || null;
+    SYNC.status.ueTarget = r.ueTarget || null;
+  }
+}
+
+/** 打开已有 Forgeworks 项目（旧版 <UE>/Forgeworks 布局也能识别）。 */
+async function syncOpenProject(path){
+  await syncFlushContent();
   const r = await syncApi('project/bind', { path });
   if(r && r.ok){
-    syncLog('已绑定项目：%s（%s）'.replace('%s', r.project.name).replace('%s', r.project.root), 'ok');
+    syncProjectsPayload(r);
+    SYNC.contentRoot = null; SYNC.content = null;
+    syncLog('已打开项目：' + r.project.name + '（' + r.project.root + '）', 'ok');
     await syncLoadProjects();
-    await syncLoadManifest();
-    await syncLoadUEAssets();
-    await syncLoadConflicts();
-    if(SYNC.status) SYNC.status.project = r.project;
+    await syncLoadProjectContent();
+    await Promise.all([syncLoadManifest(), syncLoadUEManifest(), syncLoadUEAssets(), syncLoadConflicts()]);
+  }
+  return r;
+}
+
+async function syncCreateProject(parent, name){
+  await syncFlushContent();
+  const r = await syncApi('project/create', { parent, name });
+  if(r && r.ok){
+    syncProjectsPayload(r);
+    SYNC.contentRoot = r.project.root;
+    SYNC.content = S;
+    syncLog('已新建项目：' + r.project.name + '（' + r.project.root + '）', 'ok');
+    await syncLoadProjects();
+    await syncSaveProjectNow();          // 新项目立即写入当前设计数据
+    await Promise.all([syncLoadManifest(), syncLoadUEManifest(), syncLoadUEAssets(), syncLoadConflicts()]);
+  }
+  return r;
+}
+
+async function syncSetUETarget(path){
+  const r = await syncApi('project/ue-target', { path });
+  if(r && r.ok){
+    if(SYNC.status) SYNC.status.ueTarget = r.ueTarget;
+    syncLog('UE 导出目标：' + r.ueTarget.root, 'ok');
+    await Promise.all([syncLoadProjects(), syncLoadUEManifest()]);
+  }
+  return r;
+}
+
+async function syncPublishUE(ids){
+  if(!SYNC.online) return { ok:false, error:'Bridge 不在线' };
+  const r = await syncApi('project/publish', ids ? { ids: ids } : {});
+  if(r && r.ok){
+    syncLog('已导出到 UE：' + (r.published || []).join('、'), 'ok');
+    await Promise.all([syncLoadUEManifest(), syncLoadManifest()]);
   }
   return r;
 }
 
 async function syncUnbindProject(){
+  await syncFlushContent();
   const r = await syncApi('project/unbind', {});
   SYNC.manifest = null;
+  SYNC.ueManifest = null;
   SYNC.ueAssets = [];
   SYNC.conflicts = [];
-  if(SYNC.status) SYNC.status.project = null;
+  SYNC.content = null;
+  SYNC.contentRoot = null;
+  if(SYNC.status){ SYNC.status.project = null; SYNC.status.ueTarget = null; }
   await syncLoadProjects();
   return r;
 }
@@ -141,10 +291,12 @@ function renderProjectChip(){
   const el = document.getElementById('projectChip');
   if(!el) return;
   const project = SYNC.status && SYNC.status.project;
-  const name = project ? (project.name || project.root) : '未绑定项目';
-  const kind = project ? (project.kind === 'ue' ? 'UE 项目' : '工作区') : (SYNC.online ? '点击选择目录' : 'Bridge 未启动');
+  const ueTarget = SYNC.status && SYNC.status.ueTarget;
+  const name = project ? (project.name || project.root) : '未打开项目';
+  const kind = project ? (ueTarget ? '项目 · UE 已就绪' : 'Forgeworks 项目')
+                       : (SYNC.online ? '点击新建或打开' : 'Bridge 未启动');
   el.innerHTML = `<button class="project-chip"
-    title="${syncEscape(project ? project.root : '在同步页绑定项目目录')}">
+    title="${syncEscape(project ? project.root : '在同步页新建或打开项目')}">
     <span class="pc-label">项目</span>
     <span class="pc-name">${syncEscape(name)}</span>
     <span class="pc-kind"><i class="dot ${project ? 'on' : ''}"></i>${syncEscape(kind)}</span>
@@ -364,9 +516,15 @@ function syncWatchEvents(onEvent){
       if(!ev) return;
       syncLogEvent(ev);
       // 项目或 manifest 变了 → 刷新缓存（另一处界面/外部脚本触发的）
-      if(ev.kind === 'manifest.scanned' || ev.kind === 'asset.exported' || ev.kind === 'project.bound'
-          || ev.kind === 'asset.conflict' || ev.kind === 'asset.conflict_resolved'){
-        Promise.all([syncLoadManifest(), syncLoadConflicts()]).then(function(){ if(onEvent) onEvent(ev); });
+      if(ev.kind === 'project.opened' || ev.kind === 'project.created' || ev.kind === 'project.unbound'
+          || ev.kind === 'project.ue_target'){
+        Promise.all([syncLoadProjects(), syncLoadProjectContent(true), syncLoadManifest(), syncLoadUEManifest()])
+          .then(function(){ if(onEvent) onEvent(ev); });
+      }else if(ev.kind === 'manifest.scanned' || ev.kind === 'asset.exported'
+          || ev.kind === 'asset.published' || ev.kind === 'asset.conflict'
+          || ev.kind === 'asset.conflict_resolved'){
+        Promise.all([syncLoadManifest(), syncLoadUEManifest(), syncLoadConflicts()])
+          .then(function(){ if(onEvent) onEvent(ev); });
       }else if(onEvent) onEvent(ev);
     };
     _sseSource.onerror = function(){ /* Bridge 重启时静默断开，下轮 ping 重连 */ };
@@ -382,10 +540,13 @@ function syncLog(msg, level){
 function syncLogEvent(ev){
   if(ev.kind === 'texture.progress') return;   // 进度已在贴图面板实时显示
   const map = {
-    'project.bound':   ['已绑定项目', 'ok'],
-    'project.unbound': ['已解除绑定', 'info'],
-    'asset.exported':  ['资产已导出：' + (ev.data && ev.data.id || ''), 'ok'],
-    'manifest.scanned':['目录核对完成', 'info'],
+    'project.opened':   ['已打开项目', 'ok'],
+    'project.created':  ['已新建项目', 'ok'],
+    'project.unbound':  ['已关闭项目', 'info'],
+    'project.ue_target':['UE 导出目标已更新', 'info'],
+    'asset.exported':   ['资产已导出：' + (ev.data && ev.data.id || ''), 'ok'],
+    'asset.published':  ['已导出到 UE：' + ((ev.data && ev.data.assets) || []).join('、'), 'ok'],
+    'manifest.scanned': ['目录核对完成', 'info'],
   };
   const m = map[ev.kind] || [ev.kind, 'info'];
   syncLog(m[0], m[1]);
@@ -407,6 +568,25 @@ function syncStateTag(state){
   const m = SYNC_STATE_META[state] || SYNC_STATE_META.none;
   return `<span class="pill" style="color:${m.color};border-color:${m.color}40"
     title="${m.label}">${m.icon} ${m.label}</span>`;
+}
+
+const UE_STATE_META = {
+  none:     { label:'未导出', color:'var(--text-3)', icon:'○' },
+  exported: { label:'已导出', color:'var(--accent)', icon:'✓' },
+  stale:    { label:'待导出', color:'var(--amber)',  icon:'⟳' },
+};
+
+function ueStateTag(state){
+  const m = UE_STATE_META[state] || UE_STATE_META.none;
+  return `<span class="pill" style="color:${m.color};border-color:${m.color}40"
+    title="${m.label}">${m.icon} ${m.label}</span>`;
+}
+
+/** UE 侧汇总：多少资产已发布、多少待重导。 */
+function syncUESummary(){
+  const counts = { exported:0, stale:0, none:0 };
+  S.machines.forEach(function(m){ counts[machineUEState(m).state]++; });
+  return counts;
 }
 
 /** 汇总所有机器的同步状态（机器列表顶栏/同步面板共用） */
