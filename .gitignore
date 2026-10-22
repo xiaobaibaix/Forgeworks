@@ -21,3 +21,7 @@ __pycache__/
 # Bridge 本地状态与密钥（tools/bridge_config.example.json 是入库模板）
 tools/.bridge_state.json
 tools/bridge_config.json
+
+# 本地工具产物（Codegraph 索引、Playwright 快照与日志）
+.codegraph/
+.playwright-mcp/
