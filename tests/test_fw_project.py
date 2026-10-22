@@ -40,6 +40,25 @@ def _write_machine(root, asset_id='M1', mesh=True):
     return manifest
 
 
+def _write_item(root, asset_id='I1', icon=True):
+    manifest_file = root / '_Sync' / 'manifest.json'
+    manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
+    manifest['assets'][asset_id] = {
+        'kind': 'item',
+        'state': 'exported',
+        'sourceDir': '_Source/Items/Icons/%s' % asset_id,
+        'files': {'icon': [{'path': asset_id + '.png', 'sha1': 'icon-sha1', 'size': 8}]},
+        'meta': {'name': '铁矿石', 'type': 'raw', 'iconHash': 'h1'},
+    }
+    base = root / '_Source' / 'Items' / 'Icons' / asset_id
+    base.mkdir(parents=True)
+    if icon:
+        (base / (asset_id + '.png')).write_bytes(b'\x89PNG\r\n\x1a\n')
+    (base / 'prompt.txt').write_text('铁矿石描述词', encoding='utf-8')
+    manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
+    return manifest
+
+
 class ProjectLifecycleTest(unittest.TestCase):
     def test_create_project_writes_marker_and_store(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -125,6 +144,57 @@ class PublishToUETest(unittest.TestCase):
             result = fw_project.publish_to_ue(fw, ue, ['M2'])
             self.assertFalse(result['ok'])
             self.assertEqual(result['errors'][0]['id'], 'M2')
+
+    def test_publish_includes_item_icons_without_internal_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fw = Path(fw_project.create_project(directory, 'FW')['root'])
+            _write_machine(fw)
+            _write_item(fw)
+            ue = workspace / 'UE'
+            ue.mkdir()
+
+            result = fw_project.publish_to_ue(fw, ue)
+            self.assertTrue(result['ok'], result)
+            self.assertEqual(result['published'], ['M1', 'I1'])
+
+            exported = ue / 'Forgeworks' / '_Source' / 'Items' / 'Icons' / 'I1'
+            self.assertTrue((exported / 'I1.png').is_file())
+            self.assertFalse((exported / 'prompt.txt').exists())
+
+            manifest = json.loads((ue / 'Forgeworks' / '_Sync' / 'manifest.json').read_text(encoding='utf-8'))
+            record = manifest['assets']['I1']
+            self.assertEqual(record['kind'], 'item')
+            self.assertEqual(list(record['files']), ['icon'])
+            self.assertEqual(record['meta']['iconHash'], 'h1')
+
+    def test_partial_publish_keeps_previous_manifest_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fw = Path(fw_project.create_project(directory, 'FW')['root'])
+            _write_machine(fw)
+            _write_item(fw)
+            ue = workspace / 'UE'
+            ue.mkdir()
+
+            self.assertTrue(fw_project.publish_to_ue(fw, ue, ['M1'])['ok'])
+            self.assertTrue(fw_project.publish_to_ue(fw, ue, ['I1'])['ok'])
+
+            manifest = json.loads((ue / 'Forgeworks' / '_Sync' / 'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(sorted(manifest['assets']), ['I1', 'M1'])
+            self.assertTrue((ue / 'Forgeworks' / '_Source' / 'Machines' / 'M1' / 'M1.glb').is_file())
+
+    def test_publish_reports_item_without_icon(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fw = Path(fw_project.create_project(directory, 'FW')['root'])
+            _write_item(fw, 'I2', icon=False)
+            ue = workspace / 'UE'
+            ue.mkdir()
+
+            result = fw_project.publish_to_ue(fw, ue, ['I2'])
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['errors'][0]['id'], 'I2')
 
 
 if __name__ == '__main__':

@@ -556,12 +556,13 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 └── _Sync/{manifest.json,tool_versions,conflicts}/
 
 <UE 项目>/Forgeworks/
-├── _Source/Machines/<ID>/<ID>.glb    只复制 mesh 角色
+├── _Source/Machines/<ID>/<ID>.glb      只复制 mesh 角色
+├── _Source/Items/Icons/<ID>/<ID>.png   只复制 icon 角色
 └── _Sync/{manifest.json,ue_assets.json}
 ```
 
 - `project.json` 由 Bridge 读写；内容变更防抖 400ms 回写，`contentRoot === 项目根` 才允许写，避免旧数据覆盖新项目。
-- **导出到 UE** 只复制 GLB + 导出清单；`preview` / `thumbnail` / `pipeline` / `prompt` 不复制。`meta`（contentHash/styleHash/sizeCm）原样带去，用于 `stale` 判定与尺寸校验。
+- **导出到 UE** 只复制机器 GLB、物品图标 PNG + 导出清单；`preview` / `thumbnail` / `pipeline` / `prompt` 不复制。`meta`（contentHash/styleHash/sizeCm/iconHash）原样带去，用于 `stale` 判定与尺寸校验。
 - 导出状态机在项目层比较：项目 `contentHash/styleHash` vs UE manifest → `none | stale | exported`；同步表新增 UE 列。
 - **旧版迁移**：旧状态指向 `<UE>` 时，项目根迁移为 `<UE>/Forgeworks`（补写项目标记），且**不自动设 UE 目标**（导出根等于项目根会自拷贝）。`set_ue_target` / `publish_to_ue` 均拒绝相同目录。
 - UE 侧 `ue/fw_registry.py` 改为本地优先：先找 `PROJECT_ROOT/Forgeworks`，找不到再问 `/api/project/info`。
@@ -579,7 +580,18 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 ### 测试与验证
 
-- 新增 `tests/test_bridge_projects.py` 4 项：独立项目创建/打开、旧版迁移不设 UE 目标、旧版 UE 根不能当导出目标、发布只带 mesh。
+- 新增 `tests/test_bridge_projects.py`：独立项目创建/打开、旧版迁移不设 UE 目标、旧版 UE 根不能当导出目标、发布只带 mesh、物品图标导出+发布。
 - `tests/test_fw_blender.py` 改用 `open_project`。Python 全套通过；`node --check` 通过。
 - Playwright 隔离环境实测（8788 端口 + `/tmp` 工程）：新建项目 → 设置 UE 目标 → 导出 MC_HAND（项目内得到 GLB + SVG/PNG 预览）→ 发布到 UE；UE 目录只有 `MC_HAND.glb` 与 `_Sync/manifest.json`，无 preview/pipeline/prompt；表格 UE 列变为「已导出」，汇总显示 `已导出 1 · 待导出 0 · 未导出 31`。
 - 隔离环境已清理；用户本机 8787 的 Bridge 需重启才能加载新路由。未提交。
+
+## 16. 物品图标导出（2026-10-22）
+
+**用户要求**：物品图标同样要用在 UE 里，必须随项目保存并导出到 UE。
+
+- **项目侧**：`js/sync.js` 新增 `iconPngB64`（`iconURL` → Image → canvas → 透明底 256×256 PNG）、`syncExportItem`、`syncExportAllItems`，POST `kind: 'item'` 到 `/api/export/asset`；Bridge 落到 `<项目>/_Source/Items/Icons/<ID>/<ID>.png`。自定义上传图标与自动生成 SVG 走同一条路径。
+- **状态**：`itemIconHash` 覆盖自定义图标、类型/颜色与当前风格；`itemSyncState` / `itemUEState` 与机器同样的 `none | stale | exported` 状态机。
+- **UE 发布**：`fw_project.UE_EXPORT_ROLES` 改为按类型声明（machine→mesh，item→icon），`publish_to_ue` 默认选两类资产；角色缺失分别报错/跳过。
+- **清单合并修复**：部分发布（如只发待更新的图标）原先会用本次结果覆盖 UE manifest，导致之前发布的机器记录消失；现改为读旧清单后合并再写。
+- **UI**：「项目资源」新增物品图标区块（导出全部 / 只导出待更新 + 状态汇总）；UE 卡按钮改为「导出全部资产（机器 N · 图标 M）」，待更新选择与汇总都包含物品；资产明细表新增类型列并列出物品图标。
+- **验证**：Python 40 项全过（新增物品发布、缺图标报错、部分发布不清旧记录、Bridge 导出+发布图标）；冒烟页 55/55。Playwright 实测 75 张图标写入项目并发布到 UE，UE manifest 107 个资产（32 机器 + 75 图标），目录只含 PNG/GLB/清单。版本戳 `?v=20261022j`。

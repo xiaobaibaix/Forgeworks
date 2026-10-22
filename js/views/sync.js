@@ -44,7 +44,7 @@ function syncUECardHTML(){
         <span class="pill">${target.kind === 'ue' ? 'UE 项目' : '文件夹'}</span>
         <div style="font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:2px">${syncEscape(target.root)}</div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px">
-          只复制 GLB 与清单到 <code>${syncEscape(target.forgeworksRoot || target.root + '/Forgeworks')}</code>；
+          只复制机器 GLB、物品图标 PNG 与清单到 <code>${syncEscape(target.forgeworksRoot || target.root + '/Forgeworks')}</code>；
           描述词、生成管线、预览等内部资料留在 Forgeworks 项目里。
         </div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px">
@@ -53,7 +53,7 @@ function syncUECardHTML(){
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="primary" id="syUEPublishAll" ${_syncBusy ? 'disabled' : ''}>
-          导出全部机器（${S.machines.length}）</button>
+          导出全部资产（机器 ${S.machines.length} · 图标 ${S.items.length}）</button>
         <button id="syUEPublishStale" ${_syncBusy ? 'disabled' : ''}>只导出待更新/未导出</button>
         <button id="syUERefreshManifest">刷新 UE 清单</button>
         <button id="syUETargetPick">更换目标…</button>
@@ -64,7 +64,7 @@ function syncUECardHTML(){
       </div>
     ` : `
       <p class="hint">
-        选择一个 UE 项目目录作为导出目标。导出时 Bridge 会把 GLB 与清单复制到
+        选择一个 UE 项目目录作为导出目标。导出时 Bridge 会把机器 GLB、物品图标 PNG 与清单复制到
         <code>&lt;UE项目&gt;/Forgeworks/</code>，不会写入 Content/，也不会带出描述词与管线。
       </p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -108,7 +108,7 @@ function renderSync(){
             <b>新建或打开项目</b><p>Forgeworks 项目独立保存设计数据、描述词、管线与资源文件。</p>
           </div></div>
           <div class="setup-step"><span class="n">03</span><div>
-            <b>导出到 UE</b><p>设置 UE 导出目标后，只把 GLB 和清单复制过去。</p>
+            <b>导出到 UE</b><p>设置 UE 导出目标后，只把机器 GLB、物品图标 PNG 和清单复制过去。</p>
           </div></div>
         </div>
       `}
@@ -178,11 +178,12 @@ function renderSync(){
     <div class="card">
       <h3>项目资源</h3>
       <p class="hint">
-        资源生成写进当前 Forgeworks 项目的 <code>_Source/Machines/&lt;ID&gt;/</code>：
-        GLB（含风格材质）、等轴测预览与 hash 记录。这些是项目的完整资源，
-        比导出给 UE 的内容多；导出到 UE 时只挑选其中的 GLB。
+        资源生成写进当前 Forgeworks 项目的 <code>_Source/&lt;类型&gt;/&lt;ID&gt;/</code>：
+        机器是 GLB（含风格材质）、等轴测预览与 hash 记录；物品是 256×256 PNG 图标。
+        这些是项目的完整资源，比导出给 UE 的内容多；导出到 UE 时只挑选机器 GLB 与图标 PNG。
       </p>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+      <div style="font-size:12px;font-weight:600;margin-top:10px">机器</div>
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
         <button class="primary" id="syExportAll" ${_syncBusy ? 'disabled' : ''}>
           导出全部机器（${S.machines.length}）</button>
         <button id="syExportStale" ${_syncBusy ? 'disabled' : ''}>只导出待更新/缺失</button>
@@ -190,6 +191,21 @@ function renderSync(){
       </div>
       <div id="syProgress" style="font-size:11.5px;color:var(--text-2);margin-top:8px"></div>
       <div id="sySummary" style="margin-top:10px"></div>
+
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+        <div style="font-size:12px;font-weight:600">物品图标</div>
+        <p class="hint" style="margin-top:4px">
+          自动生成的 SVG 图标与自定义上传图标都渲染为透明底 PNG，写入
+          <code>_Source/Items/Icons/&lt;ID&gt;/</code>；换风格或改物品颜色后会标记为待更新。
+        </p>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="primary" id="syExportItemsAll" ${_syncBusy ? 'disabled' : ''}>
+            导出全部图标（${S.items.length}）</button>
+          <button id="syExportItemsStale" ${_syncBusy ? 'disabled' : ''}>只导出待更新/缺失</button>
+        </div>
+        <div id="syItemProgress" style="font-size:11.5px;color:var(--text-2);margin-top:8px"></div>
+        <div id="syItemSummary" style="margin-top:10px"></div>
+      </div>
     </div>
 
     <div class="card">
@@ -237,6 +253,7 @@ function renderSync(){
   `;
 
   renderSyncSummary();
+  renderSyncItemSummary();
   renderSyncTable();
   renderSyncConflicts();
   renderSyncUETable();
@@ -407,10 +424,12 @@ function renderSync(){
     render();
   };
   const uePublishAll = document.getElementById('syUEPublishAll');
-  if(uePublishAll) uePublishAll.onclick = ()=>_doPublishUE(S.machines.map(m=>m.id));
+  if(uePublishAll) uePublishAll.onclick = ()=>_doPublishUE(
+    S.machines.map(m=>m.id).concat(S.items.map(it=>it.id)));
   const uePublishStale = document.getElementById('syUEPublishStale');
   if(uePublishStale) uePublishStale.onclick = ()=>{
-    const ids = S.machines.filter(m=>machineUEState(m).state !== 'exported').map(m=>m.id);
+    const ids = S.machines.filter(m=>machineUEState(m).state !== 'exported').map(m=>m.id)
+      .concat(S.items.filter(it=>itemUEState(it).state !== 'exported').map(it=>it.id));
     if(!ids.length){ toast('UE 侧已是最新'); return; }
     _doPublishUE(ids);
   };
@@ -445,6 +464,19 @@ function renderSync(){
     }).map(m=>m.id);
     if(!ids.length){ toast('没有需要导出的资产'); return; }
     _doExport(ids);
+  };
+
+  /* ---------- 物品图标导出 ---------- */
+  const eia = document.getElementById('syExportItemsAll');
+  if(eia) eia.onclick = ()=>_doExportItems(S.items.map(it=>it.id));
+  const eis = document.getElementById('syExportItemsStale');
+  if(eis) eis.onclick = ()=>{
+    const ids = S.items.filter(it=>{
+      const s = itemSyncState(it).state;
+      return s === 'stale' || s === 'missing' || s === 'tampered' || s === 'none';
+    }).map(it=>it.id);
+    if(!ids.length){ toast('没有需要导出的图标'); return; }
+    _doExportItems(ids);
   };
 }
 
@@ -527,6 +559,30 @@ async function _doExport(ids){
   }
 }
 
+async function _doExportItems(ids){
+  if(_syncBusy) return;
+  _syncBusy = true;
+  const prog = document.getElementById('syItemProgress');
+  const btn = document.getElementById('syExportItemsAll');
+  if(btn){ btn.disabled = true; btn.textContent = '导出中…'; }
+  let fail = 0;
+  try{
+    const rs = await syncExportAllItems(ids, (i, n, id)=>{
+      if(prog) prog.textContent = id ? `正在导出 ${i+1}/${n}：${id}` : `完成 ${n} 个`;
+    });
+    rs.forEach(x=>{ if(!x.r.ok) fail++; });
+    const msg = `图标导出完成：${rs.length - fail} 成功` + (fail ? `，${fail} 失败` : '');
+    syncLog(msg, fail ? 'warn' : 'ok');
+    toast(msg);
+  }catch(e){
+    syncLog('图标导出中断：' + e.message, 'warn');
+    toast('图标导出中断：' + e.message);
+  }finally{
+    _syncBusy = false;
+    render();
+  }
+}
+
 /* ---------- UE 导出执行 ---------- */
 
 async function _doPublishUE(ids){
@@ -557,16 +613,25 @@ async function _doPublishUE(ids){
 
 /* ---------- 汇总条 ---------- */
 
-function renderSyncSummary(){
-  const el = document.getElementById('sySummary');
-  if(!el) return;
-  const counts = syncSummary();
+function _syncCountsHTML(counts){
   const parts = Object.keys(counts).map(k=>{
     const m = SYNC_STATE_META[k] || { label:k, color:'var(--text-3)' };
     return `<span class="pill" style="color:${m.color}">${m.label} ${counts[k]}</span>`;
   }).join(' ');
   const total = Object.keys(counts).reduce((a,k)=>a+counts[k],0);
-  el.innerHTML = `<span style="font-size:12px">${total} 个资产：${parts}</span>`;
+  return `<span style="font-size:12px">${total} 个资产：${parts}</span>`;
+}
+
+function renderSyncSummary(){
+  const el = document.getElementById('sySummary');
+  if(!el) return;
+  el.innerHTML = _syncCountsHTML(syncSummary());
+}
+
+function renderSyncItemSummary(){
+  const el = document.getElementById('syItemSummary');
+  if(!el) return;
+  el.innerHTML = _syncCountsHTML(itemSyncSummary());
 }
 
 /* ---------- 明细表 ---------- */
@@ -574,16 +639,27 @@ function renderSyncSummary(){
 function renderSyncTable(){
   const el = document.getElementById('syTable');
   if(!el) return;
+  const rows = S.machines.map(m=>({
+    kind:'machine', id:m.id, name:m.name, item:null,
+    s: machineSyncState(m), ue: machineUEState(m).state,
+  })).concat((S.items || []).map(it=>({
+    kind:'item', id:it.id, name:it.name, item:it,
+    s: itemSyncState(it), ue: itemUEState(it).state,
+  })));
   el.innerHTML = tableHTML([
-    { t:'ID', w:'120px', f:r=>`<code>${syncEscape(r.m.id)}</code>` },
-    { t:'名称', w:'110px', f:r=>syncEscape(r.m.name) },
+    { t:'类型', w:'54px', f:r=>`<span class="pill">${r.kind === 'item' ? '图标' : '机器'}</span>` },
+    { t:'ID', w:'120px', f:r=>`<code>${syncEscape(r.id)}</code>` },
+    { t:'名称', w:'130px', f:r=>r.kind === 'item'
+        ? `${iconHTML(r.item, 20)} ${syncEscape(r.name)}`
+        : syncEscape(r.name) },
     { t:'状态', w:'96px', f:r=>syncStateTag(r.s.state) },
-    { t:'UE', w:'88px', f:r=>ueStateTag(machineUEState(r.m).state) },
+    { t:'UE', w:'88px', f:r=>ueStateTag(r.ue) },
     { t:'Blender', w:'90px', f:r=>{
+        if(r.kind !== 'machine') return '<span style="color:var(--text-3)">—</span>';
         const b = r.s.rec && r.s.rec.meta && r.s.rec.meta.blender;
         if(b && b.state === 'ready'){
           const image = ((r.s.rec.files || {}).thumbnail || [])[0] || {};
-          return `<img src="/api/thumbnail/machine/${encodeURIComponent(r.m.id)}?v=${syncEscape(image.sha1 || b.checkedAt || '')}"
+          return `<img src="/api/thumbnail/machine/${encodeURIComponent(r.id)}?v=${syncEscape(image.sha1 || b.checkedAt || '')}"
                        alt="Blender 渲染缩略图" title="Blender 校验通过"
                        style="display:block;width:56px;height:56px;object-fit:contain;background:var(--panel-2);border:1px solid var(--border);border-radius:6px">`;
         }
@@ -591,18 +667,19 @@ function renderSyncTable(){
         return `<span style="font-size:10.5px;color:${b && b.state === 'failed'?'var(--red)':'var(--text-3)'}">${labels[b && b.state] || '—'}</span>`;
       }},
     { t:'三角面', w:'76px', f:r=>{
-        const tri = r.s.rec && r.s.rec.meta && r.s.rec.meta.triangles;
-        const bud = r.s.rec && r.s.rec.meta && r.s.rec.meta.triangleBudget || 900;
+        const meta = (r.kind === 'machine' && r.s.rec && r.s.rec.meta) || {};
+        const tri = meta.triangles, bud = meta.triangleBudget || 900;
         return tri !== undefined
           ? `<span style="font-family:var(--mono);color:${tri>bud?'var(--amber)':'inherit'}">${syncEscape(tri)}</span>`
           : '<span style="color:var(--text-3)">—</span>';
       }},
     { t:'材质槽', w:'58px', f:r=>{
-        const mm = r.s.rec && r.s.rec.meta && r.s.rec.meta.materials;
-        return mm !== undefined ? syncEscape(mm) : '<span style="color:var(--text-3)">—</span>';
+        const meta = (r.kind === 'machine' && r.s.rec && r.s.rec.meta) || {};
+        return meta.materials !== undefined ? syncEscape(meta.materials) : '<span style="color:var(--text-3)">—</span>';
       }},
     { t:'尺寸(cm)', w:'90px', f:r=>{
-        const sc = r.s.rec && r.s.rec.meta && r.s.rec.meta.sizeCm;
+        const meta = (r.kind === 'machine' && r.s.rec && r.s.rec.meta) || {};
+        const sc = meta.sizeCm;
         return sc ? `<span style="font-family:var(--mono);font-size:10.5px">${syncEscape(sc[0])}×${syncEscape(sc[1])}×${syncEscape(sc[2])}</span>`
                   : '<span style="color:var(--text-3)">—</span>';
       }},
@@ -615,12 +692,17 @@ function renderSyncTable(){
         return t ? `<span style="font-size:10.5px;color:var(--text-3)">${syncEscape(String(t).replace('T',' ').slice(5,16))}</span>`
                  : '<span style="color:var(--text-3)">—</span>';
       }},
-    { t:'操作', w:'76px', f:r=>`<button class="sm" data-syex="${syncEscape(r.m.id)}" ${_syncBusy ? 'disabled' : ''}>${r.s.state==='exported'?'重导':'导出'}</button>` },
-  ], S.machines.map(m=>({ m, s: machineSyncState(m) })));
+    { t:'操作', w:'76px', f:r=>`<button class="sm" data-${r.kind === 'item' ? 'syit' : 'syex'}="${syncEscape(r.id)}" ${_syncBusy ? 'disabled' : ''}>${r.s.state==='exported'?'重导':'导出'}</button>` },
+  ], rows);
 
   el.querySelectorAll('[data-syex]').forEach(b=>{
     b.onclick = async ()=>{
       _doExport([b.dataset.syex]);
+    };
+  });
+  el.querySelectorAll('[data-syit]').forEach(b=>{
+    b.onclick = async ()=>{
+      _doExportItems([b.dataset.syit]);
     };
   });
 }

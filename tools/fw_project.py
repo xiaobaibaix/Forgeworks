@@ -15,7 +15,7 @@ SOURCE_DIR = '_Source'
 SYNC_DIR = '_Sync'
 UE_DIR_NAME = 'Forgeworks'
 ASSET_KIND_DIRS = {'machine': 'Machines', 'item': 'Items/Icons', 'data': 'Data'}
-UE_EXPORT_ROLES = ('mesh',)
+UE_EXPORT_ROLES = {'machine': ('mesh',), 'item': ('icon',)}
 MAX_CONTENT_BYTES = 16 * 1024 * 1024
 MAX_NAME_LENGTH = 64
 
@@ -233,7 +233,7 @@ def prepare_ue_target(ue_root):
 
 
 def publish_to_ue(fw_root, ue_root, asset_ids=None, bridge_version='0.1.0'):
-    """只把 UE 消费的 mesh 文件与 manifest 复制到导出目标。"""
+    """只把 UE 消费的文件（机器 GLB、物品图标 PNG）与 manifest 复制到导出目标。"""
     fw_root = os.path.abspath(str(fw_root or ''))
     if not is_project(fw_root):
         return {'ok': False, 'error': '未打开 Forgeworks 项目'}
@@ -246,23 +246,34 @@ def publish_to_ue(fw_root, ue_root, asset_ids=None, bridge_version='0.1.0'):
         return {'ok': False, 'error': '项目 manifest 不存在，请先生成资产'}
     assets = manifest.get('assets') or {}
     if asset_ids is None:
-        selected = [asset_id for asset_id, record in assets.items() if record.get('kind') == 'machine']
+        selected = [asset_id for asset_id, record in assets.items()
+                    if record.get('kind') in UE_EXPORT_ROLES]
     else:
         selected = list(dict.fromkeys(str(asset_id) for asset_id in asset_ids))
     export_source = os.path.join(target['forgeworksRoot'], SOURCE_DIR)
     published, skipped, errors, exported_assets = [], [], [], {}
     for asset_id in selected:
         record = assets.get(asset_id)
-        if not record or record.get('kind') != 'machine':
+        if not record or record.get('kind') not in UE_EXPORT_ROLES:
             skipped.append(asset_id)
             continue
         try:
-            exported_assets[asset_id] = _publish_machine(
+            exported_assets[asset_id] = _publish_asset(
                 fw_root, export_source, asset_id, record, bridge_version)
             published.append(asset_id)
         except (OSError, ValueError) as error:
             errors.append({'id': asset_id, 'error': str(error)})
     if published:
+        ue_manifest_path = os.path.join(target['forgeworksRoot'], SYNC_DIR, 'manifest.json')
+        try:
+            with open(ue_manifest_path, encoding='utf-8') as stream:
+                previous_exported = json.load(stream)
+        except (OSError, ValueError):
+            previous_exported = None
+        merged_assets = {}
+        if isinstance(previous_exported, dict) and isinstance(previous_exported.get('assets'), dict):
+            merged_assets.update(previous_exported['assets'])
+        merged_assets.update(exported_assets)
         exported_manifest = {
             'schemaVersion': 1,
             'forgeworksVersion': 'bridge-%s' % bridge_version,
@@ -274,9 +285,9 @@ def publish_to_ue(fw_root, ue_root, asset_ids=None, bridge_version='0.1.0'):
                 'forgeworksRoot': target['forgeworksRoot'],
             },
             'publishedAt': _now_iso(),
-            'assets': exported_assets,
+            'assets': merged_assets,
         }
-        _write_json(os.path.join(target['forgeworksRoot'], SYNC_DIR, 'manifest.json'), exported_manifest)
+        _write_json(ue_manifest_path, exported_manifest)
     return {
         'ok': bool(published) and not errors,
         'target': target,
@@ -286,13 +297,17 @@ def publish_to_ue(fw_root, ue_root, asset_ids=None, bridge_version='0.1.0'):
     }
 
 
-def _publish_machine(fw_root, export_source, asset_id, record, bridge_version):
+def _publish_asset(fw_root, export_source, asset_id, record, bridge_version):
     if not re.fullmatch(r'[A-Za-z0-9_]{1,64}', str(asset_id)):
         raise ValueError('资产 ID 非法')
+    kind = record.get('kind')
+    roles = UE_EXPORT_ROLES.get(kind)
+    if not roles:
+        raise ValueError('不支持导出到 UE 的资产类型: %s' % kind)
     source_dir = _safe_relative(record.get('sourceDir'))
     files = record.get('files') or {}
     copied = {}
-    for role in UE_EXPORT_ROLES:
+    for role in roles:
         entries = files.get(role) or []
         entries = entries if isinstance(entries, list) else [entries]
         for entry in entries:
@@ -313,10 +328,11 @@ def _publish_machine(fw_root, export_source, asset_id, record, bridge_version):
                 'sha1': _sha1(data),
                 'mtime': _now_iso(),
             })
-    if not copied.get('mesh'):
-        raise ValueError('manifest 中没有 mesh 文件记录')
+    required = roles[0]
+    if not copied.get(required):
+        raise ValueError('manifest 中没有 %s 文件记录' % required)
     return {
-        'kind': 'machine',
+        'kind': kind,
         'state': 'exported',
         'sourceDir': source_dir,
         'files': copied,

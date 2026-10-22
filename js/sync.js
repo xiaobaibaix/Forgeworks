@@ -202,6 +202,22 @@ function machineUEState(m){
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
+/** 物品图标 hash：自定义图标、类型/颜色、当前风格任一变化都要重导出 */
+function itemIconHash(it){
+  return syncDataHash({
+    id: it.id, type: it.visual || it.type, color: it.color || '',
+    customIcon: (it.icon || '').trim(), style: styleCacheTag(),
+  });
+}
+
+function itemUEState(it){
+  const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[it.id];
+  if(!rec) return { state:'none', rec:null };
+  const meta = rec.meta || {};
+  const stale = meta.iconHash && meta.iconHash !== itemIconHash(it);
+  return { state: stale ? 'stale' : 'exported', rec };
+}
+
 function syncProjectReady(){
   return !!(SYNC.online && SYNC.status && SYNC.status.project);
 }
@@ -358,6 +374,18 @@ function machineSyncState(m){
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
+/** 物品图标在项目里的同步状态（manifest 的磁盘状态 + iconHash） */
+function itemSyncState(it){
+  const mf = SYNC.manifest;
+  if(!mf || !mf.assets || !mf.assets[it.id]) return { state:'none', rec:null };
+  const rec = mf.assets[it.id];
+  const diskState = rec.state || 'exported';
+  if(diskState !== 'exported') return { state: diskState, rec };
+  const saved = rec.meta || {};
+  const stale = saved.iconHash && saved.iconHash !== itemIconHash(it);
+  return { state: stale ? 'stale' : 'exported', rec };
+}
+
 /* ---------- 材质贴图 ---------- */
 
 async function syncLoadTextures(force){
@@ -492,6 +520,71 @@ async function syncExportAll(ids, onProgress){
   return results;
 }
 
+/** 把物品图标（自动生成 SVG 或自定义位图）渲染成透明底 PNG 的 base64 */
+function iconPngB64(it, size){
+  size = size || 256;
+  return new Promise(function(resolve, reject){
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const cv = document.createElement('canvas');
+        cv.width = size; cv.height = size;
+        const ctx = cv.getContext('2d');
+        if(!ctx) throw new Error('Canvas 不可用');
+        ctx.drawImage(img, 0, 0, size, size);
+        const dataUrl = cv.toDataURL('image/png');
+        resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
+      }catch(e){ reject(e); }
+    };
+    img.onerror = function(){ reject(new Error('图标加载失败: ' + it.id)); };
+    img.src = iconURL(it);
+  });
+}
+
+/** 导出单个物品图标到 Bridge（→ _Source/Items/Icons/<ID>/<ID>.png）。 */
+async function syncExportItem(id){
+  if(!SYNC.online) return { ok:false, error:'Bridge 不在线（先启动 tools/bridge.py）' };
+  const it = (S.items || []).find(function(item){ return item.id === id; });
+  if(!it) return { ok:false, error:'物品不存在: ' + id };
+  let b64;
+  try{
+    b64 = await iconPngB64(it, 256);
+  }catch(e){
+    return { ok:false, error:'图标生成失败: ' + e.message };
+  }
+  const st = getStyle();
+  const body = {
+    kind: 'item',
+    id: it.id,
+    files: { icon: { path: it.id + '.png', b64: b64 } },
+    meta: {
+      name: it.name, type: it.type, visual: it.visual || null,
+      tier: it.tier, color: it.color || '',
+      customIcon: !!(it.icon && it.icon.trim()),
+      size: 256,
+      style: { presetId: st.id, name: st.name },
+      iconHash: itemIconHash(it),
+    },
+  };
+  const r = await syncApi('export/asset', body);
+  if(r && r.ok){
+    syncLog('导出图标 ' + it.id + '：' + ((r.files && r.files.icon) ? r.files.icon[0] : ''), 'ok');
+    await syncLoadManifest();
+  }
+  return { ok: !!(r && r.ok), response: r };
+}
+
+/** 批量导出物品图标（照顺序跑，避免同时解码过多图片） */
+async function syncExportAllItems(ids, onProgress){
+  const results = [];
+  for(let i = 0; i < ids.length; i++){
+    if(onProgress) onProgress(i, ids.length, ids[i]);
+    results.push({ id: ids[i], r: await syncExportItem(ids[i]) });
+  }
+  if(onProgress) onProgress(ids.length, ids.length, null);
+  return results;
+}
+
 /* ---------- 扫描核对 ---------- */
 
 async function syncScan(){
@@ -582,10 +675,11 @@ function ueStateTag(state){
     title="${m.label}">${m.icon} ${m.label}</span>`;
 }
 
-/** UE 侧汇总：多少资产已发布、多少待重导。 */
+/** UE 侧汇总：机器与物品图标合计的已发布/待重导/未导出。 */
 function syncUESummary(){
   const counts = { exported:0, stale:0, none:0 };
   S.machines.forEach(function(m){ counts[machineUEState(m).state]++; });
+  (S.items || []).forEach(function(it){ counts[itemUEState(it).state]++; });
   return counts;
 }
 
@@ -594,6 +688,16 @@ function syncSummary(){
   const counts = {};
   S.machines.forEach(function(m){
     const s = SYNC.online ? machineSyncState(m).state : (SYNC.checkedAt ? 'unknown' : 'offline');
+    counts[s] = (counts[s] || 0) + 1;
+  });
+  return counts;
+}
+
+/** 汇总所有物品图标的同步状态 */
+function itemSyncSummary(){
+  const counts = {};
+  (S.items || []).forEach(function(it){
+    const s = SYNC.online ? itemSyncState(it).state : (SYNC.checkedAt ? 'unknown' : 'offline');
     counts[s] = (counts[s] || 0) + 1;
   });
   return counts;

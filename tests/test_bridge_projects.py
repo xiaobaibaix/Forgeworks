@@ -1,3 +1,4 @@
+import base64
 import json
 import sys
 import tempfile
@@ -110,6 +111,27 @@ class BridgeProjectTest(unittest.TestCase):
         self.assertTrue((exported / 'M1.glb').is_file())
         self.assertFalse((exported / 'pipeline').exists())
         self.assertFalse((exported / 'prompt.txt').exists())
+
+    def test_export_and_publish_item_icon(self):
+        created = bridge.create_project(str(self.workspace), '图标工程')
+        fw_root = Path(created['fwDir'])
+        exported = bridge.export_asset('item', 'I1', {
+            'icon': {'path': 'I1.png', 'b64': base64.b64encode(b'fake-png').decode()},
+        }, {'name': '铁矿石', 'type': 'raw', 'iconHash': 'h1'})
+        self.assertTrue(exported['ok'], exported)
+        self.assertTrue((fw_root / '_Source' / 'Items' / 'Icons' / 'I1' / 'I1.png').is_file())
+
+        ue_root = self.workspace / 'Game'
+        ue_root.mkdir()
+        (ue_root / 'Game.uproject').write_text('{}', encoding='utf-8')
+        self.assertTrue(bridge.set_ue_target(str(ue_root))['ok'])
+
+        result = bridge.publish_to_ue()
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['published'], ['I1'])
+        published = ue_root / 'Forgeworks' / '_Source' / 'Items' / 'Icons' / 'I1' / 'I1.png'
+        self.assertTrue(published.is_file())
+        self.assertEqual(published.read_bytes(), b'fake-png')
 
 
 if __name__ == '__main__':
