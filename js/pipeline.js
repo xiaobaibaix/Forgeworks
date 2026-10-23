@@ -776,9 +776,155 @@ function pipelineWireCard(card){
   card.querySelectorAll('[data-through]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRun(button.dataset.through,true);});
   card.querySelectorAll('[data-remote]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineSubmitRemote(button.dataset.remote);});
   card.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
+  card.querySelectorAll('[data-preview-model]').forEach(button=>button.onclick=event=>{event.stopPropagation();openPipelineModelPreview(button.dataset.previewModel);});
   card.querySelectorAll('[data-delete-node]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRemoveNode(button.dataset.deleteNode);});
   card.querySelectorAll('[data-param="text"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);if(node){node.params.text=input.value;pipelineSave({quiet:true}).catch(error=>toast(error.message));}});
   card.querySelectorAll('[data-param="json"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);try{node.params=JSON.parse(input.value);pipelineSave({quiet:true}).catch(error=>toast(error.message));}catch(_){toast('参数必须是合法 JSON');}});
+}
+
+let _pipelinePreview = null;
+
+function pipelineClosePreview(){
+  const ctx = _pipelinePreview;
+  if(!ctx) return;
+  _pipelinePreview = null;
+  cancelAnimationFrame(ctx.raf);
+  document.removeEventListener('keydown', ctx.onKey);
+  if(ctx.observer) ctx.observer.disconnect();
+  ctx.controls.dispose();
+  ctx.scene.traverse(object=>{
+    if(object.geometry) object.geometry.dispose();
+    const materials = Array.isArray(object.material) ? object.material : (object.material ? [object.material] : []);
+    materials.forEach(material=>{
+      Object.keys(material).forEach(key=>{
+        const value = material[key];
+        if(value && value.isTexture) value.dispose();
+      });
+      material.dispose();
+    });
+  });
+  ctx.renderer.dispose();
+  if(ctx.renderer.forceContextLoss) ctx.renderer.forceContextLoss();
+}
+
+function openPipelineModelPreview(url){
+  if(!url) return;
+  if(!haveThree() || !THREE.GLTFLoader){ alert('three.js / GLTFLoader 未加载，无法预览模型。'); return; }
+  pipelineClosePreview();
+  document.getElementById('modal').innerHTML = `
+    <header><h3>模型预览 · ${pipelineEscape(PIPELINE.assetId || '')}</h3><span class="x" id="pmX">×</span></header>
+    <div class="content" style="padding:0">
+      <div style="position:relative;background:#f2f0ec">
+        <canvas id="pmCanvas" style="display:block;width:100%;height:440px"></canvas>
+        <div style="position:absolute;left:12px;top:10px;font-size:11px;color:#5f5e5a;background:rgba(255,255,255,.85);padding:4px 9px;border-radius:6px;pointer-events:none">拖动旋转 · 滚轮缩放 · 双击复位</div>
+        <div id="pmStatus" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#5f5e5a;background:rgba(242,240,236,.86);pointer-events:none">加载模型…</div>
+      </div>
+      <div style="padding:10px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
+        <button class="sm" id="pmSpin">暂停旋转</button>
+        <button class="sm" id="pmReset">复位</button>
+        <span style="flex:1"></span>
+        <span id="pmInfo" style="font-size:11px;color:var(--text-3);font-family:var(--mono)"></span>
+      </div>
+    </div>`;
+  document.getElementById('mask').classList.remove('hide');
+
+  const status = document.getElementById('pmStatus');
+  const info = document.getElementById('pmInfo');
+  const canvas = document.getElementById('pmCanvas');
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xf2f0ec);
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 4000);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 1.6;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8f8a80, 1.2));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  keyLight.position.set(5, 9, 7);
+  scene.add(keyLight);
+  const rimLight = new THREE.DirectionalLight(0xffffff, .6);
+  rimLight.position.set(-6, 4, -5);
+  scene.add(rimLight);
+  const grid = new THREE.GridHelper(10, 20, 0xc9c4ba, 0xe2ded6);
+  scene.add(grid);
+
+  const resize = ()=>{
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  };
+  const ctx = {renderer, scene, camera, controls, raf:0, onKey:null, observer:null};
+  _pipelinePreview = ctx;
+  resize();
+  if(typeof ResizeObserver === 'function'){
+    ctx.observer = new ResizeObserver(resize);
+    ctx.observer.observe(canvas);
+  }
+
+  let fitView = ()=>{};
+  new THREE.GLTFLoader().load(url, gltf=>{
+    if(_pipelinePreview !== ctx) return;
+    const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+    if(!model){ status.textContent = '模型为空'; return; }
+    const holder = new THREE.Group();
+    holder.add(model);
+    scene.add(holder);
+    const box = new THREE.Box3().setFromObject(holder);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    holder.position.copy(center).multiplyScalar(-1);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    fitView = ()=>{
+      const radius = maxDim * 1.65;
+      camera.near = Math.max(0.01, maxDim / 200);
+      camera.far = radius * 30;
+      camera.position.set(radius * 0.78, radius * 0.55, radius * 0.95);
+      camera.updateProjectionMatrix();
+      controls.target.set(0, 0, 0);
+      controls.update();
+      grid.position.y = -size.y / 2;
+    };
+    fitView();
+    status.style.display = 'none';
+    info.textContent = size.x.toFixed(2) + ' × ' + size.y.toFixed(2) + ' × ' + size.z.toFixed(2) + ' m';
+  }, undefined, error=>{
+    if(_pipelinePreview !== ctx) return;
+    status.textContent = '模型加载失败：' + (error && error.message || error);
+  });
+
+  const animate = ()=>{
+    if(_pipelinePreview !== ctx) return;
+    controls.update();
+    renderer.render(scene, camera);
+    ctx.raf = requestAnimationFrame(animate);
+  };
+  ctx.raf = requestAnimationFrame(animate);
+
+  const close = ()=>{ pipelineClosePreview(); closeModal(); };
+  document.getElementById('pmX').onclick = close;
+  ctx.onKey = event=>{ if(event.key === 'Escape') close(); };
+  document.addEventListener('keydown', ctx.onKey);
+  const spin = document.getElementById('pmSpin');
+  spin.onclick = ()=>{
+    controls.autoRotate = !controls.autoRotate;
+    spin.textContent = controls.autoRotate ? '暂停旋转' : '自动旋转';
+  };
+  document.getElementById('pmReset').onclick = ()=>fitView();
+  canvas.ondblclick = ()=>fitView();
+}
+
+function pipelineOutputURL(file){
+  if(!file || !pipelineBridgeReady()) return '';
+  return '/api/pipeline/output/' + encodeURIComponent(PIPELINE.assetId) + '/' +
+    encodeURIComponent(String(file).split('/').pop()) + '?kind=' + encodeURIComponent(PIPELINE.kind);
 }
 
 function pipelineNodeCard(node){
@@ -789,7 +935,20 @@ function pipelineNodeCard(node){
     : `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
   const taskOutput=node.result&&node.result.providerTask&&node.result.providerTask.output||node.result&&node.result.output||{};
   const outputFile=taskOutput.modelPath||taskOutput.imagePath;
-  const outputLink=outputFile&&pipelineBridgeReady()?`<a class="pipeline-output" href="/api/pipeline/output/${encodeURIComponent(PIPELINE.assetId)}/${encodeURIComponent(outputFile.split('/').pop())}?kind=${encodeURIComponent(PIPELINE.kind)}" download>下载输出</a>`:'';
+  const outputURL=pipelineOutputURL(outputFile);
+  const outputLink=outputURL?`<a class="pipeline-output" href="${pipelineEscape(outputURL)}" download>下载输出</a>`:'';
+  const imageURL=pipelineOutputURL(taskOutput.imagePath);
+  const modelURL=pipelineOutputURL(taskOutput.modelPath);
+  let media='';
+  if(node.type==='textToImage'){
+    media=imageURL
+      ? `<figure class="pipeline-node-media"><img src="${pipelineEscape(imageURL)}" alt="生成图" loading="lazy"></figure>`
+      : `<div class="pipeline-node-media empty">未生成图像</div>`;
+  }else if(node.type==='imageTo3D'){
+    media=modelURL
+      ? `<div class="pipeline-node-media empty ready">3D 模型已生成</div><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
+      : `<div class="pipeline-node-media empty">未生成模型</div>`;
+  }
   const history=(node.result&&node.result.history||[]).map(item=>`<small>旧版本 ${pipelineEscape(item.taskId)} ${pipelineEscape(item.output&&item.output.modelPath||item.output&&item.output.imagePath||'')}</small>`).join('');
   const stageSummary=pipelineStageSummary(node);
   const inPorts=pipelinePorts(node.type,'in').map(port=>`<span class="pipeline-port pipeline-port-in" data-in-node="${pipelineEscape(node.id)}" data-in-port="${pipelineEscape(port)}" title="输入 ${pipelineEscape(port)}" style="top:${pipelinePortTop(node.type,'in',port)}px"></span>`).join('');
@@ -797,7 +956,7 @@ function pipelineNodeCard(node){
   return `<article class="pipeline-node ${selected?'selected':''}" data-node="${pipelineEscape(node.id)}" style="left:${Number(node.x)||0}px;top:${Number(node.y)||0}px">
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(state)}</span></header>
-    <small>${pipelineEscape(node.id)}${node.result&&node.result.providerTask&&node.result.providerTask.progress!=null?' · '+node.result.providerTask.progress+'%':''}</small>${params}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
+    <small>${pipelineEscape(node.id)}${node.result&&node.result.providerTask&&node.result.providerTask.progress!=null?' · '+node.result.providerTask.progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
     <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${node.result&&node.result.providerTask?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button></div>${outputLink}${history}
     ${node.result && node.result.error?`<small class="pipeline-error">${pipelineEscape(node.result.error)}</small>`:''}
   </article>`;
