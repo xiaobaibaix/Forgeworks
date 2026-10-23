@@ -56,7 +56,8 @@ function iconResourceHTML(opt){
   return `<div style="border-top:1px solid var(--border);margin:16px 0 12px;padding-top:14px">
     <div style="font-size:12px;font-weight:500;margin-bottom:10px">图标</div>
     <div style="display:flex;gap:14px;align-items:flex-start">
-      <div id="iconPrev" style="width:72px;height:72px;flex:0 0 72px;display:flex;align-items:center;
+      <div id="iconPrev" title="点击「上传图标」选择文件，或把图片拖到这里"
+           style="width:72px;height:72px;flex:0 0 72px;display:flex;align-items:center;
            justify-content:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px">
         ${opt.previewHTML||''}
       </div>
@@ -73,7 +74,7 @@ function iconResourceHTML(opt){
           ${opt.showGenerate?'<button class="sm" id="iconGen">生成图标 →</button>':''}
         </div>
         <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
-          上传的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
+          上传或拖入的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
         </div>
       </div>
     </div>
@@ -90,11 +91,9 @@ function bindIconResource(opt){
   const clearBtn = document.getElementById('iconClear');
   const setHint = html=>{ const h = document.getElementById('iconHint'); if(h) h.innerHTML = html; };
 
-  const fileInput = document.getElementById('iconFile');
-  if(fileInput) fileInput.onchange = async e=>{
-    const f = e.target.files[0];
+  const applyIconFile = async f=>{
     if(!f) return;
-    if(!/^image\//.test(f.type)){ toast('请选择图片文件'); return; }
+    if(f.type && !/^image\//.test(f.type)){ toast('请选择图片文件'); return; }
     try{
       const dataUrl = await readIconFile(f);
       prev.innerHTML = `<img src="${dataUrl}" width="52" height="52" style="border-radius:6px">`;
@@ -104,6 +103,22 @@ function bindIconResource(opt){
       toast('图标已载入，点保存生效');
     }catch(err){ toast('图标读取失败：'+err.message); }
   };
+
+  const fileInput = document.getElementById('iconFile');
+  if(fileInput) fileInput.onchange = e=>{
+    const f = e.target.files[0];
+    fileInput.value = '';   // 清空后同一个文件才能再次触发 change
+    applyIconFile(f);
+  };
+
+  if(prev){
+    prev.ondragover = e=>{ e.preventDefault(); prev.style.borderColor = 'var(--accent)'; };
+    prev.ondragleave = ()=>{ prev.style.borderColor = ''; };
+    prev.ondrop = e=>{
+      e.preventDefault(); prev.style.borderColor = '';
+      applyIconFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+    };
+  }
 
   if(clearBtn) clearBtn.onclick = ()=>{
     delete prev.dataset.pending;

@@ -57,12 +57,14 @@ def current_stamp(text: str) -> str:
 def next_stamp(old: str) -> str:
     """同一天递进字母序号：20261021c -> 20261021d；跨天则从 a 重新开始。"""
     today = datetime.date.today().strftime("%Y%m%d")
-    m = re.match(r"^(\d{8})([a-z])$", old or "")
+    m = re.match(r"^(\d{8})([a-z])(\d*)$", old or "")
     if m and m.group(1) == today:
-        nxt = chr(ord(m.group(2)) + 1)
-        if nxt > "z":
-            nxt = "z"
-        return today + nxt
+        letter, n = m.group(2), m.group(3)
+        if n:
+            return f"{today}{letter}{int(n) + 1}"
+        if letter < "z":
+            return today + chr(ord(letter) + 1)
+        return today + "z2"   # 字母用尽后改用 z2、z3…，避免无戳可打
     return today + "a"
 
 
