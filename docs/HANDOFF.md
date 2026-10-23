@@ -485,7 +485,7 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - `js/engines/material-textures.js`：拉取目录、把 AI 图压成中性明度（`fwNeutralCanvas`）、派生粗糙度、装载为 `THREE.CanvasTexture`（JPEG 内嵌）。同一套图可被任何风格复用。
 - `js/engines/viewer3d.js`：材质按 `mat.key` 挂 `map` / `roughnessMap`；目录异步到达后 `applyTextures()` 刷新，导出前在 `syncExportMachine` 等 `fwTexturesReady()`，GLTFExporter 才能把已解码的贴图写进 GLB。
 - `js/views/sync.js`：新增「材质贴图（AI）」卡片——逐材质状态、缩略图、生成/重新生成、生成全部缺失；有排队/生成中任务时每 3 秒轮询一次。
-- 启用方式：`tools/bridge_config.json` 写入 `providers.tripo.api_key`，重启 Bridge。未配置时卡片显示指引并禁用生成按钮。
+- 启用方式：流水线页「Provider 设置」填写 Tripo API Key（写入 gitignore 的 `tools/bridge_config.json`，即时生效）；也可手改文件。未配置时卡片显示指引并禁用生成按钮。
 - `tests/test_textures.py`：9 项通过（目录归一化/丢未知键/丢文件、路径穿越拒绝、提示词、提交去重与 force、轮询成功/失败落盘、文件端点）。
 - 验证边界：未配置 key，未发真实生成请求；GLB 内嵌用页面内注入的 64×64 CanvasTexture 验证——1 image、1 texture、5 个材质全部带 `baseColorTexture`，`mimeType: image/jpeg`。
 
@@ -495,7 +495,8 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - Ark 图像：`POST /api/v3/images/generations`，模型 `doubao-seedream-5-0-pro-260628`，同步返回图片 URL。
 - Ark 3D：`POST /api/v3/contents/generations/tasks`，模型 `doubao-seed3d-2-0-260328`；`content` 用 `image_url`（data URI 或 https）传图，可选 `text`。轮询 `GET /api/v3/contents/generations/tasks/{id}`，成功后 `content.file_url` 是 ZIP，下载后解出 GLB。
 - 下载白名单扩展 `*.volces.com`；ZIP 内 GLB 仍做 magic 与声明长度校验。
-- 启用方式：`tools/bridge_config.json` 写 `providers.ark.api_key`（`endpoint` 可空，默认 `https://ark.cn-beijing.volces.com/api/v3`），重启 Bridge。
+- 启用方式：流水线页「Provider 设置」填写 Ark API Key、Endpoint 与两个模型名（写入 gitignore 的 `tools/bridge_config.json`，即时生效）；也可手改文件。`endpoint` 可空，默认 `https://ark.cn-beijing.volces.com/api/v3`。
+- 配置接口：`GET /api/pipeline/providers` 只回 `configured`/`endpoint`/模型名，永不回传密钥；`POST /api/pipeline/providers/save` 仅接受本地同源页面，`clearKey:true` 删除已存 Key，Endpoint 必须是 https 火山域名，文件落盘后权限 0600。
 
 ## 14. 资产七方面 + 图层化预览 + 管线阶段（2026-10-21）
 

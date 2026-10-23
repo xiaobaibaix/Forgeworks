@@ -644,8 +644,7 @@ function renderSyncTextures(){
     notice.innerHTML = catalog.providerReady
       ? `<div style="font-size:11px;color:var(--text-3);margin-top:6px">缓存目录：<code>${syncEscape(catalog.dir)}</code></div>`
       : `<div class="issue warn" style="margin-top:8px"><span class="ic">!</span><div>
-          贴图生成未配置。把 Tripo API Key 写进 <code>tools/bridge_config.json</code> 的
-          <code>providers.tripo.api_key</code>，重启 Bridge 后再生成。
+          贴图生成未配置。到「流水线」页点「Provider 设置」填写 Tripo API Key 后即可生成。
         </div></div>`;
   }
   const allButton = document.getElementById('syTexAll');

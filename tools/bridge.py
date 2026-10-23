@@ -106,6 +106,85 @@ def write_json(path, obj):
     os.replace(tmp, path)
 
 
+PROVIDER_MODEL_RE = re.compile(r'[A-Za-z0-9._-]{1,80}')
+PROVIDER_ENDPOINT_HOSTS = ('volces.com',)
+
+
+def _provider_endpoint_allowed(value):
+    parsed = urlparse(value)
+    host = (parsed.hostname or '').lower()
+    return parsed.scheme == 'https' and bool(host) and any(
+        host == suffix or host.endswith('.' + suffix) for suffix in PROVIDER_ENDPOINT_HOSTS)
+
+
+def provider_settings_view(config):
+    """Provider 配置的非敏感视图，密钥永不回传前端。"""
+    providers = config.get('providers') if isinstance(config, dict) else None
+    providers = providers if isinstance(providers, dict) else {}
+    rows = {}
+    for name in fw_providers.PROVIDERS:
+        value = providers.get(name)
+        value = value if isinstance(value, dict) else {}
+        row = {'configured': bool(str(value.get('api_key') or '').strip())}
+        for field in ('endpoint', 'image_model', 'model3d_model'):
+            if isinstance(value.get(field), str) and value[field].strip():
+                row[field] = value[field].strip()
+        rows[name] = row
+    return rows
+
+
+def save_provider_settings(payload, path=CONFIG_FILE):
+    providers = payload.get('providers') if isinstance(payload, dict) else None
+    if not isinstance(providers, dict) or not providers:
+        raise ValueError('缺少 Provider 配置')
+    config = read_json(path, {}) or {}
+    config = config if isinstance(config, dict) else {}
+    current = config.get('providers')
+    current = dict(current) if isinstance(current, dict) else {}
+    for name, incoming in providers.items():
+        if name not in fw_providers.PROVIDERS:
+            raise ValueError('不支持的 Provider：%s' % (name,))
+        if not isinstance(incoming, dict):
+            raise ValueError('Provider 配置格式无效')
+        target = dict(current.get(name)) if isinstance(current.get(name), dict) else {}
+        changed = False
+        key = incoming.get('api_key')
+        if isinstance(key, str) and key.strip():
+            if len(key.strip()) > 512:
+                raise ValueError('API Key 过长')
+            target['api_key'] = key.strip()
+            changed = True
+        if incoming.get('clearKey') is True:
+            target.pop('api_key', None)
+            changed = True
+        endpoint = incoming.get('endpoint')
+        if isinstance(endpoint, str) and endpoint.strip():
+            endpoint = endpoint.strip().rstrip('/')
+            if not _provider_endpoint_allowed(endpoint):
+                raise ValueError('Endpoint 必须是 https 的火山域名')
+            target['endpoint'] = endpoint
+            changed = True
+        for field in ('image_model', 'model3d_model'):
+            value = incoming.get(field)
+            if isinstance(value, str) and value.strip():
+                if not PROVIDER_MODEL_RE.fullmatch(value.strip()):
+                    raise ValueError('模型名只能包含字母、数字、点、下划线和短横线')
+                target[field] = value.strip()
+                changed = True
+        if changed:
+            if target:
+                current[name] = target
+            else:
+                current.pop(name, None)
+    config['providers'] = current
+    write_json(path, config)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return provider_settings_view(config)
+
+
 # ---------------------------------------------------------------------------
 # Bridge 状态（最近绑定的项目）
 # ---------------------------------------------------------------------------
@@ -1170,18 +1249,9 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         elif route == 'pipeline/providers':
-            cfg = read_json(CONFIG_FILE, {}) or {}
-            if not isinstance(cfg, dict):
-                cfg = {}
-            providers = cfg.get('providers') or {}
-            if not isinstance(providers, dict):
-                providers = {}
-            tripo_config = providers.get('tripo') if isinstance(providers.get('tripo'), dict) else {}
-            ark_config = providers.get('ark') if isinstance(providers.get('ark'), dict) else {}
-            self._json({'ok': True, 'providers': {
-                name: {'configured': bool((value or {}).get('api_key')), 'enabled': bool((value or {}).get('api_key'))}
-                for name, value in providers.items() if isinstance(value, dict)
-            }, 'remoteExecutionAvailable': bool(tripo_config.get('api_key') or ark_config.get('api_key'))})
+            providers = provider_settings_view(read_json(CONFIG_FILE, {}) or {})
+            self._json({'ok': True, 'providers': providers, 'configPath': CONFIG_FILE,
+                        'remoteExecutionAvailable': any(row['configured'] for row in providers.values())})
         elif route.startswith('pipeline/graph/'):
             asset_id = route.rsplit('/', 1)[-1]
             kind = (self._query().get('kind') or ['machine'])[0]
@@ -1322,6 +1392,16 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 self._json({'ok': True, **result})
             except (ValueError, TypeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
+        elif route == 'pipeline/providers/save':
+            if not self._same_loopback_origin():
+                self._json({'ok': False, 'error': 'Provider 配置只允许 Forgeworks 本地同源页面修改'}, 403)
+            else:
+                try:
+                    providers = save_provider_settings(body or {})
+                    self._json({'ok': True, 'providers': providers, 'configPath': CONFIG_FILE,
+                                'remoteExecutionAvailable': any(row['configured'] for row in providers.values())})
+                except (ValueError, TypeError) as error:
+                    self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/provider/submit':
             b = body or {}
             try:
