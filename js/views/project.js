@@ -52,6 +52,8 @@ function renderProject(){
       `}
     </div>
 
+    ${on ? providerCardHTML() : ''}
+
     ${on ? `
     <div class="card">
       <h3>Forgeworks 项目</h3>
@@ -226,4 +228,7 @@ function renderProject(){
       render();
     }catch(e){ syncLog('核对失败：'+e.message,'warn'); render(); }
   };
+
+  providerBindCard();
+  if(on) providerEnsureLoaded();
 }

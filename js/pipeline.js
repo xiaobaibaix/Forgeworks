@@ -181,7 +181,7 @@ async function pipelineLoad(assetId){
       PIPELINE.archive = result.archive || null;
     }catch(_){ /* 读不到就退回浏览器本地图 */ }
     try{
-      const providers = await pipelineApi('pipeline/providers');
+      const providers = await pipelineApi('providers');
       PIPELINE.providers = providers.providers || {};
     }catch(_){ PIPELINE.providers = {}; }
   }
@@ -737,66 +737,6 @@ async function pipelineRun(nodeId, through){
   renderPipelineView();
 }
 
-function providerSettingsHTML(){
-  const rows = PIPELINE.providers || {};
-  const mark = name => (rows[name] && rows[name].configured)
-    ? '<span class="tag t0">已配置</span>' : '<span class="tag t5">未配置</span>';
-  const ark = rows.ark || {};
-  const field = (id, label, value, type, hint) => `<div class="field"><label for="${id}">${label}</label>
-    <input id="${id}" type="${type || 'text'}" autocomplete="off" value="${pipelineEscape(value || '')}">
-    ${hint ? `<div style="font-size:11px;color:var(--text-3);margin-top:4px">${hint}</div>` : ''}</div>`;
-  return `
-    <div class="field"><label for="provArkKey">火山 Ark API Key ${mark('ark')}</label>
-      <input id="provArkKey" type="password" autocomplete="off" placeholder="留空保持不变">
-      <div style="font-size:11px;color:var(--text-3);margin-top:4px">Seedream 文生图与 Seed3D 图生模型共用这一个 Key。</div>
-      <label style="margin-top:6px"><input type="checkbox" id="provArkClear"> 清除已保存的 Key</label></div>
-    ${field('provArkEndpoint', 'Ark Endpoint', ark.endpoint || 'https://ark.cn-beijing.volces.com/api/v3', 'text', '只接受 https 火山域名；/api/compatible 会自动改写为 /api/v3。')}
-    <div class="row">
-      ${field('provArkImage', 'Seedream 图像模型', ark.image_model || 'doubao-seedream-5-0-pro-260628')}
-      ${field('provArk3d', 'Seed3D 模型', ark.model3d_model || 'doubao-seed3d-2-0-260328')}
-    </div>
-    <div class="field" style="border-top:1px solid var(--border);padding-top:12px"><label for="provTripKey">Tripo API Key ${mark('tripo')}</label>
-      <input id="provTripKey" type="password" autocomplete="off" placeholder="留空保持不变">
-      <label style="margin-top:6px"><input type="checkbox" id="provTripClear"> 清除已保存的 Key</label></div>
-    <div style="font-size:11px;color:var(--text-3);line-height:1.6">密钥只写入本机的 <code>tools/bridge_config.json</code>（已 gitignore），不会进入项目文件或仓库；保存后立即生效，无需重启 Bridge。</div>`;
-}
-
-function openProviderSettings(){
-  if(!pipelineBridgeReady()){ toast('Bridge 未连接，无法保存 Provider 配置'); return; }
-  modalState = {providerSettings:true};
-  document.getElementById('modal').innerHTML = `
-    <header><h3>Provider 设置</h3><span class="x" id="mX">×</span></header>
-    <div class="content" id="mBody">${providerSettingsHTML()}</div>
-    <footer><div style="flex:1"></div><button id="mCancel">取消</button><button class="primary" id="mOk">保存</button></footer>`;
-  document.getElementById('mask').classList.remove('hide');
-  document.getElementById('mX').onclick = closeModal;
-  document.getElementById('mCancel').onclick = closeModal;
-  document.getElementById('mOk').onclick = () => saveProviderSettings().catch(error => toast(error.message));
-}
-
-async function saveProviderSettings(){
-  const val = id => (document.getElementById(id) || {}).value || '';
-  const checked = id => !!(document.getElementById(id) || {}).checked;
-  const result = await pipelineApi('pipeline/providers/save', {providers:{
-    ark:{api_key:val('provArkKey'), endpoint:val('provArkEndpoint'),
-         image_model:val('provArkImage'), model3d_model:val('provArk3d'),
-         clearKey:checked('provArkClear')},
-    tripo:{api_key:val('provTripKey'), clearKey:checked('provTripClear')}
-  }});
-  PIPELINE.providers = result.providers || {};
-  closeModal();
-  toast(result.remoteExecutionAvailable ? 'Provider 配置已保存' : 'Provider 配置已保存（尚未填写任何 Key）');
-  renderPipelineView();
-}
-
-function pipelineBindProviderButtons(){
-  const handler = () => openProviderSettings();
-  ['pipelineProviders', 'pipelineProviderCfg'].forEach(id => {
-    const button = document.getElementById(id);
-    if(button) button.onclick = handler;
-  });
-}
-
 function pipelineNodeProvider(node){
   const wanted=String(node&&node.params&&node.params.provider||'').toLowerCase();
   const configured=Object.keys(PIPELINE.providers||{}).filter(name=>PIPELINE.providers[name]&&PIPELINE.providers[name].configured);
@@ -1067,11 +1007,11 @@ function renderPipelineView(){
       <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}" ${template.id===(PIPELINE.graph.template || (PIPELINE.kind==='element'?'icon':'machine'))?'selected':''}>${template.label}</option>`).join('')}</select></div>
     <div class="pt-btns">
       ${PIPELINE.returnTo?`<button id="pipelineBack">${pipelineReturnLabel()}</button>`:''}
-      <button id="pipelineProviders">Provider 设置</button><button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineZoomReset" title="滚轮缩放 · 按住右键拖动平移 · 点击复位">100%</button><button id="pipelineRunAll" class="primary">运行全部（本地节点）</button>
+      <button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineZoomReset" title="滚轮缩放 · 按住右键拖动平移 · 点击复位">100%</button><button id="pipelineRunAll" class="primary">运行全部（本地节点）</button>
     </div>
     <div class="pt-note">
       <span>远程 Provider：${bridgeReady
-        ? (providerNames.map(name=>`${pipelineEscape(name)} ${PIPELINE.providers[name].configured?'已配置':'未配置'}`).join(' · ')||'未配置') + ' <button class="sm" id="pipelineProviderCfg">配置</button>'
+        ? (providerNames.map(name=>`${pipelineEscape(name)} ${PIPELINE.providers[name].configured?'已配置':'未配置'}`).join(' · ')||'未配置') + ' <span style="color:var(--text-3)">（在「项目」页配置）</span>'
         : 'Bridge 未连接（离线只能编辑与运行本地步骤）'}</span>
       ${bridgeReady
         ? '<span>远程任务需逐次确认；额度预估按当前公开价目，最终以任务实耗为准。</span>'
@@ -1098,7 +1038,6 @@ function renderPipelineView(){
     pipelineApplyZoom();
   };
   document.getElementById('pipelineRunAll').onclick=()=>pipelineRun(null,false);
-  pipelineBindProviderButtons();
   view.querySelectorAll('[data-add]').forEach(button=>button.addEventListener('pointerdown',event=>{
     if(event.button!==0)return;
     event.preventDefault();

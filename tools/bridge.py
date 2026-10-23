@@ -37,9 +37,11 @@ import hashlib
 import json
 import math
 import os
+import pathlib
 import queue
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -67,6 +69,7 @@ _project_spec.loader.exec_module(fw_project)
 BRIDGE_VERSION = '0.1.0'
 STATE_FILE = os.path.join(ROOT, 'tools', '.bridge_state.json')
 CONFIG_FILE = os.path.join(ROOT, 'tools', 'bridge_config.json')
+CCSWITCH_DB = os.path.join(os.path.expanduser('~'), '.cc-switch', 'cc-switch.db')
 
 # 目录结构约定（sync-design §3.1）
 FW_DIR_NAME = 'Forgeworks'                 # 项目根下
@@ -178,10 +181,85 @@ def save_provider_settings(payload, path=CONFIG_FILE):
                 current.pop(name, None)
     config['providers'] = current
     write_json(path, config)
+    _restrict_config_file(path)
+    return provider_settings_view(config)
+
+
+def _restrict_config_file(path):
     try:
         os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+def _ccswitch_entries(path=CCSWITCH_DB):
+    """只读 cc-switch 中可直接用于 Seedream / Seed3D 的 Ark 配置。"""
+    if not os.path.isfile(path):
+        return []
+    try:
+        connection = sqlite3.connect(pathlib.Path(path).as_uri() + '?mode=ro', uri=True, timeout=5)
+        try:
+            rows = connection.execute(
+                'SELECT id, name, settings_config FROM providers WHERE app_type = ?',
+                ('claude',)).fetchall()
+        finally:
+            connection.close()
+    except (sqlite3.Error, ValueError):
+        return []
+    entries = []
+    for provider_id, name, raw in rows:
+        try:
+            settings = json.loads(raw or '{}')
+        except (TypeError, ValueError):
+            continue
+        env = settings.get('env') if isinstance(settings, dict) else None
+        env = env if isinstance(env, dict) else {}
+        key = str(env.get('ANTHROPIC_API_KEY') or '').strip()
+        base = str(env.get('ANTHROPIC_BASE_URL') or '').strip().rstrip('/')
+        model = str(env.get('ANTHROPIC_MODEL') or env.get('ANTHROPIC_DEFAULT_SONNET_MODEL') or '').strip()
+        if not key or not model or not _provider_endpoint_allowed(base):
+            continue
+        lowered = model.lower()
+        if 'seedream' in lowered:
+            field = 'image_model'
+        elif 'seed3d' in lowered:
+            field = 'model3d_model'
+        else:
+            continue
+        entries.append({'id': str(provider_id), 'name': str(name or ''),
+                        'base': base, 'model': model, 'field': field, 'api_key': key})
+    return entries
+
+
+def ccswitch_candidates(path=CCSWITCH_DB):
+    candidates = []
+    for entry in _ccswitch_entries(path):
+        key = entry['api_key']
+        candidates.append({
+            'id': entry['id'], 'name': entry['name'], 'base': entry['base'],
+            'model': entry['model'], 'field': entry['field'],
+            'keyHint': '…' + key[-4:] if len(key) > 8 else '已配置',
+        })
+    return candidates
+
+
+def import_ccswitch_provider(provider_id, path=CCSWITCH_DB, config_path=CONFIG_FILE):
+    wanted = str(provider_id or '').strip()
+    entry = next((item for item in _ccswitch_entries(path) if item['id'] == wanted), None)
+    if entry is None:
+        raise ValueError('未找到匹配的 cc-switch 火山图像/3D 生成配置')
+    config = read_json(config_path, {}) or {}
+    config = config if isinstance(config, dict) else {}
+    providers = config.get('providers')
+    providers = dict(providers) if isinstance(providers, dict) else {}
+    ark = dict(providers.get('ark')) if isinstance(providers.get('ark'), dict) else {}
+    ark['api_key'] = entry['api_key']
+    ark['endpoint'] = entry['base']
+    ark[entry['field']] = entry['model']
+    providers['ark'] = ark
+    config['providers'] = providers
+    write_json(config_path, config)
+    _restrict_config_file(config_path)
     return provider_settings_view(config)
 
 
@@ -1248,10 +1326,12 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Length', str(len(data)))
             self.end_headers()
             self.wfile.write(data)
-        elif route == 'pipeline/providers':
+        elif route == 'providers':
             providers = provider_settings_view(read_json(CONFIG_FILE, {}) or {})
             self._json({'ok': True, 'providers': providers, 'configPath': CONFIG_FILE,
-                        'remoteExecutionAvailable': any(row['configured'] for row in providers.values())})
+                        'remoteExecutionAvailable': any(row['configured'] for row in providers.values()),
+                        'ccswitchAvailable': os.path.isfile(CCSWITCH_DB),
+                        'ccswitch': ccswitch_candidates()})
         elif route.startswith('pipeline/graph/'):
             asset_id = route.rsplit('/', 1)[-1]
             kind = (self._query().get('kind') or ['machine'])[0]
@@ -1392,14 +1472,38 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 self._json({'ok': True, **result})
             except (ValueError, TypeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
-        elif route == 'pipeline/providers/save':
+        elif route == 'providers/save':
             if not self._same_loopback_origin():
                 self._json({'ok': False, 'error': 'Provider 配置只允许 Forgeworks 本地同源页面修改'}, 403)
             else:
                 try:
                     providers = save_provider_settings(body or {})
                     self._json({'ok': True, 'providers': providers, 'configPath': CONFIG_FILE,
-                                'remoteExecutionAvailable': any(row['configured'] for row in providers.values())})
+                                'remoteExecutionAvailable': any(row['configured'] for row in providers.values()),
+                                'ccswitchAvailable': os.path.isfile(CCSWITCH_DB),
+                                'ccswitch': ccswitch_candidates()})
+                except (ValueError, TypeError) as error:
+                    self._json({'ok': False, 'error': str(error)}, 400)
+        elif route == 'providers/ccswitch/import':
+            if not self._same_loopback_origin():
+                self._json({'ok': False, 'error': 'cc-switch 导入只允许 Forgeworks 本地同源页面操作'}, 403)
+            else:
+                try:
+                    providers = import_ccswitch_provider((body or {}).get('id'))
+                    self._json({'ok': True, 'providers': providers, 'configPath': CONFIG_FILE,
+                                'remoteExecutionAvailable': any(row['configured'] for row in providers.values()),
+                                'ccswitchAvailable': os.path.isfile(CCSWITCH_DB),
+                                'ccswitch': ccswitch_candidates()})
+                except (ValueError, TypeError) as error:
+                    self._json({'ok': False, 'error': str(error)}, 400)
+        elif route == 'providers/test':
+            if not self._same_loopback_origin():
+                self._json({'ok': False, 'error': '连通性测试只允许 Forgeworks 本地同源页面触发'}, 403)
+            else:
+                try:
+                    result = fw_providers.test_connection(
+                        read_json(CONFIG_FILE, {}) or {}, (body or {}).get('provider'))
+                    self._json({'ok': True, 'result': result})
                 except (ValueError, TypeError) as error:
                     self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/provider/submit':

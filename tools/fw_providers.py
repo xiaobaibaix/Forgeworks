@@ -68,6 +68,40 @@ def _key(config, name='tripo'):
     return value
 
 
+def test_connection(config, name):
+    """用只读接口做鉴权探测，不产生计费任务。"""
+    provider = str(name or '').strip().lower()
+    if provider not in PROVIDERS:
+        raise ValueError('不支持的 Provider：%s' % (name,))
+    key = _provider_key(config, provider)
+    if not key:
+        return {'provider': provider, 'configured': False, 'ok': False, 'error': '未配置 API Key'}
+    url = (_ark_base(config) + '/models' if provider == 'ark'
+           else TRIPO_BASE + '/tasks/00000000-0000-0000-0000-000000000000')
+    request = urllib.request.Request(url, headers={
+        'Authorization': 'Bearer ' + key, 'Accept': 'application/json'})
+    started = time.time()
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            response.read(64)
+            status = response.status
+    except urllib.error.HTTPError as error:
+        latency = int((time.time() - started) * 1000)
+        if provider == 'tripo' and error.code == 404:
+            # Tripo v3 没有只读账户接口；探测一个不存在的任务，404 说明鉴权已通过。
+            return {'provider': provider, 'configured': True, 'ok': True,
+                    'status': error.code, 'latencyMs': latency}
+        message = ('API Key 无效或无权限' if error.code in (401, 403)
+                   else 'Provider HTTP %s' % error.code)
+        return {'provider': provider, 'configured': True, 'ok': False,
+                'status': error.code, 'latencyMs': latency, 'error': message}
+    except (urllib.error.URLError, TimeoutError) as error:
+        return {'provider': provider, 'configured': True, 'ok': False,
+                'error': '连接失败：%s' % type(error).__name__}
+    return {'provider': provider, 'configured': True, 'ok': True,
+            'status': status, 'latencyMs': int((time.time() - started) * 1000)}
+
+
 def _pick_provider(config, params, fallback=False):
     wanted = str(params.get('provider') or '').strip().lower()
     configured = [name for name in PROVIDERS if _provider_key(config, name)]
