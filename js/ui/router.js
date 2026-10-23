@@ -69,7 +69,8 @@ function makeViews(){
     balance:{title:'物料平衡', sub:'原料 ↔ 成品 双向换算', render:()=>renderBalance()},
     solve:{title:'产线求解器', sub:'目标物品 → 完整生产链', render:()=>renderSolve()},
     graph:{title:'依赖图谱', sub:'生产链结构可视化', render:()=>renderGraph()},
-    sync:{title:'同步', sub:'项目工程 · 资源生成 · 导出到 UE', render:()=>renderSync()},
+    project:{title:'项目', sub:'新建 / 打开 / 保存 · Bridge 状态', render:()=>renderProject()},
+    sync:{title:'同步', sub:'资产生成 · 导出到 UE · 状态核对', render:()=>renderSync()},
     pipeline:{title:'生成管线', sub:'资产生成图 · 本地优先 · 按需运行', render:()=>renderPipeline()},
     export:{title:'导出', sub:'JSON / UE DataTable CSV / Markdown', render:()=>renderExport()},
   };
@@ -112,6 +113,7 @@ function renderNav(){
 }
 
 function menuGroupOf(key){
+  if(key === 'project') return '项目';   // 项目页由侧栏顶部 chip 进入，不占导航位
   const hit=NAV_GROUPS.find(([,keys])=>keys.includes(key));
   return hit ? hit[0] : '';
 }

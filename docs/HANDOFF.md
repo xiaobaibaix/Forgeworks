@@ -113,7 +113,7 @@ python3 tools/stamp.py
 
 ### 2.1 内容设计本体 —— 15 个视图
 
-导航分三组：**元素→物品→机器→配方→科技**（内容）／**美术资源**（风格→资产）／**输出与同步**（导出→同步）。
+导航分三组：**元素→物品→机器→配方→科技**（内容）／**美术资源**（风格→资产）／**输出与同步**（导出→同步）。项目工程由侧栏顶部项目 chip 进入独立「项目」页，不占导航位。
 
 | 视图 | 文件 | 状态 |
 |---|---|---|
@@ -123,7 +123,8 @@ python3 tools/stamp.py
 | 导出（CSV / Markdown / JSON） | `js/views/export.js` + `js/engines/csv.js` | ✅ |
 | 3D 预览 + GLB 导出 | `js/engines/viewer3d.js` | ✅（three.js r147） |
 | **风格引擎** | `js/core/style.js` + `js/data/styles.js` + `js/views/style.js` | ✅ |
-| **同步** | `js/sync.js` + `js/views/sync.js` | ✅ P0/P1 已实测；P1.5 已实现并实测 |
+| **项目** | `js/views/project.js` | ✅ 新建 / 打开 / 保存 + Bridge 状态 |
+| **同步** | `js/sync.js` + `js/views/sync.js` | ✅ 资产生成 / 导出 / 状态核对；P0/P1 已实测 |
 
 ### 2.2 风格引擎（上一期刚做完，是本期同步功能的地基）
 

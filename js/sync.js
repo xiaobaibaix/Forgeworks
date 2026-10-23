@@ -326,7 +326,7 @@ async function syncUnbindProject(){
   return r;
 }
 
-/** 侧栏顶部的项目切换器：始终可见，点开进入同步页 */
+/** 侧栏顶部的项目切换器：始终可见，点开进入项目页 */
 function renderProjectChip(){
   const el = document.getElementById('projectChip');
   if(!el) return;
@@ -336,12 +336,12 @@ function renderProjectChip(){
   const kind = project ? (ueTarget ? '项目 · UE 已就绪' : 'Forgeworks 项目')
                        : (SYNC.online ? '点击新建或打开' : 'Bridge 未启动');
   el.innerHTML = `<button class="project-chip"
-    title="${syncEscape(project ? project.root : '在同步页新建或打开项目')}">
+    title="${syncEscape(project ? project.root : '在项目页新建或打开项目')}">
     <span class="pc-label">项目</span>
     <span class="pc-name">${syncEscape(name)}</span>
     <span class="pc-kind"><i class="dot ${project ? 'on' : ''}"></i>${syncEscape(kind)}</span>
   </button>`;
-  el.querySelector('button').onclick = ()=>{ cur = 'sync'; render(); syncHash('sync'); };
+  el.querySelector('button').onclick = ()=>{ cur = 'project'; render(); syncHash('project'); };
 }
 
 /* ---------- 状态机（三把 hash，sync-design §4.3） ---------- */
