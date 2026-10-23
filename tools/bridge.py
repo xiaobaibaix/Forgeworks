@@ -298,6 +298,114 @@ def push_event(kind, data=None):
 
 
 # ---------------------------------------------------------------------------
+# 项目内容写入（界面自动保存与 MCP 共用，revision 乐观锁 + 变更广播）
+# ---------------------------------------------------------------------------
+
+CONTENT_COLLECTIONS = ('elements', 'items', 'machines', 'recipes', 'techs')
+_content_lock = threading.Lock()
+
+
+def _content_source(body):
+    source = body.get('source')
+    source = source if isinstance(source, str) and source else 'api'
+    client_id = body.get('clientId')
+    if not isinstance(client_id, str) or len(client_id) > 64:
+        client_id = None
+    return source[:32], client_id
+
+
+def _content_conflict(current_revision, base_revision):
+    return (base_revision is not None
+            and str(base_revision) != current_revision)
+
+
+def save_content_checked(root, content, base_revision=None, source='api', client_id=None):
+    """整包写入；baseRevision 不匹配时返回 conflict，不覆盖磁盘内容。"""
+    if not root:
+        raise ValueError('未打开 Forgeworks 项目')
+    with _content_lock:
+        current_revision = fw_project.content_revision(root)
+        if _content_conflict(current_revision, base_revision):
+            return {'ok': False, 'conflict': True, 'revision': current_revision,
+                    'error': '项目内容已被其他写入修改，请读取最新内容后重试'}
+        fw_project.save_content(root, content)
+        revision = fw_project.content_revision(root)
+    push_event('content.changed', {'root': root, 'revision': revision,
+                                   'source': source, 'clientId': client_id, 'entity': None})
+    return {'ok': True, 'revision': revision}
+
+
+def upsert_entity(root, coll, entity, base_revision=None, source='api', client_id=None):
+    if not root:
+        raise ValueError('未打开 Forgeworks 项目')
+    if coll not in CONTENT_COLLECTIONS:
+        raise ValueError('不支持的内容集合: %s' % coll)
+    if not isinstance(entity, dict):
+        raise ValueError('entity 必须是对象')
+    entity_id = entity.get('id')
+    if not isinstance(entity_id, str) or not entity_id.strip():
+        raise ValueError('entity.id 必须是非空字符串')
+    if len(entity_id) > 64:
+        raise ValueError('entity.id 不能超过 64 个字符')
+    with _content_lock:
+        current_revision = fw_project.content_revision(root)
+        if _content_conflict(current_revision, base_revision):
+            return {'ok': False, 'conflict': True, 'revision': current_revision,
+                    'error': '项目内容已被其他写入修改，请读取最新内容后重试'}
+        content = fw_project.load_content(root) or {}
+        for name in CONTENT_COLLECTIONS:
+            if not isinstance(content.get(name), list):
+                content[name] = []
+        collection = content[coll]
+        created = True
+        for index, row in enumerate(collection):
+            if isinstance(row, dict) and row.get('id') == entity_id:
+                collection[index] = entity
+                created = False
+                break
+        if created:
+            collection.append(entity)
+        content[coll] = collection
+        fw_project.save_content(root, content)
+        revision = fw_project.content_revision(root)
+    push_event('content.changed', {'root': root, 'revision': revision,
+                                   'source': source, 'clientId': client_id,
+                                   'entity': {'coll': coll, 'id': entity_id, 'op': 'upsert'}})
+    return {'ok': True, 'revision': revision, 'created': created, 'entity': entity}
+
+
+def delete_entity(root, coll, entity_id, base_revision=None, source='api', client_id=None):
+    if not root:
+        raise ValueError('未打开 Forgeworks 项目')
+    if coll not in CONTENT_COLLECTIONS:
+        raise ValueError('不支持的内容集合: %s' % coll)
+    if not isinstance(entity_id, str) or not entity_id.strip():
+        raise ValueError('id 必须是非空字符串')
+    with _content_lock:
+        current_revision = fw_project.content_revision(root)
+        if _content_conflict(current_revision, base_revision):
+            return {'ok': False, 'conflict': True, 'revision': current_revision,
+                    'error': '项目内容已被其他写入修改，请读取最新内容后重试'}
+        content = fw_project.load_content(root) or {}
+        collection = content.get(coll)
+        if not isinstance(collection, list):
+            return {'ok': False, 'notFound': True, 'revision': current_revision,
+                    'error': '实体不存在: %s/%s' % (coll, entity_id)}
+        kept = [row for row in collection
+                if not (isinstance(row, dict) and row.get('id') == entity_id)]
+        if len(kept) == len(collection):
+            return {'ok': False, 'notFound': True, 'revision': current_revision,
+                    'error': '实体不存在: %s/%s' % (coll, entity_id)}
+        content[coll] = kept
+        fw_project.save_content(root, content)
+        revision = fw_project.content_revision(root)
+    push_event('content.changed', {'root': root, 'revision': revision,
+                                   'source': source, 'clientId': client_id,
+                                   'entity': {'coll': coll, 'id': entity_id, 'op': 'delete'}})
+    return {'ok': True, 'revision': revision}
+
+
+# ---------------------------------------------------------------------------
 # Blender 探测（sync-design §2.5：移动硬盘路径候选 + 缓存）
 # ---------------------------------------------------------------------------
 
@@ -1300,7 +1408,8 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             if not root:
                 self._json({'ok': False, 'error': '未打开 Forgeworks 项目'}, 409)
             else:
-                self._json({'ok': True, 'content': fw_project.load_content(root)})
+                self._json({'ok': True, 'content': fw_project.load_content(root),
+                            'revision': fw_project.content_revision(root), 'root': root})
         elif route == 'ue/manifest':
             target = ue_export_root()
             if not target:
@@ -1443,9 +1552,30 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             if not root:
                 self._json({'ok': False, 'error': '未打开 Forgeworks 项目'}, 409)
             else:
+                b = body or {}
+                source, client_id = _content_source(b)
                 try:
-                    fw_project.save_content(root, (body or {}).get('content'))
-                    self._json({'ok': True})
+                    result = save_content_checked(root, b.get('content'), b.get('baseRevision'),
+                                                  source, client_id)
+                    self._json(result, 409 if result.get('conflict') else 200)
+                except ValueError as error:
+                    self._json({'ok': False, 'error': str(error)}, 400)
+        elif route in ('content/entity', 'content/entity/delete'):
+            root = fw_dir()
+            if not root:
+                self._json({'ok': False, 'error': '未打开 Forgeworks 项目'}, 409)
+            else:
+                b = body or {}
+                source, client_id = _content_source(b)
+                try:
+                    if route == 'content/entity':
+                        result = upsert_entity(root, b.get('coll'), b.get('entity'),
+                                               b.get('baseRevision'), source, client_id)
+                    else:
+                        result = delete_entity(root, b.get('coll'), b.get('id'),
+                                               b.get('baseRevision'), source, client_id)
+                    code = 409 if result.get('conflict') else (404 if result.get('notFound') else 200)
+                    self._json(result, code)
                 except ValueError as error:
                     self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'project/pick':

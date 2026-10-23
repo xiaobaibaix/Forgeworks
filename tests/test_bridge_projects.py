@@ -44,6 +44,94 @@ def _write_machine(fw_root, asset_id='M1'):
     manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
 
 
+def _write_content(fw_root, content=None):
+    payload = content or {'items': [], 'recipes': [], 'elements': [], 'machines': [], 'techs': []}
+    (fw_root / 'project.json').write_text(
+        json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    return payload
+
+
+class BridgeContentTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.temp.name)
+        self.old_state = dict(bridge._state)
+        self.old_state_file = bridge.STATE_FILE
+        bridge.STATE_FILE = str(self.workspace / 'bridge-state.json')
+        bridge._state.clear()
+        bridge._state['recentProjects'] = []
+        created = bridge.create_project(str(self.workspace), '内容工程')
+        self.root = Path(created['fwDir'])
+        self.events = []
+        self.old_push = bridge.push_event
+        bridge.push_event = lambda kind, data=None: self.events.append((kind, data))
+
+    def tearDown(self):
+        bridge.push_event = self.old_push
+        bridge._state.clear()
+        bridge._state.update(self.old_state)
+        bridge.STATE_FILE = self.old_state_file
+        self.temp.cleanup()
+
+    def test_revision_blocks_stale_full_write(self):
+        first = _write_content(self.root)
+        revision = fw_project.content_revision(self.root)
+        self.assertTrue(revision)
+
+        changed = dict(first, meta={'name': '新'})
+        saved = bridge.save_content_checked(self.root, changed, revision, 'ui', 'tab-1')
+        self.assertTrue(saved['ok'], saved)
+        self.assertNotEqual(saved['revision'], revision)
+        self.assertEqual(self.events[-1][0], 'content.changed')
+        self.assertEqual(self.events[-1][1]['source'], 'ui')
+        self.assertEqual(self.events[-1][1]['clientId'], 'tab-1')
+
+        stale = bridge.save_content_checked(self.root, first, revision)
+        self.assertTrue(stale['conflict'], stale)
+        self.assertEqual(fw_project.load_content(self.root)['meta']['name'], '新')
+
+    def test_upsert_and_delete_entity(self):
+        _write_content(self.root)
+        created = bridge.upsert_entity(self.root, 'elements',
+                                       {'id': 'Fe', 'name': '铁'}, source='mcp')
+        self.assertTrue(created['ok'], created)
+        self.assertTrue(created['created'])
+
+        updated = bridge.upsert_entity(self.root, 'elements',
+                                       {'id': 'Fe', 'name': '纯铁'}, source='mcp')
+        self.assertTrue(updated['ok'], updated)
+        self.assertFalse(updated['created'])
+        content = fw_project.load_content(self.root)
+        self.assertEqual(content['elements'], [{'id': 'Fe', 'name': '纯铁'}])
+
+        deleted = bridge.delete_entity(self.root, 'elements', 'Fe')
+        self.assertTrue(deleted['ok'], deleted)
+        self.assertEqual(fw_project.load_content(self.root)['elements'], [])
+
+        missing = bridge.delete_entity(self.root, 'elements', 'Fe')
+        self.assertTrue(missing['notFound'], missing)
+        self.assertEqual(self.events[-1][1]['entity']['op'], 'delete')
+
+    def test_upsert_honors_base_revision(self):
+        _write_content(self.root)
+        revision = fw_project.content_revision(self.root)
+        self.assertTrue(bridge.upsert_entity(self.root, 'items', {'id': 'I1'},
+                                             revision)['ok'])
+        conflict = bridge.upsert_entity(self.root, 'items', {'id': 'I2'}, revision)
+        self.assertTrue(conflict['conflict'], conflict)
+        ids = [row['id'] for row in fw_project.load_content(self.root)['items']]
+        self.assertEqual(ids, ['I1'])
+
+    def test_upsert_validates_input(self):
+        _write_content(self.root)
+        with self.assertRaises(ValueError):
+            bridge.upsert_entity(self.root, 'unknown', {'id': 'X'})
+        with self.assertRaises(ValueError):
+            bridge.upsert_entity(self.root, 'items', {'name': '无 ID'})
+        with self.assertRaises(ValueError):
+            bridge.upsert_entity(self.root, 'items', ['not-a-dict'])
+
+
 class BridgeProjectTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

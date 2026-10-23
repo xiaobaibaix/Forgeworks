@@ -635,3 +635,12 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - **迁移**：manifest 增加 `layoutVersion: 2`。Bridge 打开项目/启动时调用 `fw_project.migrate_layout`，按 ID 排序逐个整目录移动（含 `pipeline/`、`.blend`、`.edited.glb`）并即时写回 manifest，可中断重跑；`_Source/Materials` 合并进 `材质`。绑定 UE 目标/发布时调用 `migrate_ue_export` 迁移 `<UE>/Forgeworks/_Source`，目标已存在时保留旧目录并记录，不覆盖。
 - **UE 侧**：`fw_sync.py` 从 `sourceDir` 推导磁盘路径与 `contentPath`，旧 `/Game/Forgeworks/Machines/<ID>/SM_<ID>` 仅在目标不存在时重命名；`fw_registry.py` 递归扫描 `/Game/Forgeworks`，按 `SM_<ID>` 去重并优先中文路径。
 - **状态**：机器改动 `name` 会触发 `contentHash` 变化；物品 `itemIconHash` 也纳入 `name`，改名后会标记待更新并随下次导出移动目录。
+
+## 19. AI 接入：MCP + 安全写入 + 实时同步（2026-10-23）
+
+- **MCP**：新增 `tools/mcp_forgeworks.py`（stdlib stdio JSON-RPC，零依赖），`.mcp.json` 注册项目级 `forgeworks` server；启动 Bridge 后 AI 可读状态、列/读/增删改实体、扫描、发布、读写并运行生成管线。详见 `docs/ai-mcp.md`。
+- **乐观锁**：`GET /api/project/content` 返回 `revision`（`project.json` 字节 sha256）；`POST /api/project/content` 可带 `baseRevision`，不匹配返回 409 且不落盘。
+- **实体接口**：`POST /api/content/entity`、`POST /api/content/entity/delete` 在进程内锁下做单实体 read-modify-write；集合白名单为 elements/items/machines/recipes/techs。
+- **实时同步**：写入成功后广播 `content.changed`（含 `revision`、`source`、`clientId`）。页面忽略自身事件；编辑器打开或本地有待保存改动时延迟同步，其余立即重载重绘。
+- **界面冲突合并**：自动保存带 `baseRevision`；遇到 409 时以最后载入内容为基线做三方合并（单方改动直接采用，双方都改保留本地并提示），用新 revision 重试一次。
+- **验证**：`tests/test_bridge_projects.py` 覆盖 revision/409、实体增删与非法输入；`tests/test_mcp_forgeworks.py` 覆盖 MCP 协议与工具转发。

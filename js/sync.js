@@ -22,10 +22,15 @@ const SYNC = {
   manifest: null,         // 项目 manifest 缓存（Bridge 在线时以它为准）
   ueManifest: null,       // UE 导出目标里的 manifest（只含已发布资产）
   projects: { current: null, recent: [] },   // 当前项目 + 最近打开过的项目
-  content: null,          // 项目内容（project.json 的缓存）
+  content: null,          // 项目内容基线快照（判断本地改了哪些实体）
   contentRoot: null,      // 已载入内容的项目根，防止未载入时用本地数据覆盖项目
+  contentRevision: '',    // 基线对应的 project.json revision（乐观锁）
   contentTimer: null,
+  contentSaving: false,
+  contentStale: false,    // 编辑器打开期间收到的外部修改，关闭后再载入
+  contentReloaded: false, // 本次载入是否真的换掉了内存里的 S（用于首屏补渲染）
   contentSavedAt: 0,
+  clientId: Math.random().toString(36).slice(2) + Date.now().toString(36),
   ueAssets: [],
   conflicts: [],
   lastScan: null,
@@ -40,8 +45,14 @@ async function syncApi(route, body){
         body: JSON.stringify(body) }
     : {};
   const r = await fetch('/api/' + route, opts);
-  if(!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
+  let data = null;
+  try{ data = await r.json(); }catch(_){}
+  if(!r.ok){
+    // 409/404 带结构化错误（如 revision 冲突），交给调用方判断
+    if(data && typeof data === 'object'){ data.httpStatus = r.status; return data; }
+    throw new Error('HTTP ' + r.status);
+  }
+  return data === null ? {} : data;
 }
 
 /** 探测 Bridge（2 秒超时）。不会抛异常，失败只置 online=false。 */
@@ -122,6 +133,12 @@ async function syncLoadConflicts(){
 
 /* ---------- 项目内容（project.json） ---------- */
 
+const SYNC_CONTENT_COLLECTIONS = ['elements','items','machines','recipes','techs'];
+
+function syncCloneJSON(value){
+  return JSON.parse(JSON.stringify(value));
+}
+
 /** 载入项目内容；force=true 时即使已载入也重新读。项目没有内容时保留当前 S。 */
 async function syncLoadProjectContent(force){
   const proj = SYNC.status && SYNC.status.project;
@@ -129,9 +146,12 @@ async function syncLoadProjectContent(force){
   if(!force && SYNC.contentRoot === proj.root) return SYNC.content;
   try{
     const r = await syncApi('project/content');
-    const content = (r && r.ok && r.content) ? r.content : null;
+    if(!r || !r.ok) throw new Error((r && r.error) || '读取失败');
+    const content = r.content || null;
+    const previous = JSON.stringify(S);
     SYNC.contentRoot = proj.root;
-    SYNC.content = content;
+    SYNC.contentRevision = r.revision || '';
+    SYNC.contentStale = false;
     if(content && Array.isArray(content.items) && Array.isArray(content.recipes)){
       S = content;
       normalizeAssets(S);
@@ -139,12 +159,97 @@ async function syncLoadProjectContent(force){
       if(typeof clearCostCache === 'function') clearCostCache();
       if(typeof clearIconCache === 'function') clearIconCache();
     }
+    SYNC.contentReloaded = !!content && JSON.stringify(S) !== previous;
+    // 基线必须与 S 分离，否则编辑会同时改掉基线，三方合并失效
+    if(content){
+      SYNC.content = syncCloneJSON(content);
+      normalizeAssets(SYNC.content);
+    }else{
+      SYNC.content = null;
+    }
     return content;
   }catch(e){
     SYNC.contentRoot = null;
     syncLog('读取项目内容失败，暂时只保存到浏览器：' + e.message, 'warn');
     return null;
   }
+}
+
+function syncEntityMap(list){
+  const map = {};
+  (Array.isArray(list) ? list : []).forEach(function(row){
+    if(row && row.id != null) map[String(row.id)] = row;
+  });
+  return map;
+}
+
+/** 单集合三方合并：以最后载入的内容为基线，本地改动优先于远端冲突。 */
+function syncMergeCollection(coll, baseContent, latestContent){
+  const baseList = Array.isArray(baseContent[coll]) ? baseContent[coll] : [];
+  const localList = Array.isArray(S[coll]) ? S[coll] : baseList;
+  const latestList = Array.isArray(latestContent[coll]) ? latestContent[coll] : [];
+  const baseJson = JSON.stringify(baseList);
+  const localJson = JSON.stringify(localList);
+  const latestJson = JSON.stringify(latestList);
+  if(localJson === baseJson) return { list: latestList, conflicts: 0 };
+  if(latestJson === baseJson) return { list: localList, conflicts: 0 };
+
+  const base = syncEntityMap(baseList);
+  const local = syncEntityMap(localList);
+  const remote = syncEntityMap(latestList);
+  const ids = [];
+  const seen = {};
+  latestList.concat(localList).forEach(function(row){
+    if(!row || row.id == null) return;
+    const key = String(row.id);
+    if(!seen[key]){ seen[key] = true; ids.push(key); }
+  });
+  const out = [];
+  let conflicts = 0;
+  ids.forEach(function(key){
+    const hasBase = Object.prototype.hasOwnProperty.call(base, key);
+    const hasLocal = Object.prototype.hasOwnProperty.call(local, key);
+    const hasRemote = Object.prototype.hasOwnProperty.call(remote, key);
+    const baseValue = hasBase ? JSON.stringify(base[key]) : null;
+    const localValue = hasLocal ? JSON.stringify(local[key]) : null;
+    const remoteValue = hasRemote ? JSON.stringify(remote[key]) : null;
+    if(localValue === baseValue){
+      if(hasRemote) out.push(remote[key]);
+    }else if(remoteValue === baseValue){
+      if(hasLocal) out.push(local[key]);
+    }else if(hasLocal){
+      out.push(local[key]);
+      if(hasRemote) conflicts += 1;
+    }else if(hasRemote){
+      out.push(remote[key]);
+    }
+  });
+  return { list: out, conflicts: conflicts };
+}
+
+/** 409 后用最新远端内容合并本地修改，返回双方都改过的实体数。 */
+function syncMergeContent(latest){
+  if(!latest || typeof latest !== 'object') return 0;
+  const base = (SYNC.content && typeof SYNC.content === 'object') ? SYNC.content : {};
+  const merged = syncCloneJSON(latest);
+  let conflicts = 0;
+  SYNC_CONTENT_COLLECTIONS.forEach(function(coll){
+    const result = syncMergeCollection(coll, base, latest);
+    merged[coll] = result.list;
+    conflicts += result.conflicts;
+  });
+  Object.keys(S).forEach(function(key){
+    if(!(key in merged)) merged[key] = S[key];
+  });
+  S = merged;
+  normalizeAssets(S);
+  syncSaveLocal();
+  if(typeof clearCostCache === 'function') clearCostCache();
+  if(typeof clearIconCache === 'function') clearIconCache();
+  const baseCopy = syncCloneJSON(latest);
+  normalizeAssets(baseCopy);
+  SYNC.content = baseCopy;
+  return conflicts;
 }
 
 function syncSaveLocal(){
@@ -162,20 +267,65 @@ function syncScheduleContentSave(){
   return true;
 }
 
-async function syncFlushContent(){
+async function syncFlushContent(retried){
   if(SYNC.contentTimer){ clearTimeout(SYNC.contentTimer); SYNC.contentTimer = null; }
   const root = SYNC.contentRoot;
   const proj = SYNC.status && SYNC.status.project;
   if(!SYNC.online || !root || !proj || proj.root !== root) return { ok:false, skipped:true };
+  SYNC.contentSaving = true;
   try{
-    const r = await syncApi('project/content', { content: S });
-    if(r && r.ok){ SYNC.contentSavedAt = Date.now(); SYNC.content = S; return r; }
+    const r = await syncApi('project/content', {
+      content: S,
+      baseRevision: SYNC.contentRevision,
+      source: 'ui',
+      clientId: SYNC.clientId,
+    });
+    if(r && r.ok){
+      SYNC.contentRevision = r.revision || SYNC.contentRevision;
+      SYNC.contentSavedAt = Date.now();
+      SYNC.content = syncCloneJSON(S);
+      SYNC.contentStale = false;
+      return r;
+    }
+    if(r && r.conflict && !retried){
+      const latest = await syncApi('project/content');
+      if(latest && latest.ok){
+        const conflicts = syncMergeContent(latest.content);
+        SYNC.contentRevision = latest.revision || '';
+        if(typeof render === 'function') render();
+        if(conflicts && typeof toast === 'function'){
+          toast('已合并外部修改；' + conflicts + ' 个实体双方都改过，保留本地版本');
+        }
+        syncLog('项目内容被外部修改，已合并后重试保存', 'warn');
+        return await syncFlushContent(true);
+      }
+    }
     syncLog('项目内容保存失败：' + ((r && r.error) || '未知错误'), 'warn');
     return r;
   }catch(e){
     syncLog('项目内容保存失败：' + e.message, 'warn');
     return { ok:false, error: e.message };
+  }finally{
+    SYNC.contentSaving = false;
   }
+}
+
+/** 外部写入后重新载入内容；仅在编辑器关闭且无待保存改动时调用。 */
+async function syncReloadContent(reason){
+  if(!SYNC.online) return;
+  const content = await syncLoadProjectContent(true);
+  if(!content) return;
+  if(typeof render === 'function') render();
+  if(typeof toast === 'function') toast('已载入最新项目内容');
+  syncLog((reason || '外部修改') + '：已同步最新内容', 'ok');
+}
+
+/** 弹窗关闭后补上编辑器打开期间跳过的外部更新。 */
+function syncResumeAfterModal(){
+  if(!SYNC.contentStale) return;
+  if(SYNC.contentTimer) return;    // 本地还有待保存改动，交给保存时的合并处理
+  SYNC.contentStale = false;
+  syncReloadContent('外部修改');
 }
 
 /** 立即保存（浏览器本地备份 + 项目文件）。 */
@@ -712,12 +862,22 @@ function syncWatchEvents(onEvent){
       let ev = null;
       try{ ev = JSON.parse(e.data); }catch(_){}
       if(!ev) return;
+      // 自己保存触发的事件不重复处理，避免每次自动保存都打断界面
+      if(ev.kind === 'content.changed' && ev.data && ev.data.clientId === SYNC.clientId) return;
       syncLogEvent(ev);
       // 项目或 manifest 变了 → 刷新缓存（另一处界面/外部脚本触发的）
       if(ev.kind === 'project.opened' || ev.kind === 'project.created' || ev.kind === 'project.unbound'
           || ev.kind === 'project.ue_target'){
         Promise.all([syncLoadProjects(), syncLoadProjectContent(true), syncLoadManifest(), syncLoadUEManifest()])
           .then(function(){ if(onEvent) onEvent(ev); });
+      }else if(ev.kind === 'content.changed'){
+        if(SYNC.contentSaving || (typeof modalState !== 'undefined' && modalState) || SYNC.contentTimer){
+          SYNC.contentStale = true;
+          syncLog('检测到外部内容修改，编辑器关闭后同步', 'warn');
+          if(onEvent) onEvent(ev);
+        }else{
+          syncReloadContent('AI/外部修改').then(function(){ if(onEvent) onEvent(ev); });
+        }
       }else if(ev.kind === 'manifest.scanned' || ev.kind === 'asset.exported'
           || ev.kind === 'asset.published' || ev.kind === 'asset.conflict'
           || ev.kind === 'asset.conflict_resolved'){
@@ -745,6 +905,7 @@ function syncLogEvent(ev){
     'asset.exported':   ['资产已导出：' + (ev.data && ev.data.id || ''), 'ok'],
     'asset.published':  ['已导出到 UE：' + ((ev.data && ev.data.assets) || []).join('、'), 'ok'],
     'manifest.scanned': ['目录核对完成', 'info'],
+    'content.changed':  ['项目内容已由 ' + ((ev.data && ev.data.source) || '外部') + ' 更新', 'info'],
   };
   const m = map[ev.kind] || [ev.kind, 'info'];
   syncLog(m[0], m[1]);

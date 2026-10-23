@@ -44,7 +44,11 @@ VIEWS = makeViews();
       });
     }
     // 探测结束（无论在线与否）都要替换掉首帧的「正在连接」占位
-    if(cur !== 'sync' && cur !== 'project' && cur !== 'pipeline') return;
+    if(cur !== 'sync' && cur !== 'project' && cur !== 'pipeline'){
+      // 首帧用的是 localStorage 旧数据；项目内容确实变了才补一次渲染
+      if(online && SYNC.contentReloaded && !(typeof modalState !== 'undefined' && modalState)) render();
+      return;
+    }
     if(online && cur === 'project' && typeof providerLoad === 'function' && !PROVIDERS.loadedAt){
       // 先取回 Provider 状态再渲染，避免项目页整页重绘两次
       providerLoad().catch(function(){}).then(function(){ if(cur === 'project') render(); });

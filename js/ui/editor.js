@@ -27,7 +27,10 @@ function openEditor(coll, id){
   };
   renderEditorForm(coll, d, isNew);
 }
-function closeModal(){ document.getElementById('mask').classList.add('hide'); modalState=null; }
+function closeModal(){
+  document.getElementById('mask').classList.add('hide'); modalState=null;
+  if(typeof syncResumeAfterModal === 'function') syncResumeAfterModal();
+}
 
 /** 表单快照与图标待保存状态，用于判断进入管线前是否真有未保存修改 */
 function editorFormSnapshot(names){

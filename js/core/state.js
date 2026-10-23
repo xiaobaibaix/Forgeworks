@@ -10,6 +10,9 @@ let modalState = null;
  * 这里补齐默认值，避免各视图到处判空。
  */
 function normalizeAssets(target){
+  ['elements','items','machines','recipes','techs'].forEach(k=>{
+    if(!Array.isArray(target[k])) target[k]=[];   // MCP 可能只写入部分集合
+  });
   (target.items||[]).forEach(it=>{
     if(typeof it.icon !== 'string') it.icon = '';                    // '' = 使用自动生成图标
     if(typeof it.mesh !== 'string') it.mesh = '';                    // UE 静态网格路径

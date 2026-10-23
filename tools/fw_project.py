@@ -275,6 +275,15 @@ def load_content(root):
     return content if isinstance(content, dict) else None
 
 
+def content_revision(root):
+    """project.json 字节指纹，供界面与 MCP 做乐观锁；文件不存在时返回空串。"""
+    try:
+        with open(content_path(root), 'rb') as stream:
+            return hashlib.sha256(stream.read()).hexdigest()
+    except OSError:
+        return ''
+
+
 def save_content(root, content):
     if not is_project(root):
         raise ValueError('未打开 Forgeworks 项目')
