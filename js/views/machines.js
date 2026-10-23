@@ -15,6 +15,7 @@ function renderMachines(){
   const showSync = SYNC.online && SYNC.status && SYNC.status.project;
 
   const cols = [
+    {t:'图标',w:'54px',f:r=>isoPreview(r, 0, 40)},
     {t:'ID',w:'150px',f:r=>`<code>${r.id}</code>`},
     {t:'名称',w:'130px',f:r=>r.name},
     {t:'分类',w:'80px',f:r=>`<span class="pill">${r.cat}</span>`},
