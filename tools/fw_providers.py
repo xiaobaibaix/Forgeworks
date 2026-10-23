@@ -33,7 +33,17 @@ def _request(url, api_key, payload=None, timeout=30):
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read(MAX_JSON_BYTES + 1)
     except urllib.error.HTTPError as error:
-        raise RuntimeError('Provider HTTP %s' % error.code) from None
+        raw = error.read(MAX_JSON_BYTES)
+        try:
+            parsed = json.loads(raw.decode('utf-8'))
+        except (UnicodeDecodeError, ValueError):
+            parsed = {}
+        if not isinstance(parsed, dict) or not parsed.get('message'):
+            raise RuntimeError('Provider HTTP %s' % error.code) from None
+        detail = 'Tripo %s（HTTP %s）：%s' % (parsed.get('code') or '', error.code, parsed['message'])
+        if parsed.get('suggestion'):
+            detail += '。%s' % parsed['suggestion']
+        raise RuntimeError(detail[:400]) from None
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError('Provider 请求失败：%s' % type(error).__name__) from None
     if len(body) > MAX_JSON_BYTES:

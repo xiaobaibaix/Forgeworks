@@ -1,3 +1,4 @@
+import io
 import json
 import sqlite3
 import sys
@@ -202,6 +203,31 @@ class ProviderConnectionTest(unittest.TestCase):
     def test_rejects_unknown_provider(self):
         with self.assertRaises(ValueError):
             fw_providers.test_connection({}, 'openai')
+
+
+class ProviderErrorTest(unittest.TestCase):
+    def test_tripo_error_body_is_surfaced(self):
+        body = json.dumps({'code': 2010, 'status': 'error',
+                           'message': "You don't have enough credit to create this task",
+                           'suggestion': 'Please purchase more credit'}).encode()
+        error = urllib.error.HTTPError('https://openapi.tripo3d.ai/v3/generation/text-to-image',
+                                       403, 'Forbidden', {}, io.BytesIO(body))
+        with mock.patch.object(fw_providers.urllib.request, 'urlopen', side_effect=error):
+            with self.assertRaises(RuntimeError) as raised:
+                fw_providers._request('https://openapi.tripo3d.ai/v3/generation/text-to-image',
+                                      'k', {'prompt': 'x'})
+        message = str(raised.exception)
+        self.assertIn('Tripo 2010', message)
+        self.assertIn('HTTP 403', message)
+        self.assertIn('credit', message)
+
+    def test_tripo_error_without_json_keeps_status(self):
+        error = urllib.error.HTTPError('https://openapi.tripo3d.ai/v3/generation/text-to-image',
+                                       403, 'Forbidden', {}, io.BytesIO(b'not json'))
+        with mock.patch.object(fw_providers.urllib.request, 'urlopen', side_effect=error):
+            with self.assertRaises(RuntimeError) as raised:
+                fw_providers._request('https://openapi.tripo3d.ai/v3/generation/text-to-image', 'k', {})
+        self.assertEqual(str(raised.exception), 'Provider HTTP 403')
 
 
 if __name__ == '__main__':
