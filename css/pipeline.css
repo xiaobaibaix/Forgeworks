@@ -44,6 +44,19 @@
 .pipeline-node.selected{border-color:var(--brand);z-index:3;
   box-shadow:0 0 0 2px rgba(194,65,12,.16),0 14px 30px -16px rgba(43,40,34,.6)}
 .pipeline-node.dragging{z-index:4}
+.pipeline-node.is-running{border-color:var(--brand);animation:pipeline-node-pulse 1.6s ease-in-out infinite}
+.pipeline-node.is-running header span{color:var(--brand)}
+@keyframes pipeline-node-pulse{
+  0%,100%{box-shadow:0 0 0 2px rgba(194,65,12,.14),0 10px 26px -16px rgba(43,40,34,.55)}
+  50%{box-shadow:0 0 0 5px rgba(194,65,12,.24),0 16px 34px -14px rgba(43,40,34,.62)}
+}
+.pipeline-canvas>svg path.pipeline-edge-active{stroke:var(--brand);stroke-width:2.6;opacity:.95;
+  stroke-dasharray:9 6;animation:pipeline-wire-flow .9s linear infinite}
+@keyframes pipeline-wire-flow{to{stroke-dashoffset:-15}}
+@media(prefers-reduced-motion:reduce){
+  .pipeline-node.is-running{animation:none}
+  .pipeline-canvas>svg path.pipeline-edge-active{animation:none}
+}
 .pipeline-node header{display:flex;justify-content:space-between;gap:8px;align-items:center;
   font-size:12px;padding-bottom:6px;margin-bottom:2px;border-bottom:1px solid var(--border);
   cursor:grab;touch-action:none}
@@ -77,6 +90,16 @@
 .pipeline-stage{color:var(--text-2)!important;background:var(--panel-2);border:1px solid var(--border);
   border-radius:5px;padding:3px 6px;line-height:1.45}
 .pipeline-error{color:var(--red);line-height:1.4}
+.pipeline-history{margin-top:6px;font-size:10px;color:var(--text-3)}
+.pipeline-history summary{cursor:pointer;font-family:var(--mono);color:var(--text-2);padding:3px 0}
+.pipeline-history-list{display:flex;flex-direction:column;gap:4px;margin-top:4px;max-height:150px;overflow:auto}
+.pipeline-history-item{display:flex;align-items:center;gap:6px;padding:3px 5px;border-radius:5px;
+  background:var(--panel-2);border:1px solid var(--border);color:var(--text-2);text-decoration:none}
+.pipeline-history-item:hover{border-color:var(--brand);color:var(--brand)}
+.pipeline-history-item img{width:30px;height:30px;object-fit:cover;border-radius:3px;flex:0 0 30px}
+.pipeline-history-item span{display:flex;flex-direction:column;gap:1px;min-width:0;
+  font-family:var(--mono);font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pipeline-history-item em{font-style:normal;color:var(--text-3)}
 .pipeline-output{display:inline-block;margin-top:6px;font-size:10px;color:var(--brand);text-decoration:none}
 .pipeline-output:hover{text-decoration:underline}
 .pipeline-node-media{margin:7px 0 0;border:1px solid var(--border);border-radius:7px;overflow:hidden;

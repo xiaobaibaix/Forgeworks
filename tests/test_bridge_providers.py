@@ -168,6 +168,39 @@ class CcSwitchImportTest(unittest.TestCase):
         self.assertEqual(bridge.ccswitch_candidates(str(self.base / 'nope.db')), [])
 
 
+class PipelineTaskOutputTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = self.tmp.name
+        self.task = {'taskId': 'arkimg_abc123', 'state': 'success', 'provider': 'ark',
+                     'output': {'generated_image_url': 'https://ark-content.volces.com/x.png'}}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_synchronous_image_is_stored_immediately(self):
+        with mock.patch.object(bridge.fw_providers, 'download_image',
+                               return_value=(b'\x89PNG\r\n\x1a\n', 'png')):
+            task = bridge.store_task_output(self.root, 'Fe', 'element', 'textToImage', self.task)
+        path = Path(self.root) / '_Source' / '元素' / 'Fe' / 'pipeline' / 'outputs' / 'image_arkimg_abc123.png'
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.read_bytes(), b'\x89PNG\r\n\x1a\n')
+        self.assertEqual(task['output']['imagePath'], 'outputs/image_arkimg_abc123.png')
+        self.assertNotIn('generated_image_url', task['output'])
+
+    def test_download_failure_keeps_remote_url(self):
+        with mock.patch.object(bridge.fw_providers, 'download_image',
+                               side_effect=RuntimeError('boom')):
+            task = bridge.store_task_output(self.root, 'Fe', 'element', 'textToImage', self.task)
+        self.assertEqual(task['output'], {'generated_image_url': 'https://ark-content.volces.com/x.png'})
+
+    def test_non_image_nodes_are_untouched(self):
+        with mock.patch.object(bridge.fw_providers, 'download_image') as download:
+            task = bridge.store_task_output(self.root, 'Fe', 'element', 'imageTo3D', self.task)
+        download.assert_not_called()
+        self.assertEqual(task, self.task)
+
+
 class ProviderConnectionTest(unittest.TestCase):
     def test_unconfigured_provider_reports_missing_key(self):
         result = fw_providers.test_connection({}, 'ark')

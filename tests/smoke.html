@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261023p">
-<link rel="stylesheet" href="../css/layout.css?v=20261023p">
-<link rel="stylesheet" href="../css/components.css?v=20261023p">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261023p">
+<link rel="stylesheet" href="../css/theme.css?v=20261023q">
+<link rel="stylesheet" href="../css/layout.css?v=20261023q">
+<link rel="stylesheet" href="../css/components.css?v=20261023q">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261023q">
 </head>
 <body>
 <div class="app">
@@ -51,65 +51,65 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261023p"></script>
-<script src="../js/core/color.js?v=20261023p"></script>
-<script src="../js/data/styles.js?v=20261023p"></script>
-<script src="../js/data/seed.js?v=20261023p"></script>
-<script src="../js/data/prompts.js?v=20261023p"></script>
+<script src="../js/core/config.js?v=20261023q"></script>
+<script src="../js/core/color.js?v=20261023q"></script>
+<script src="../js/data/styles.js?v=20261023q"></script>
+<script src="../js/data/seed.js?v=20261023q"></script>
+<script src="../js/data/prompts.js?v=20261023q"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261023p"></script>
-<script src="../js/core/lookup.js?v=20261023p"></script>
-<script src="../js/core/style.js?v=20261023p"></script>
+<script src="../js/core/state.js?v=20261023q"></script>
+<script src="../js/core/lookup.js?v=20261023q"></script>
+<script src="../js/core/style.js?v=20261023q"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261023p"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261023p"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261023p"></script>
-<script src="../js/vendor/GLTFLoader.js?v=20261023p"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261023p"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261023p"></script>
+<script src="../js/vendor/three.min.js?v=20261023q"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261023q"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261023q"></script>
+<script src="../js/vendor/GLTFLoader.js?v=20261023q"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261023q"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261023q"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261023p"></script>
-<script src="../js/engines/material-textures.js?v=20261023p"></script>
-<script src="../js/engines/asset-layers.js?v=20261023p"></script>
-<script src="../js/engines/viewer3d.js?v=20261023p"></script>
-<script src="../js/views/editor3d.js?v=20261023p"></script>
-<script src="../js/engines/validate.js?v=20261023p"></script>
-<script src="../js/engines/solver.js?v=20261023p"></script>
-<script src="../js/engines/balance.js?v=20261023p"></script>
-<script src="../js/engines/csv.js?v=20261023p"></script>
-<script src="../js/core/io.js?v=20261023p"></script>
-<script src="../js/sync.js?v=20261023p"></script>
-<script src="../js/pipeline.js?v=20261023p"></script>
-<script src="../js/pipeline-templates.js?v=20261023p"></script>
+<script src="../js/engines/icons.js?v=20261023q"></script>
+<script src="../js/engines/material-textures.js?v=20261023q"></script>
+<script src="../js/engines/asset-layers.js?v=20261023q"></script>
+<script src="../js/engines/viewer3d.js?v=20261023q"></script>
+<script src="../js/views/editor3d.js?v=20261023q"></script>
+<script src="../js/engines/validate.js?v=20261023q"></script>
+<script src="../js/engines/solver.js?v=20261023q"></script>
+<script src="../js/engines/balance.js?v=20261023q"></script>
+<script src="../js/engines/csv.js?v=20261023q"></script>
+<script src="../js/core/io.js?v=20261023q"></script>
+<script src="../js/sync.js?v=20261023q"></script>
+<script src="../js/pipeline.js?v=20261023q"></script>
+<script src="../js/pipeline-templates.js?v=20261023q"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261023p"></script>
-<script src="../js/ui/router.js?v=20261023p"></script>
-<script src="../js/ui/editor.js?v=20261023p"></script>
-<script src="../js/ui/providers.js?v=20261023p"></script>
+<script src="../js/ui/table.js?v=20261023q"></script>
+<script src="../js/ui/router.js?v=20261023q"></script>
+<script src="../js/ui/editor.js?v=20261023q"></script>
+<script src="../js/ui/providers.js?v=20261023q"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261023p"></script>
-<script src="../js/views/elements.js?v=20261023p"></script>
-<script src="../js/views/items.js?v=20261023p"></script>
-<script src="../js/views/machines.js?v=20261023p"></script>
-<script src="../js/views/recipes.js?v=20261023p"></script>
-<script src="../js/views/techs.js?v=20261023p"></script>
-<script src="../js/views/assets.js?v=20261023p"></script>
-<script src="../js/views/validate.js?v=20261023p"></script>
-<script src="../js/views/balance.js?v=20261023p"></script>
-<script src="../js/views/solve.js?v=20261023p"></script>
-<script src="../js/views/graph.js?v=20261023p"></script>
-<script src="../js/views/sync.js?v=20261023p"></script>
-<script src="../js/views/project.js?v=20261023p"></script>
-<script src="../js/views/pipeline.js?v=20261023p"></script>
-<script src="../js/views/export.js?v=20261023p"></script>
+<script src="../js/views/style.js?v=20261023q"></script>
+<script src="../js/views/elements.js?v=20261023q"></script>
+<script src="../js/views/items.js?v=20261023q"></script>
+<script src="../js/views/machines.js?v=20261023q"></script>
+<script src="../js/views/recipes.js?v=20261023q"></script>
+<script src="../js/views/techs.js?v=20261023q"></script>
+<script src="../js/views/assets.js?v=20261023q"></script>
+<script src="../js/views/validate.js?v=20261023q"></script>
+<script src="../js/views/balance.js?v=20261023q"></script>
+<script src="../js/views/solve.js?v=20261023q"></script>
+<script src="../js/views/graph.js?v=20261023q"></script>
+<script src="../js/views/sync.js?v=20261023q"></script>
+<script src="../js/views/project.js?v=20261023q"></script>
+<script src="../js/views/pipeline.js?v=20261023q"></script>
+<script src="../js/views/export.js?v=20261023q"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261023p"></script>
+<script src="../js/main.js?v=20261023q"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -492,6 +492,40 @@
         return '图像占位 + 生成图 + 模型预览';
       } finally {
         window.pipelineBridgeReady = prevReady;
+        PIPELINE.assetId = prevAsset;
+        PIPELINE.kind = prevKind;
+      }
+    });
+
+    check('管线生成中动效与历史版本', function(){
+      var prevGraph = PIPELINE.graph, prevRemote = PIPELINE.remote, prevReady = window.pipelineBridgeReady;
+      var prevAsset = PIPELINE.assetId, prevKind = PIPELINE.kind;
+      window.pipelineBridgeReady = function(){ return true; };
+      PIPELINE.remote = {};
+      PIPELINE.assetId = 'probe';
+      PIPELINE.kind = 'item';
+      try {
+        var running = {id:'image', type:'textToImage', x:0, y:0, params:{},
+          result:{providerTask:{state:'running', progress:42}}};
+        var html = pipelineNodeCard(running);
+        if(html.indexOf('is-running') < 0) return '缺少生成中高亮 class';
+        if(html.indexOf('生成中 42%') < 0) return '缺少生成中进度文案';
+        if(html.indexOf('生成中…') < 0) return '缺少生成中占位';
+        PIPELINE.graph = {nodes:[{id:'prompt', type:'prompt', x:0, y:0, params:{text:''}}, running],
+          edges:[{from:'prompt', out:'text', to:'image', in:'text'}]};
+        if(pipelineEdgeSvg().indexOf('pipeline-edge-active') < 0) return '连线缺少流动动画 class';
+        var historyHTML = pipelineNodeCard({id:'image', type:'textToImage', x:0, y:0, params:{},
+          result:{providerTask:{state:'success', output:{imagePath:'outputs/new.png'}},
+            history:[{taskId:'task_old', state:'success', submittedAt:1700000000,
+              output:{imagePath:'outputs/old.png'}}]}});
+        if(historyHTML.indexOf('历史版本 1') < 0) return '历史版本未列出';
+        if(historyHTML.indexOf('/api/pipeline/output/probe/old.png?kind=item') < 0) return '历史图片链接缺失';
+        if(historyHTML.indexOf('旧版本') >= 0) return '仍在使用旧的历史文案';
+        return '生成中高亮 + 连线流动 + 历史版本';
+      } finally {
+        window.pipelineBridgeReady = prevReady;
+        PIPELINE.graph = prevGraph;
+        PIPELINE.remote = prevRemote;
         PIPELINE.assetId = prevAsset;
         PIPELINE.kind = prevKind;
       }

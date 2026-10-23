@@ -1,4 +1,4 @@
-const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null};
+const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}};
 const PIPELINE_STORE_PREFIX = 'fw.pipeline.';
 
 const PIPELINE_NODE_LABELS = {
@@ -399,7 +399,11 @@ function pipelineEdgePath(edge){
 }
 
 function pipelineEdgeSvg(){
-  return PIPELINE.graph.edges.map(edge => `<path d="${pipelineEdgePath(edge)}"/>`).join('');
+  const active = new Set(PIPELINE.graph.nodes.filter(node => pipelineNodeBusy(node)).map(node => node.id));
+  return PIPELINE.graph.edges.map(edge => {
+    const hot = active.has(edge.from) || active.has(edge.to);
+    return `<path${hot ? ' class="pipeline-edge-active"' : ''} d="${pipelineEdgePath(edge)}"/>`;
+  }).join('');
 }
 
 function pipelinePaintEdges(){
@@ -744,25 +748,108 @@ function pipelineNodeProvider(node){
   return configured[0]||wanted||'tripo';
 }
 
+const PIPELINE_STATE_LABELS = {dirty:'待运行', blocked:'阻塞', queued:'排队中', running:'生成中',
+  success:'完成', done:'完成', failed:'失败', cancelled:'已取消', banned:'已封禁', submitting:'提交中'};
+
+function pipelineStateLabel(state, progress){
+  const label = PIPELINE_STATE_LABELS[state] || state || '';
+  return progress != null && (state === 'queued' || state === 'running') ? label + ' ' + progress + '%' : label;
+}
+
+function pipelineNodeState(node){
+  const transient = node && PIPELINE.remote[node.id];
+  if(transient) return transient;
+  const task = node && node.result && node.result.providerTask;
+  if(task && task.state) return task.state;
+  return node && node.result && node.result.state || 'dirty';
+}
+
+function pipelineNodeBusy(node){
+  return ['submitting', 'queued', 'running'].includes(pipelineNodeState(node));
+}
+
+function pipelinePollKey(assetId, kind, nodeId){
+  return assetId + '|' + kind + '|' + nodeId;
+}
+
+function pipelineRefreshNode(nodeId){
+  if(cur !== 'pipeline' || !PIPELINE.graph) return;
+  const node = PIPELINE.graph.nodes.find(item => item.id === nodeId);
+  if(!node) return;
+  const card = [...document.querySelectorAll('.pipeline-node')].find(item => item.dataset.node === nodeId);
+  if(!card) return;
+  card.outerHTML = pipelineNodeCard(node);
+  const next = [...document.querySelectorAll('.pipeline-node')].find(item => item.dataset.node === nodeId);
+  if(next) pipelineWireCard(next);
+  pipelinePaintEdges();
+  pipelinePaintMeta();
+}
+
+function pipelinePollLoop(assetId, kind, nodeId, attempt, delay){
+  const key = pipelinePollKey(assetId, kind, nodeId);
+  if(PIPELINE.pollers[key]) return;
+  PIPELINE.pollers[key] = setTimeout(async () => {
+    delete PIPELINE.pollers[key];
+    if(!pipelineBridgeReady()) return;
+    try{
+      const result = await pipelineApi('pipeline/provider/poll', {assetId, kind, nodeId});
+      const task = result.task || {};
+      const current = PIPELINE.assetId === assetId && PIPELINE.kind === kind;
+      if(current){
+        PIPELINE.graph = result.graph;
+        pipelineRefreshNode(nodeId);
+      }
+      if(task.state === 'queued' || task.state === 'running'){
+        pipelinePollLoop(assetId, kind, nodeId, 0, 4000);
+        return;
+      }
+      if(current){
+        const label = task.provider === 'ark' ? 'Ark' : (task.provider === 'tripo' ? 'Tripo' : 'Provider');
+        toast(task.state === 'success'
+          ? label + ' 生成完成'
+          : label + ' 任务' + pipelineStateLabel(task.state) + (task.error ? '：' + task.error : ''));
+      }
+    }catch(error){
+      if(attempt < 3) pipelinePollLoop(assetId, kind, nodeId, attempt + 1, 5000);
+      else toast('查询远程任务失败：' + error.message);
+    }
+  }, delay == null ? 1500 : delay);
+}
+
+function pipelineTrackRemote(nodeId){
+  const key = pipelinePollKey(PIPELINE.assetId, PIPELINE.kind, nodeId);
+  if(PIPELINE.pollers[key]){ clearTimeout(PIPELINE.pollers[key]); delete PIPELINE.pollers[key]; }
+  pipelinePollLoop(PIPELINE.assetId, PIPELINE.kind, nodeId, 0);
+}
+
 async function pipelineSubmitRemote(nodeId){
   const node=PIPELINE.graph.nodes.find(item=>item.id===nodeId);
   if(!node || !['textToImage','imageTo3D'].includes(node.type)) return;
   if(!pipelineBridgeReady()){toast('远程提交需要 Bridge 在线并绑定项目');return;}
   const provider=pipelineNodeProvider(node);
   const info=PIPELINE.providers[provider];
-  if(!info || !info.configured){toast(`先在 tools/bridge_config.json 配置 ${provider} API key`);return;}
+  if(!info || !info.configured){toast(`先在「项目」页配置 ${provider} API key`);return;}
   const label=provider==='ark'?'火山方舟 Ark':'Tripo';
   const model=provider==='ark'?(node.type==='textToImage'?'Seedream 5.0 Pro':'Seed3D 2.0'):(node.type==='textToImage'?'Seedream v5':'v3.1');
   const estimated=provider==='ark'?0:(node.type==='textToImage'?5:(node.params.texture?40:30));
   const price=estimated?`，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）`:'';
   if(!window.confirm(`此操作会调用 ${label}（${model}）${price}；最终以任务实耗为准。现在提交？`)) return;
+  PIPELINE.remote[nodeId]='submitting';
+  pipelineRefreshNode(nodeId);
   try{
     await pipelineSave();
     const result=await pipelineApi('pipeline/provider/submit',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId,confirmRemote:true});
     PIPELINE.graph=result.graph;
-    toast(`已提交 ${label} 任务：`+result.taskId);
-    renderPipelineView();
-  }catch(error){toast(error.message);}
+    delete PIPELINE.remote[nodeId];
+    const task=((PIPELINE.graph.nodes.find(item=>item.id===nodeId)||{}).result||{}).providerTask||{};
+    toast(task.state==='success' ? `${label} 生成完成` : `已提交 ${label} 任务：${task.taskId||result.taskId}`);
+    pipelineRefreshNode(nodeId);
+    if(task.state==='queued'||task.state==='running') pipelineTrackRemote(nodeId);
+  }catch(error){
+    delete PIPELINE.remote[nodeId];
+    pipelineRefreshNode(nodeId);
+    toast(error.message);
+  }
 }
 
 async function pipelinePollRemote(nodeId){
@@ -770,9 +857,11 @@ async function pipelinePollRemote(nodeId){
   try{
     const result=await pipelineApi('pipeline/provider/poll',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId});
     PIPELINE.graph=result.graph;
-    const label=result.task&&result.task.provider==='ark'?'Ark':(result.task&&result.task.provider==='tripo'?'Tripo':'Provider');
-    toast(label+' 状态：'+result.task.state+(result.task.progress!=null?' · '+result.task.progress+'%':''));
-    renderPipelineView();
+    const task=result.task||{};
+    const label=task.provider==='ark'?'Ark':(task.provider==='tripo'?'Tripo':'Provider');
+    toast(label+' 状态：'+pipelineStateLabel(task.state, task.progress));
+    pipelineRefreshNode(nodeId);
+    if(task.state==='queued'||task.state==='running') pipelineTrackRemote(nodeId);
   }catch(error){toast(error.message);}
 }
 
@@ -941,12 +1030,15 @@ function pipelineOutputURL(file){
 }
 
 function pipelineNodeCard(node){
-  const state = node.result && node.result.providerTask && node.result.providerTask.state || node.result && node.result.state || 'dirty';
+  const state = pipelineNodeState(node);
+  const busy = pipelineNodeBusy(node);
   const selected = PIPELINE.selected === node.id;
+  const task = node.result && node.result.providerTask;
+  const progress = task && task.progress;
   const params = node.type === 'prompt'
     ? `<textarea data-param="text" rows="3" placeholder="输入模型描述词">${pipelineEscape(node.params.text || '')}</textarea>`
     : `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
-  const taskOutput=node.result&&node.result.providerTask&&node.result.providerTask.output||node.result&&node.result.output||{};
+  const taskOutput=task&&task.output||node.result&&node.result.output||{};
   const outputFile=taskOutput.modelPath||taskOutput.imagePath;
   const outputURL=pipelineOutputURL(outputFile);
   const outputLink=outputURL?`<a class="pipeline-output" href="${pipelineEscape(outputURL)}" download>下载输出</a>`:'';
@@ -956,22 +1048,34 @@ function pipelineNodeCard(node){
   if(node.type==='textToImage'){
     media=imageURL
       ? `<figure class="pipeline-node-media"><img src="${pipelineEscape(imageURL)}" alt="生成图" loading="lazy"></figure>`
-      : `<div class="pipeline-node-media empty">未生成图像</div>`;
+      : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成图像'}</div>`;
   }else if(node.type==='imageTo3D'){
     media=modelURL
       ? `<div class="pipeline-node-media empty ready">3D 模型已生成</div><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
-      : `<div class="pipeline-node-media empty">未生成模型</div>`;
+      : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成模型'}</div>`;
   }
-  const history=(node.result&&node.result.history||[]).map(item=>`<small>旧版本 ${pipelineEscape(item.taskId)} ${pipelineEscape(item.output&&item.output.modelPath||item.output&&item.output.imagePath||'')}</small>`).join('');
+  const history=(node.result&&node.result.history||[]).slice().reverse();
+  const historyHTML=history.length?`<details class="pipeline-history"><summary>历史版本 ${history.length}</summary><div class="pipeline-history-list">${history.map(item=>{
+    const file=item.output&&(item.output.imagePath||item.output.modelPath)||'';
+    const url=pipelineOutputURL(file);
+    const thumb=item.output&&item.output.imagePath&&url?`<img src="${pipelineEscape(url)}" alt="历史生成图" loading="lazy">`:'';
+    const when=item.submittedAt?new Date(item.submittedAt*1000).toLocaleString('zh-CN'):'';
+    const name=pipelineEscape(item.taskId||'任务')+(when?' · '+pipelineEscape(when):'');
+    return `<a class="pipeline-history-item" href="${pipelineEscape(url||'#')}" ${url?'download':''}>${thumb}<span>${name}<em>${pipelineEscape(pipelineStateLabel(item.state||''))}</em></span></a>`;
+  }).join('')}</div></details>`:'';
+  const taskError=task&&task.state==='failed'?task.error:'';
+  const error=(['success','done'].includes(state)?'':node.result&&node.result.error)||taskError;
+  const showPoll=task&&((['success','failed','cancelled','banned'].indexOf(task.state)<0)
+    ||(node.type==='textToImage'&&!(task.output&&task.output.imagePath)));
   const stageSummary=pipelineStageSummary(node);
   const inPorts=pipelinePorts(node.type,'in').map(port=>`<span class="pipeline-port pipeline-port-in" data-in-node="${pipelineEscape(node.id)}" data-in-port="${pipelineEscape(port)}" title="输入 ${pipelineEscape(port)}" style="top:${pipelinePortTop(node.type,'in',port)}px"></span>`).join('');
   const outPorts=pipelinePorts(node.type,'out').map(port=>`<span class="pipeline-port pipeline-port-out" data-out-node="${pipelineEscape(node.id)}" data-out-port="${pipelineEscape(port)}" title="输出 ${pipelineEscape(port)} · 拖到下游输入端" style="top:${pipelinePortTop(node.type,'out',port)}px"></span>`).join('');
-  return `<article class="pipeline-node ${selected?'selected':''}" data-node="${pipelineEscape(node.id)}" style="left:${Number(node.x)||0}px;top:${Number(node.y)||0}px">
+  return `<article class="pipeline-node ${selected?'selected':''} ${busy?'is-running':''}" data-node="${pipelineEscape(node.id)}" style="left:${Number(node.x)||0}px;top:${Number(node.y)||0}px">
     ${inPorts}${outPorts}
-    <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(state)}</span></header>
-    <small>${pipelineEscape(node.id)}${node.result&&node.result.providerTask&&node.result.providerTask.progress!=null?' · '+node.result.providerTask.progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${node.result&&node.result.providerTask?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button></div>${outputLink}${history}
-    ${node.result && node.result.error?`<small class="pipeline-error">${pipelineEscape(node.result.error)}</small>`:''}
+    <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(pipelineStateLabel(state, progress))}</span></header>
+    <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button></div>${outputLink}${historyHTML}
+    ${error?`<small class="pipeline-error">${pipelineEscape(error)}</small>`:''}
   </article>`;
 }
 
@@ -1044,6 +1148,10 @@ function renderPipelineView(){
     pipelineStartPaletteDrag(button,event);
   }));
   view.querySelectorAll('[data-node]').forEach(pipelineWireCard);
+  PIPELINE.graph.nodes.forEach(node=>{
+    const task=node.result&&node.result.providerTask;
+    if(task&&(task.state==='queued'||task.state==='running')) pipelinePollLoop(PIPELINE.assetId,PIPELINE.kind,node.id,0,1200);
+  });
   const scroll=view.querySelector('.pipeline-scroll');
   if(scroll){
     pipelinePanCanvas(scroll);

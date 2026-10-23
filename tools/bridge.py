@@ -379,6 +379,30 @@ def fw_dir():
     return project_root()
 
 
+PIPELINE_HISTORY_LIMIT = 50
+
+
+def store_task_output(root, asset_id, kind, node_type, task):
+    """同步成功的图片立即落盘，节点无需再等一次轮询才显示结果。"""
+    if node_type != 'textToImage' or task.get('state') != 'success':
+        return task
+    output = task.get('output') if isinstance(task.get('output'), dict) else {}
+    url = output.get('generated_image_url')
+    if not isinstance(url, str) or not url:
+        return task
+    try:
+        data, extension = fw_providers.download_image(url)
+    except (ValueError, RuntimeError, OSError):
+        return task
+    directory = os.path.join(fw_pipeline.pipeline_root(root, asset_id, kind), 'outputs')
+    os.makedirs(directory, exist_ok=True)
+    filename = 'image_' + task['taskId'] + '.' + extension
+    with open(os.path.join(directory, filename), 'wb') as stream:
+        stream.write(data)
+    task['output'] = {'imagePath': 'outputs/' + filename, 'size': len(data)}
+    return task
+
+
 def ue_project_root():
     p = _state.get('ueProjectRoot')
     return p if p and os.path.isdir(p) else None
@@ -1552,14 +1576,18 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                         except (OSError, ValueError, TypeError):
                             image_data = None
                 task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, node['type'], node.get('params'), prompt, input_task_id, image_data, fallback=True)
-                previous_task = node.setdefault('result', {}).get('providerTask')
+                store_task_output(fw_dir(), asset_id, kind, node['type'], task)
+                state = node.setdefault('result', {})
+                previous_task = state.get('providerTask')
                 if previous_task:
-                    node['result'].setdefault('history', []).append(previous_task)
-                node.setdefault('result', {})['providerTask'] = task
-                node['result']['state'] = 'queued'
+                    history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
+                    state['history'] = history + [previous_task]
+                state['providerTask'] = task
+                state['state'] = 'done' if task.get('state') == 'success' else 'queued'
+                state.pop('error', None)
                 result = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
-                push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': 'queued', 'taskId': task['taskId']})
-                self._json({'ok': True, 'graph': result, 'taskId': task['taskId'], 'state': 'queued'})
+                push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': state['state'], 'taskId': task['taskId']})
+                self._json({'ok': True, 'graph': result, 'taskId': task['taskId'], 'state': state['state']})
             except (ValueError, TypeError, RuntimeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/provider/poll':
@@ -1583,14 +1611,11 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                              'creditsConsumed': result.get('credits_consumed'), 'error': str(result.get('error_message') or '')[:300]})
                 node['result']['state'] = 'done' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
                 output = result.get('output') or {}
+                if state == 'success':
+                    node['result'].pop('error', None)
                 if state == 'success' and node['type'] == 'textToImage':
-                    image_data, extension = fw_providers.download_image(output.get('generated_image_url'))
-                    output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
-                    os.makedirs(output_dir, exist_ok=True)
-                    filename = 'image_' + task['taskId'] + '.' + extension
-                    with open(os.path.join(output_dir, filename), 'wb') as stream:
-                        stream.write(image_data)
-                    task['output'] = {'imagePath': 'outputs/' + filename, 'size': len(image_data)}
+                    task['output'] = {'generated_image_url': output.get('generated_image_url')}
+                    store_task_output(fw_dir(), asset_id, kind, node['type'], task)
                 if state == 'success' and node['type'] == 'imageTo3D':
                     data = fw_providers.download_model(output.get('model_url'))
                     output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
