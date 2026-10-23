@@ -457,7 +457,10 @@ function pipelineApplyZoom(){
   const canvas = document.querySelector('.pipeline-canvas');
   if(!canvas) return;
   const {x, y} = PIPELINE.pan;
-  canvas.style.transform = `translate(${x}px, ${y}px) scale(${PIPELINE.zoom})`;
+  const zoom = PIPELINE.zoom;
+  // 用 zoom 而非 transform: scale，放大时浏览器按新尺寸重排重绘，文字不会发虚
+  canvas.style.zoom = zoom;
+  canvas.style.transform = `translate(${x / zoom}px, ${y / zoom}px)`;
   const scroll = document.querySelector('.pipeline-scroll');
   if(scroll) scroll.style.backgroundPosition = `${x}px ${y}px`;
   const label = document.getElementById('pipelineZoomReset');
