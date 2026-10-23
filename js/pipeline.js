@@ -1270,6 +1270,7 @@ function renderPipelineView(){
   const view=document.getElementById('view');
   if(!view) return;
   pipelineDisposeAllNodePreviews();
+  if(cur !== 'pipeline') return;
   if(SYNC.probing && !SYNC.online){
     view.innerHTML='<div class="card"><p>正在连接 Forge Bridge…</p></div>';
     return;
@@ -1284,7 +1285,7 @@ function renderPipelineView(){
   }
   if(!PIPELINE.graph){
     view.innerHTML='<div class="card"><p>正在读取资产流水线…</p></div>';
-    pipelineLoad(PIPELINE.assetId).then(renderPipelineView).catch(error=>{view.innerHTML=`<div class="card">${pipelineEscape(error.message)}</div>`;});
+    pipelineLoad(PIPELINE.assetId).then(renderPipelineView).catch(error=>{if(cur==='pipeline') view.innerHTML=`<div class="card">${pipelineEscape(error.message)}</div>`;});
     return;
   }
   const providerNames=Object.keys(PIPELINE.providers||{});
