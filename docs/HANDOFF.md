@@ -489,6 +489,14 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - `tests/test_textures.py`：9 项通过（目录归一化/丢未知键/丢文件、路径穿越拒绝、提示词、提交去重与 force、轮询成功/失败落盘、文件端点）。
 - 验证边界：未配置 key，未发真实生成请求；GLB 内嵌用页面内注入的 64×64 CanvasTexture 验证——1 image、1 texture、5 个材质全部带 `baseColorTexture`，`mimeType: image/jpeg`。
 
+### 13.1 火山方舟 Ark Provider（图像 / 3D）（2026-10-23）
+
+- `tools/fw_providers.py` 按节点 `params.provider` 选择 `tripo` / `ark`；Pipeline 提交时若标注的 provider 未配置，回退到已配置的一项（材质贴图仍固定 Tripo）。
+- Ark 图像：`POST /api/v3/images/generations`，模型 `doubao-seedream-5-0-pro-260628`，同步返回图片 URL。
+- Ark 3D：`POST /api/v3/contents/generations/tasks`，模型 `doubao-seed3d-2-0-260328`；`content` 用 `image_url`（data URI 或 https）传图，可选 `text`。轮询 `GET /api/v3/contents/generations/tasks/{id}`，成功后 `content.file_url` 是 ZIP，下载后解出 GLB。
+- 下载白名单扩展 `*.volces.com`；ZIP 内 GLB 仍做 magic 与声明长度校验。
+- 启用方式：`tools/bridge_config.json` 写 `providers.ark.api_key`（`endpoint` 可空，默认 `https://ark.cn-beijing.volces.com/api/v3`），重启 Bridge。
+
 ## 14. 资产七方面 + 图层化预览 + 管线阶段（2026-10-21）
 
 **用户要求**：白模（几何）、材质、UV、LOD、碰撞体、动画、元数据这七项，既要在生成管线里各是一个阶段，也要在 3D 展示里逐项可见、可开关（例如临时去掉材质、去掉法线贴图）。

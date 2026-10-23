@@ -8,7 +8,7 @@
     "_说明": "密钥只写在被 gitignore 的 tools/bridge_config.json。远程任务须在界面逐次确认。",
     "tripo": { "api_key": "" },
     "meshy": { "api_key": "" },
-    "ark":   { "api_key": "", "endpoint": "" },
+    "ark":   { "api_key": "", "endpoint": "", "image_model": "doubao-seedream-5-0-pro-260628", "model3d_model": "doubao-seed3d-2-0-260328" },
     "zhipu": { "api_key": "" }
   }
 }

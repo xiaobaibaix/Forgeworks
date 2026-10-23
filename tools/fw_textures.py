@@ -139,7 +139,7 @@ def submit_many(providers, config, fw_root, style, keys, style_hint='', size='1K
             skipped.append({'key': key, 'reason': '已生成'})
             continue
         prompt = build_prompt(key, style_hint)
-        task = providers.submit(config, 'textToImage', {'model': 'seedream_v5', 'size': size}, prompt)
+        task = providers.submit(config, 'textToImage', {'provider': 'tripo', 'model': 'seedream_v5', 'size': size}, prompt)
         catalog['items'][key] = {
             'state': 'queued', 'taskId': task['taskId'], 'provider': task.get('provider', 'tripo'),
             'prompt': prompt, 'size': size, 'submittedAt': _now(), 'updatedAt': _now(),

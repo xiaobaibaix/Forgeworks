@@ -737,18 +737,30 @@ async function pipelineRun(nodeId, through){
   renderPipelineView();
 }
 
+function pipelineNodeProvider(node){
+  const wanted=String(node&&node.params&&node.params.provider||'').toLowerCase();
+  const configured=Object.keys(PIPELINE.providers||{}).filter(name=>PIPELINE.providers[name]&&PIPELINE.providers[name].configured);
+  if(configured.includes(wanted)) return wanted;
+  return configured[0]||wanted||'tripo';
+}
+
 async function pipelineSubmitRemote(nodeId){
   const node=PIPELINE.graph.nodes.find(item=>item.id===nodeId);
   if(!node || !['textToImage','imageTo3D'].includes(node.type)) return;
   if(!pipelineBridgeReady()){toast('远程提交需要 Bridge 在线并绑定项目');return;}
-  if(!PIPELINE.providers.tripo || !PIPELINE.providers.tripo.configured){toast('先在 tools/bridge_config.json 配置 Tripo API key');return;}
-  const estimated=node.type==='textToImage'?5:(node.params.texture?40:30);
-  if(!window.confirm(`此操作会调用 Tripo，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）；最终以任务实耗为准。现在提交？`)) return;
+  const provider=pipelineNodeProvider(node);
+  const info=PIPELINE.providers[provider];
+  if(!info || !info.configured){toast(`先在 tools/bridge_config.json 配置 ${provider} API key`);return;}
+  const label=provider==='ark'?'火山方舟 Ark':'Tripo';
+  const model=provider==='ark'?(node.type==='textToImage'?'Seedream 5.0 Pro':'Seed3D 2.0'):(node.type==='textToImage'?'Seedream v5':'v3.1');
+  const estimated=provider==='ark'?0:(node.type==='textToImage'?5:(node.params.texture?40:30));
+  const price=estimated?`，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）`:'';
+  if(!window.confirm(`此操作会调用 ${label}（${model}）${price}；最终以任务实耗为准。现在提交？`)) return;
   try{
     await pipelineSave();
     const result=await pipelineApi('pipeline/provider/submit',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId,confirmRemote:true});
     PIPELINE.graph=result.graph;
-    toast('已提交 Tripo 任务：'+result.taskId);
+    toast(`已提交 ${label} 任务：`+result.taskId);
     renderPipelineView();
   }catch(error){toast(error.message);}
 }
@@ -758,7 +770,8 @@ async function pipelinePollRemote(nodeId){
   try{
     const result=await pipelineApi('pipeline/provider/poll',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId});
     PIPELINE.graph=result.graph;
-    toast('Tripo 状态：'+result.task.state+(result.task.progress!=null?' · '+result.task.progress+'%':''));
+    const label=result.task&&result.task.provider==='ark'?'Ark':(result.task&&result.task.provider==='tripo'?'Tripo':'Provider');
+    toast(label+' 状态：'+result.task.state+(result.task.progress!=null?' · '+result.task.progress+'%':''));
     renderPipelineView();
   }catch(error){toast(error.message);}
 }

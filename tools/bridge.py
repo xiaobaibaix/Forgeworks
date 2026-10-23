@@ -1177,10 +1177,11 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             if not isinstance(providers, dict):
                 providers = {}
             tripo_config = providers.get('tripo') if isinstance(providers.get('tripo'), dict) else {}
+            ark_config = providers.get('ark') if isinstance(providers.get('ark'), dict) else {}
             self._json({'ok': True, 'providers': {
                 name: {'configured': bool((value or {}).get('api_key')), 'enabled': bool((value or {}).get('api_key'))}
                 for name, value in providers.items() if isinstance(value, dict)
-            }, 'remoteExecutionAvailable': bool(tripo_config.get('api_key'))})
+            }, 'remoteExecutionAvailable': bool(tripo_config.get('api_key') or ark_config.get('api_key'))})
         elif route.startswith('pipeline/graph/'):
             asset_id = route.rsplit('/', 1)[-1]
             kind = (self._query().get('kind') or ['machine'])[0]
@@ -1195,7 +1196,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             try:
                 if self.headers.get('Origin') and not self._same_loopback_origin():
                     raise ValueError('流水线输出只允许本地同源访问')
-                if len(parts) != 4 or not re.fullmatch(r'[A-Za-z0-9_]{1,64}', parts[2]) or not re.fullmatch(r'(model|image)_task_[A-Za-z0-9_-]{4,128}\.(glb|png|jpg|webp)', parts[3]):
+                if len(parts) != 4 or not re.fullmatch(r'[A-Za-z0-9_]{1,64}', parts[2]) or not re.fullmatch(r'(model|image)_[A-Za-z0-9_-]{4,140}\.(glb|png|jpg|webp)', parts[3]):
                     raise ValueError('输出路径非法')
                 kind = (self._query().get('kind') or ['machine'])[0]
                 path = fw_pipeline.resolve_output(fw_dir(), parts[2], kind, parts[3])
@@ -1338,6 +1339,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 incoming = [edge for edge in graph['edges'] if edge.get('to') == node_id]
                 prompt = ''
                 input_task_id = None
+                image_data = None
                 if node['type'] == 'textToImage':
                     prompt_edge = next((edge for edge in incoming if edge.get('in') == 'text'), None)
                     if prompt_edge:
@@ -1345,13 +1347,27 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                         prompt = ((upstream.get('result') or {}).get('output') or {}).get('text', '')
                     prompt = prompt or node.get('params', {}).get('prompt', '')
                 else:
+                    prompt = str(node.get('params', {}).get('prompt') or '')
                     image_edge = next((edge for edge in incoming if edge.get('in') == 'image'), None)
+                    upstream_image = None
                     if image_edge:
                         upstream = nodes[image_edge['from']]
                         input_task_id = (upstream.get('result') or {}).get('providerTask', {}).get('taskId')
+                        upstream_image = (((upstream.get('result') or {}).get('providerTask') or {}).get('output') or {}).get('imagePath')
                     if not input_task_id:
                         input_task_id = node.get('params', {}).get('inputTaskId')
-                task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, node['type'], node.get('params'), prompt, input_task_id)
+                    if upstream_image:
+                        try:
+                            image_path = fw_pipeline.resolve_output(fw_dir(), asset_id, kind, os.path.basename(str(upstream_image)))
+                            if image_path and os.path.getsize(image_path) <= 8 * 1024 * 1024:
+                                with open(image_path, 'rb') as stream:
+                                    raw = stream.read()
+                                extension = os.path.splitext(image_path)[1].lower().lstrip('.')
+                                mime = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'webp': 'image/webp'}.get(extension, 'image/png')
+                                image_data = 'data:%s;base64,%s' % (mime, base64.b64encode(raw).decode())
+                        except (OSError, ValueError, TypeError):
+                            image_data = None
+                task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, node['type'], node.get('params'), prompt, input_task_id, image_data, fallback=True)
                 previous_task = node.setdefault('result', {}).get('providerTask')
                 if previous_task:
                     node['result'].setdefault('history', []).append(previous_task)
@@ -1375,7 +1391,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 task = (node or {}).get('result', {}).get('providerTask') or {}
                 if not node or not task.get('taskId'):
                     raise ValueError('没有可轮询的 Provider 任务')
-                result = fw_providers.poll(read_json(CONFIG_FILE, {}) or {}, task['taskId'])
+                result = fw_providers.poll(read_json(CONFIG_FILE, {}) or {}, task)
                 state = result.get('status')
                 if state not in ('queued', 'running', 'success', 'failed', 'cancelled', 'banned'):
                     raise ValueError('Provider 返回了未知任务状态')
