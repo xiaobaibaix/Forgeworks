@@ -778,9 +778,13 @@ function pipelineRefreshNode(nodeId){
   if(!node) return;
   const card = [...document.querySelectorAll('.pipeline-node')].find(item => item.dataset.node === nodeId);
   if(!card) return;
+  pipelineDisposeNodePreview(nodeId);
   card.outerHTML = pipelineNodeCard(node);
   const next = [...document.querySelectorAll('.pipeline-node')].find(item => item.dataset.node === nodeId);
-  if(next) pipelineWireCard(next);
+  if(next){
+    pipelineWireCard(next);
+    pipelineMountNodePreviews(next);
+  }
   pipelinePaintEdges();
   pipelinePaintMeta();
 }
@@ -880,6 +884,7 @@ function pipelineWireCard(card){
   card.querySelectorAll('[data-remote]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineSubmitRemote(button.dataset.remote);});
   card.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
   card.querySelectorAll('[data-preview-model]').forEach(button=>button.onclick=event=>{event.stopPropagation();openPipelineModelPreview(button.dataset.previewModel);});
+  card.querySelectorAll('[data-node-model]').forEach(figure=>figure.onclick=event=>{event.stopPropagation();openPipelineModelPreview(figure.dataset.nodeModel);});
   card.querySelectorAll('[data-delete-node]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRemoveNode(button.dataset.deleteNode);});
   card.querySelectorAll('[data-param]').forEach(input=>input.onchange=()=>{
     const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);
@@ -910,15 +915,8 @@ function pipelineWireCard(card){
 
 let _pipelinePreview = null;
 
-function pipelineClosePreview(){
-  const ctx = _pipelinePreview;
-  if(!ctx) return;
-  _pipelinePreview = null;
-  cancelAnimationFrame(ctx.raf);
-  document.removeEventListener('keydown', ctx.onKey);
-  if(ctx.observer) ctx.observer.disconnect();
-  ctx.controls.dispose();
-  ctx.scene.traverse(object=>{
+function pipelineDisposeScene(scene){
+  scene.traverse(object=>{
     if(object.geometry) object.geometry.dispose();
     const materials = Array.isArray(object.material) ? object.material : (object.material ? [object.material] : []);
     materials.forEach(material=>{
@@ -929,6 +927,17 @@ function pipelineClosePreview(){
       material.dispose();
     });
   });
+}
+
+function pipelineClosePreview(){
+  const ctx = _pipelinePreview;
+  if(!ctx) return;
+  _pipelinePreview = null;
+  cancelAnimationFrame(ctx.raf);
+  document.removeEventListener('keydown', ctx.onKey);
+  if(ctx.observer) ctx.observer.disconnect();
+  ctx.controls.dispose();
+  pipelineDisposeScene(ctx.scene);
   ctx.renderer.dispose();
   if(ctx.renderer.forceContextLoss) ctx.renderer.forceContextLoss();
 }
@@ -1047,6 +1056,91 @@ function openPipelineModelPreview(url){
   canvas.ondblclick = ()=>fitView();
 }
 
+const _pipelineNodePreviews = new Map();
+
+function pipelineDisposeNodePreview(nodeId){
+  const ctx = _pipelineNodePreviews.get(nodeId);
+  if(!ctx) return;
+  _pipelineNodePreviews.delete(nodeId);
+  cancelAnimationFrame(ctx.raf);
+  pipelineDisposeScene(ctx.scene);
+  ctx.renderer.dispose();
+  if(ctx.renderer.forceContextLoss) ctx.renderer.forceContextLoss();
+}
+
+function pipelineDisposeAllNodePreviews(){
+  [..._pipelineNodePreviews.keys()].forEach(pipelineDisposeNodePreview);
+}
+
+function pipelineMountNodePreviews(root){
+  if(!root || !haveThree() || !THREE.GLTFLoader) return;
+  root.querySelectorAll('[data-node-model]').forEach(figure=>{
+    const nodeId = figure.dataset.nodeModelId;
+    if(!nodeId || _pipelineNodePreviews.has(nodeId)) return;
+    const canvas = figure.querySelector('canvas');
+    if(canvas) pipelineMountNodePreview(figure, nodeId, canvas);
+  });
+}
+
+function pipelineMountNodePreview(figure, nodeId, canvas){
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.02, 4000);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8f8a80, 1.25));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  keyLight.position.set(5, 9, 7);
+  scene.add(keyLight);
+  const rimLight = new THREE.DirectionalLight(0xffffff, .55);
+  rimLight.position.set(-6, 4, -5);
+  scene.add(rimLight);
+  const ctx = {renderer, scene, camera, raf:0, holder:null};
+  _pipelineNodePreviews.set(nodeId, ctx);
+
+  const resize = ()=>{
+    const rect = canvas.getBoundingClientRect();
+    if(rect.width < 1 || rect.height < 1) return;
+    renderer.setSize(Math.round(rect.width), Math.round(rect.height), false);
+    camera.aspect = rect.width / Math.max(1, rect.height);
+    camera.updateProjectionMatrix();
+  };
+  resize();
+
+  new THREE.GLTFLoader().load(figure.dataset.nodeModel, gltf=>{
+    if(_pipelineNodePreviews.get(nodeId) !== ctx){
+      if(gltf.scene) pipelineDisposeScene(gltf.scene);
+      return;
+    }
+    const model = gltf.scene || (gltf.scenes && gltf.scenes[0]);
+    if(!model){ figure.classList.add('failed'); return; }
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.sub(center);
+    const holder = new THREE.Group();
+    holder.add(model);
+    scene.add(holder);
+    ctx.holder = holder;
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const radius = maxDim * 1.7;
+    camera.near = Math.max(0.01, maxDim / 200);
+    camera.far = radius * 30;
+    camera.position.set(radius * .7, radius * .5, radius * .95);
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+  }, undefined, ()=>{
+    if(_pipelineNodePreviews.get(nodeId) === ctx) figure.classList.add('failed');
+  });
+
+  const animate = ()=>{
+    if(_pipelineNodePreviews.get(nodeId) !== ctx) return;
+    if(ctx.holder) ctx.holder.rotation.y += 0.012;
+    renderer.render(scene, camera);
+    ctx.raf = requestAnimationFrame(animate);
+  };
+  ctx.raf = requestAnimationFrame(animate);
+}
+
 function pipelineOutputURL(file){
   if(!file || !pipelineBridgeReady()) return '';
   return '/api/pipeline/output/' + encodeURIComponent(PIPELINE.assetId) + '/' +
@@ -1128,7 +1222,7 @@ function pipelineNodeCard(node){
       : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成图像'}</div>`;
   }else if(node.type==='imageTo3D'){
     media=modelURL
-      ? `<div class="pipeline-node-media empty ready">3D 模型已生成</div><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
+      ? `<figure class="pipeline-node-media model" data-node-model="${pipelineEscape(modelURL)}" data-node-model-id="${pipelineEscape(node.id)}" title="点击放大查看"><canvas aria-label="3D 模型预览"></canvas></figure><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
       : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成模型'}</div>`;
   }
   const history=(node.result&&node.result.history||[]).slice().reverse();
@@ -1159,6 +1253,7 @@ function pipelineNodeCard(node){
 function renderPipelineView(){
   const view=document.getElementById('view');
   if(!view) return;
+  pipelineDisposeAllNodePreviews();
   const bridgeReady=pipelineBridgeReady();
   const candidates=[...S.machines.map(machine=>({id:machine.id,name:machine.name,kind:'machine'})),...S.items.map(item=>({id:item.id,name:item.name,kind:'item'})),...(S.elements||[]).map(element=>({id:element.id,name:element.name,kind:'element'}))];
   if(!candidates.length){view.innerHTML='<div class="card"><p>当前没有可建立流水线的机器或物品。</p></div>';return;}
@@ -1225,6 +1320,7 @@ function renderPipelineView(){
     pipelineStartPaletteDrag(button,event);
   }));
   view.querySelectorAll('[data-node]').forEach(pipelineWireCard);
+  pipelineMountNodePreviews(view.querySelector('.pipeline-canvas'));
   PIPELINE.graph.nodes.forEach(node=>{
     const task=node.result&&node.result.providerTask;
     if(task&&(task.state==='queued'||task.state==='running')) pipelinePollLoop(PIPELINE.assetId,PIPELINE.kind,node.id,0,1200);
