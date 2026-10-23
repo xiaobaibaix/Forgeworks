@@ -16,8 +16,9 @@ function itemCsv(){
     ]));
 }
 function elementCsv(){
-  return csvRows(['Id','Symbol','DisplayName','Tier','Color'],
-    S.elements.map(e=>[e.id,e.symbol,e.name,e.tier,e.color]));
+  return csvRows(['Id','Symbol','DisplayName','Tier','Color','HasCustomIcon'],
+    S.elements.map(e=>[e.id,e.symbol,e.name,e.tier,e.color,
+      (e.icon && e.icon.trim()) ? 'True' : 'False']));
 }
 function machineCsv(){
   return csvRows(['Id','DisplayName','Tier','Category','FootprintX','FootprintY','PowerDraw','Desc'],

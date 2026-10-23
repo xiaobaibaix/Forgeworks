@@ -9,7 +9,7 @@ import shutil
 import time
 import uuid
 
-ASSET_KIND_DIRS = {'machine': 'Machines', 'item': 'Items/Icons', 'data': 'Data'}
+ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
 
 NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
@@ -104,10 +104,32 @@ def _valid_asset_id(asset_id):
     return asset_id
 
 
+def _manifest_source_dir(forgeworks_root, asset_id):
+    """manifest 的 sourceDir 是资产目录的唯一真相；独立加载时不引入 fw_project。"""
+    try:
+        with open(os.path.join(forgeworks_root, '_Sync', 'manifest.json'), encoding='utf-8') as stream:
+            manifest = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    record = (manifest.get('assets') or {}).get(asset_id) or {}
+    source_dir = record.get('sourceDir')
+    if not isinstance(source_dir, str) or not source_dir.strip():
+        return None
+    source_dir = source_dir.strip().strip('/')
+    joined = os.path.join(forgeworks_root, source_dir)
+    root = os.path.realpath(forgeworks_root)
+    if os.path.commonpath((root, os.path.realpath(joined))) != root or not os.path.isdir(joined):
+        return None
+    return joined
+
+
 def pipeline_root(forgeworks_root, asset_id, kind='machine'):
-    """存档落在资产自己的文件夹：_Source/<Kind>/<ID>/pipeline/"""
+    """存档落在资产自己的文件夹：_Source/<中文分类>/<名称>/pipeline/"""
     asset_id = _valid_asset_id(asset_id)
     kind = normalize_kind(kind)
+    source_dir = _manifest_source_dir(forgeworks_root, asset_id)
+    if source_dir:
+        return os.path.join(source_dir, 'pipeline')
     return os.path.join(forgeworks_root, '_Source', *ASSET_KIND_DIRS[kind].split('/'), asset_id, 'pipeline')
 
 

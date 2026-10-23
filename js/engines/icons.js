@@ -188,6 +188,82 @@ function iconHTML(item, size){
          `style="vertical-align:middle;border-radius:4px;object-fit:contain">`;
 }
 
+/* ---------- 元素图标：周期表元素牌 ---------- */
+
+function xmlEscape(text){
+  return String(text === undefined || text === null ? '' : text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** 元素牌内部图形（64×64）：圆角方块 + 符号 + 名称 + 等级角标 */
+function elementIconInner(el){
+  let b = (el && el.color) || '#888780';
+  if(typeof fitColor === 'function' && typeof getStyle === 'function'){
+    const st = getStyle();
+    b = fitColor(b, 'accent', st).hex;
+    const ic = st.icon || {};
+    const h0 = hexToHsl(b);
+    b = hslToHex(h0.h, h0.s * (ic.satScale || 1), h0.l * (ic.ligScale || 1));
+  }
+  const lt = shade(b, 20), dk = shade(b, -22);
+  const fg = relLum(b) > 0.45 ? '#1b1a18' : '#ffffff';
+  const gid = 'elg' + hashStr(String((el && el.id) || (el && el.symbol) || 'x'));
+
+  const sym = String((el && el.symbol) || (el && el.id) || '?');
+  const symSize = sym.length <= 2 ? 24 : sym.length === 3 ? 18 : 14;
+
+  let name = String((el && el.name) || '');
+  if(name.length > 8) name = name.slice(0, 7) + '…';
+  const nameSize = name.length <= 4 ? 8 : name.length <= 6 ? 7 : 6.2;
+
+  const tier = (el && el.tier !== undefined && el.tier !== null && el.tier !== '')
+    ? String(el.tier) : '';
+
+  return `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">`
+       + `<stop offset="0" stop-color="${lt}"/><stop offset="1" stop-color="${dk}"/>`
+       + `</linearGradient></defs>`
+       + `<rect x="2" y="2" width="60" height="60" rx="9" fill="url(#${gid})" `
+       + `stroke="rgba(0,0,0,.28)" stroke-width="1.2"/>`
+       + `<rect x="3.6" y="3.6" width="56.8" height="56.8" rx="7.6" fill="none" `
+       + `stroke="${fg}" stroke-opacity=".16"/>`
+       + `<text x="32" y="30" text-anchor="middle" dominant-baseline="central" `
+       + `font-family="ui-sans-serif,system-ui,sans-serif" font-weight="700" `
+       + `font-size="${symSize}" fill="${fg}">${xmlEscape(sym)}</text>`
+       + (name ? `<text x="32" y="53" text-anchor="middle" fill="${fg}" fill-opacity=".85" `
+               + `font-family="ui-sans-serif,system-ui,sans-serif" font-size="${nameSize}">`
+               + `${xmlEscape(name)}</text>` : '')
+       + (tier ? `<text x="56" y="11" text-anchor="end" fill="${fg}" fill-opacity=".75" `
+               + `font-family="ui-sans-serif,system-ui,sans-serif" font-size="7.5">`
+               + `T${xmlEscape(tier)}</text>` : '');
+}
+
+function makeElementIconSVG(el, size){
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" `
+       + `width="${size || 64}" height="${size || 64}">${elementIconInner(el)}</svg>`;
+}
+
+/** 元素图标 URL：自定义优先，否则生成并缓存（缓存键含风格，换风格自动失效） */
+function elementIconURL(el){
+  const custom = (el && el.icon) ? String(el.icon).trim() : '';
+  if(custom) return custom;
+  const key = 'el|' + styleCacheTag() + '|' + ((el && el.id) || '') + '|'
+            + ((el && el.symbol) || '') + '|' + ((el && el.name) || '') + '|'
+            + (el && el.tier !== undefined && el.tier !== null ? el.tier : '') + '|'
+            + ((el && el.color) || '');
+  const hit = _iconURLCache.get(key);
+  if(hit) return hit;
+  const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(makeElementIconSVG(el, 64));
+  _iconURLCache.set(key, url);
+  return url;
+}
+
+function elementIconHTML(el, size){
+  const s = size || 20;
+  return `<img src="${elementIconURL(el)}" width="${s}" height="${s}" alt="" `+
+         `style="vertical-align:middle;border-radius:4px;object-fit:contain">`;
+}
+
 // 模型状态的中文标签
 const MODEL_LABELS = {
   none:{t:'无需模型', bg:'var(--bg)', fg:'var(--text-3)'},

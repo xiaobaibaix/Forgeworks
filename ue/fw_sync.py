@@ -10,6 +10,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXPORT_ROOT = os.path.join(PROJECT_ROOT, 'Forgeworks')
 EXPORT_MANIFEST = os.path.join(EXPORT_ROOT, '_Sync', 'manifest.json')
 MACHINE_ID = re.compile(r'^[A-Za-z0-9_]+$')
+ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
+LEGACY_MACHINE_ROOT = '/Game/Forgeworks/Machines'
 
 
 def _safe_relative_path(value):
@@ -17,6 +19,26 @@ def _safe_relative_path(value):
     if not normalized or normalized.startswith('/') or any(part in ('', '.', '..') for part in normalized.split('/')):
         raise ValueError('invalid relative asset path')
     return normalized
+
+
+def _content_path_for(source_dir):
+    normalized = source_dir.replace('\\', '/').strip('/')
+    if normalized.startswith('_Source/'):
+        normalized = normalized[len('_Source/'):]
+    return '/Game/Forgeworks/' + normalized
+
+
+def _migrate_legacy_asset(unreal, asset_id, content_path, asset_name):
+    """旧英文目录下的 uasset 只在新目标不存在时重命名，绝不覆盖。"""
+    library = unreal.EditorAssetLibrary
+    legacy = '%s/%s/%s' % (LEGACY_MACHINE_ROOT, asset_id, asset_name)
+    target = '%s/%s' % (content_path, asset_name)
+    if not library.does_asset_exist(legacy):
+        return
+    if library.does_asset_exist(target):
+        unreal.log_warning('[Forgeworks] legacy asset left in place: %s' % legacy)
+        return
+    library.rename_asset(legacy, target)
 
 
 def build_import_plan(manifest, forgeworks_root, asset_ids=None):
@@ -32,9 +54,13 @@ def build_import_plan(manifest, forgeworks_root, asset_ids=None):
         mesh_records = (record.get('files') or {}).get('mesh') or []
         mesh = mesh_records[0] if isinstance(mesh_records, list) else mesh_records
         relative_path = _safe_relative_path(mesh.get('path'))
-        source_path = os.path.realpath(os.path.join(forgeworks_root, '_Source', 'Machines', asset_id, relative_path))
-        machine_root = os.path.realpath(os.path.join(forgeworks_root, '_Source', 'Machines', asset_id))
-        if os.path.commonpath((source_path, machine_root)) != machine_root or not os.path.isfile(source_path):
+        source_dir = record.get('sourceDir') or '_Source/%s/%s' % (ASSET_KIND_DIRS['machine'], asset_id)
+        machine_root = os.path.realpath(os.path.join(forgeworks_root, source_dir))
+        source_path = os.path.realpath(os.path.join(machine_root, relative_path))
+        project_root = os.path.realpath(forgeworks_root)
+        if (os.path.commonpath((project_root, machine_root)) != project_root
+                or os.path.commonpath((source_path, machine_root)) != machine_root
+                or not os.path.isfile(source_path)):
             raise ValueError('missing or unsafe mesh file for %s' % asset_id)
         metadata = record.get('meta') or {}
         expected_size = metadata.get('sizeCm')
@@ -43,7 +69,7 @@ def build_import_plan(manifest, forgeworks_root, asset_ids=None):
         plan.append({
             'id': asset_id,
             'sourcePath': source_path,
-            'contentPath': '/Game/Forgeworks/Machines/%s' % asset_id,
+            'contentPath': _content_path_for(source_dir),
             'assetName': 'SM_%s' % asset_id,
             'sha1': mesh.get('sha1'),
             'expectedSizeCm': expected_size,
@@ -144,6 +170,7 @@ def import_assets(asset_ids=None):
     reports = []
     for item in plan:
         try:
+            _migrate_legacy_asset(unreal, item['id'], item['contentPath'], item['assetName'])
             source_data = manager.create_source_data(item['sourcePath'])
             parameters = unreal.ImportAssetParameters()
             _set_if_supported(parameters, 'is_automated', True)

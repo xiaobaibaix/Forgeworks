@@ -44,8 +44,8 @@ function syncUECardHTML(){
         <span class="pill">${target.kind === 'ue' ? 'UE 项目' : '文件夹'}</span>
         <div style="font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:2px">${syncEscape(target.root)}</div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px">
-          只复制机器 GLB、物品图标 PNG 与清单到 <code>${syncEscape(target.forgeworksRoot || target.root + '/Forgeworks')}</code>；
-          描述词、生成管线、预览等内部资料留在 Forgeworks 项目里。
+          只复制机器 GLB/图标 PNG、物品图标 PNG、元素图标 PNG 与清单到 <code>${syncEscape(target.forgeworksRoot || target.root + '/Forgeworks')}</code>；
+          描述词、生成管线、预览 SVG 等内部资料留在 Forgeworks 项目里。
         </div>
         <div style="font-size:11px;color:var(--text-3);margin-top:4px">
           UE 清单：${exportedCount} 个资产${publishedAt ? ' · 最近导出 ' + syncEscape(publishedAt) : ''}
@@ -53,7 +53,7 @@ function syncUECardHTML(){
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="primary" id="syUEPublishAll" ${_syncBusy ? 'disabled' : ''}>
-          导出全部资产（机器 ${S.machines.length} · 图标 ${S.items.length}）</button>
+          导出全部资产（机器 ${S.machines.length} · 物品 ${S.items.length} · 元素 ${(S.elements||[]).length}）</button>
         <button id="syUEPublishStale" ${_syncBusy ? 'disabled' : ''}>只导出待更新/未导出</button>
         <button id="syUERefreshManifest">刷新 UE 清单</button>
         <button id="syUETargetPick">更换目标…</button>
@@ -64,7 +64,7 @@ function syncUECardHTML(){
       </div>
     ` : `
       <p class="hint">
-        选择一个 UE 项目目录作为导出目标。导出时 Bridge 会把机器 GLB、物品图标 PNG 与清单复制到
+        选择一个 UE 项目目录作为导出目标。导出时 Bridge 会把机器 GLB/图标 PNG、物品图标 PNG、元素图标 PNG 与清单复制到
         <code>&lt;UE项目&gt;/Forgeworks/</code>，不会写入 Content/，也不会带出描述词与管线。
       </p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -108,7 +108,7 @@ function renderSync(){
             <b>新建或打开项目</b><p>Forgeworks 项目独立保存设计数据、描述词、管线与资源文件。</p>
           </div></div>
           <div class="setup-step"><span class="n">03</span><div>
-            <b>导出到 UE</b><p>设置 UE 导出目标后，只把机器 GLB、物品图标 PNG 和清单复制过去。</p>
+            <b>导出到 UE</b><p>设置 UE 导出目标后，只把机器 GLB/图标 PNG、物品与元素图标 PNG 和清单复制过去。</p>
           </div></div>
         </div>
       `}
@@ -178,9 +178,9 @@ function renderSync(){
     <div class="card">
       <h3>项目资源</h3>
       <p class="hint">
-        资源生成写进当前 Forgeworks 项目的 <code>_Source/&lt;类型&gt;/&lt;ID&gt;/</code>：
-        机器是 GLB（含风格材质）、等轴测预览与 hash 记录；物品是 256×256 PNG 图标。
-        这些是项目的完整资源，比导出给 UE 的内容多；导出到 UE 时只挑选机器 GLB 与图标 PNG。
+        资源生成写进当前 Forgeworks 项目的 <code>_Source/&lt;中文分类&gt;/&lt;中文名&gt;/</code>：
+        机器是 GLB（含风格材质）、等轴测预览 SVG 与 256×256 PNG 图标；物品与元素是 256×256 PNG 图标。
+        这些是项目的完整资源，比导出给 UE 的内容多；导出到 UE 时只挑选机器 GLB/图标与物品、元素图标 PNG。
       </p>
       <div style="font-size:12px;font-weight:600;margin-top:10px">机器</div>
       <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
@@ -196,7 +196,7 @@ function renderSync(){
         <div style="font-size:12px;font-weight:600">物品图标</div>
         <p class="hint" style="margin-top:4px">
           自动生成的 SVG 图标与自定义上传图标都渲染为透明底 PNG，写入
-          <code>_Source/Items/Icons/&lt;ID&gt;/</code>；换风格或改物品颜色后会标记为待更新。
+          <code>_Source/物品/图标/&lt;中文名&gt;/</code>；换风格、改物品颜色或改名后会标记为待更新。
         </p>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button class="primary" id="syExportItemsAll" ${_syncBusy ? 'disabled' : ''}>
@@ -206,13 +206,28 @@ function renderSync(){
         <div id="syItemProgress" style="font-size:11.5px;color:var(--text-2);margin-top:8px"></div>
         <div id="syItemSummary" style="margin-top:10px"></div>
       </div>
+
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+        <div style="font-size:12px;font-weight:600">元素图标</div>
+        <p class="hint" style="margin-top:4px">
+          周期表元素牌（符号 / 名称 / 等级）与自定义上传图标都渲染为透明底 PNG，写入
+          <code>_Source/元素/&lt;中文名&gt;/</code>；换风格、改符号/名称/颜色或改名后会标记为待更新。
+        </p>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="primary" id="syExportElementsAll" ${_syncBusy ? 'disabled' : ''}>
+            导出全部元素图标（${(S.elements||[]).length}）</button>
+          <button id="syExportElementsStale" ${_syncBusy ? 'disabled' : ''}>只导出待更新/缺失</button>
+        </div>
+        <div id="syElementProgress" style="font-size:11.5px;color:var(--text-2);margin-top:8px"></div>
+        <div id="syElementSummary" style="margin-top:10px"></div>
+      </div>
     </div>
 
     <div class="card">
       <h3>材质贴图（AI）</h3>
       <p class="hint">
         每个材质一张中性灰度细节图，导出 GLB 时作为贴图内嵌；颜色仍由风格色板决定，同一套贴图可被所有风格复用。
-        生成走 Tripo <code>seedream_v5</code>（1K），按张计费；结果缓存在 <code>_Source/Materials/&lt;风格&gt;/</code>。
+        生成走 Tripo <code>seedream_v5</code>（1K），按张计费；结果缓存在 <code>_Source/材质/&lt;风格&gt;/</code>。
       </p>
       <div id="syTexNotice"></div>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
@@ -254,6 +269,7 @@ function renderSync(){
 
   renderSyncSummary();
   renderSyncItemSummary();
+  renderSyncElementSummary();
   renderSyncTable();
   renderSyncConflicts();
   renderSyncUETable();
@@ -425,11 +441,13 @@ function renderSync(){
   };
   const uePublishAll = document.getElementById('syUEPublishAll');
   if(uePublishAll) uePublishAll.onclick = ()=>_doPublishUE(
-    S.machines.map(m=>m.id).concat(S.items.map(it=>it.id)));
+    S.machines.map(m=>m.id).concat(S.items.map(it=>it.id))
+      .concat((S.elements || []).map(el=>el.id)));
   const uePublishStale = document.getElementById('syUEPublishStale');
   if(uePublishStale) uePublishStale.onclick = ()=>{
     const ids = S.machines.filter(m=>machineUEState(m).state !== 'exported').map(m=>m.id)
-      .concat(S.items.filter(it=>itemUEState(it).state !== 'exported').map(it=>it.id));
+      .concat(S.items.filter(it=>itemUEState(it).state !== 'exported').map(it=>it.id))
+      .concat((S.elements || []).filter(el=>elementUEState(el).state !== 'exported').map(el=>el.id));
     if(!ids.length){ toast('UE 侧已是最新'); return; }
     _doPublishUE(ids);
   };
@@ -477,6 +495,19 @@ function renderSync(){
     }).map(it=>it.id);
     if(!ids.length){ toast('没有需要导出的图标'); return; }
     _doExportItems(ids);
+  };
+
+  /* ---------- 元素图标导出 ---------- */
+  const eea = document.getElementById('syExportElementsAll');
+  if(eea) eea.onclick = ()=>_doExportElements((S.elements || []).map(el=>el.id));
+  const ees = document.getElementById('syExportElementsStale');
+  if(ees) ees.onclick = ()=>{
+    const ids = (S.elements || []).filter(el=>{
+      const s = elementSyncState(el).state;
+      return s === 'stale' || s === 'missing' || s === 'tampered' || s === 'none';
+    }).map(el=>el.id);
+    if(!ids.length){ toast('没有需要导出的元素图标'); return; }
+    _doExportElements(ids);
   };
 }
 
@@ -583,6 +614,30 @@ async function _doExportItems(ids){
   }
 }
 
+async function _doExportElements(ids){
+  if(_syncBusy) return;
+  _syncBusy = true;
+  const prog = document.getElementById('syElementProgress');
+  const btn = document.getElementById('syExportElementsAll');
+  if(btn){ btn.disabled = true; btn.textContent = '导出中…'; }
+  let fail = 0;
+  try{
+    const rs = await syncExportAllElements(ids, (i, n, id)=>{
+      if(prog) prog.textContent = id ? `正在导出 ${i+1}/${n}：${id}` : `完成 ${n} 个`;
+    });
+    rs.forEach(x=>{ if(!x.r.ok) fail++; });
+    const msg = `元素图标导出完成：${rs.length - fail} 成功` + (fail ? `，${fail} 失败` : '');
+    syncLog(msg, fail ? 'warn' : 'ok');
+    toast(msg);
+  }catch(e){
+    syncLog('元素图标导出中断：' + e.message, 'warn');
+    toast('元素图标导出中断：' + e.message);
+  }finally{
+    _syncBusy = false;
+    render();
+  }
+}
+
 /* ---------- UE 导出执行 ---------- */
 
 async function _doPublishUE(ids){
@@ -634,24 +689,36 @@ function renderSyncItemSummary(){
   el.innerHTML = _syncCountsHTML(itemSyncSummary());
 }
 
+function renderSyncElementSummary(){
+  const el = document.getElementById('syElementSummary');
+  if(!el) return;
+  el.innerHTML = _syncCountsHTML(elementSyncSummary());
+}
+
 /* ---------- 明细表 ---------- */
 
 function renderSyncTable(){
   const el = document.getElementById('syTable');
   if(!el) return;
   const rows = S.machines.map(m=>({
-    kind:'machine', id:m.id, name:m.name, item:null,
+    kind:'machine', id:m.id, name:m.name, item:null, element:null,
     s: machineSyncState(m), ue: machineUEState(m).state,
   })).concat((S.items || []).map(it=>({
-    kind:'item', id:it.id, name:it.name, item:it,
+    kind:'item', id:it.id, name:it.name, item:it, element:null,
     s: itemSyncState(it), ue: itemUEState(it).state,
+  }))).concat((S.elements || []).map(el=>({
+    kind:'element', id:el.id, name:el.name, item:null, element:el,
+    s: elementSyncState(el), ue: elementUEState(el).state,
   })));
+  const kindLabel = { machine:'机器', item:'图标', element:'元素' };
   el.innerHTML = tableHTML([
-    { t:'类型', w:'54px', f:r=>`<span class="pill">${r.kind === 'item' ? '图标' : '机器'}</span>` },
+    { t:'类型', w:'54px', f:r=>`<span class="pill">${kindLabel[r.kind] || r.kind}</span>` },
     { t:'ID', w:'120px', f:r=>`<code>${syncEscape(r.id)}</code>` },
     { t:'名称', w:'130px', f:r=>r.kind === 'item'
         ? `${iconHTML(r.item, 20)} ${syncEscape(r.name)}`
-        : syncEscape(r.name) },
+        : r.kind === 'element'
+          ? `${elementIconHTML(r.element, 20)} ${syncEscape(r.name)}`
+          : syncEscape(r.name) },
     { t:'状态', w:'96px', f:r=>syncStateTag(r.s.state) },
     { t:'UE', w:'88px', f:r=>ueStateTag(r.ue) },
     { t:'Blender', w:'90px', f:r=>{
@@ -692,7 +759,7 @@ function renderSyncTable(){
         return t ? `<span style="font-size:10.5px;color:var(--text-3)">${syncEscape(String(t).replace('T',' ').slice(5,16))}</span>`
                  : '<span style="color:var(--text-3)">—</span>';
       }},
-    { t:'操作', w:'76px', f:r=>`<button class="sm" data-${r.kind === 'item' ? 'syit' : 'syex'}="${syncEscape(r.id)}" ${_syncBusy ? 'disabled' : ''}>${r.s.state==='exported'?'重导':'导出'}</button>` },
+    { t:'操作', w:'76px', f:r=>`<button class="sm" data-${r.kind === 'item' ? 'syit' : r.kind === 'element' ? 'syel' : 'syex'}="${syncEscape(r.id)}" ${_syncBusy ? 'disabled' : ''}>${r.s.state==='exported'?'重导':'导出'}</button>` },
   ], rows);
 
   el.querySelectorAll('[data-syex]').forEach(b=>{
@@ -703,6 +770,11 @@ function renderSyncTable(){
   el.querySelectorAll('[data-syit]').forEach(b=>{
     b.onclick = async ()=>{
       _doExportItems([b.dataset.syit]);
+    };
+  });
+  el.querySelectorAll('[data-syel]').forEach(b=>{
+    b.onclick = async ()=>{
+      _doExportElements([b.dataset.syel]);
     };
   });
 }

@@ -164,9 +164,10 @@ python3 tools/stamp.py
 ├── *.uproject
 └── Forgeworks/            ← 项目根下，不进 Content/（避免 UE 扫到 .glb/.png 报警告）
     ├── _Source/           ← 中间文件：GLB / 图标 / 元数据
-    │   ├── Machines/<ID>/
-    │   ├── Items/Icons/
-    │   └── Data/
+    │   ├── 机器/<中文名>/
+    │   ├── 物品/图标/<中文名>/
+    │   ├── 数据/
+    │   └── 材质/<风格>/
     └── _Sync/
         └── manifest.json  ← 同步的真相来源
 ```
@@ -201,7 +202,7 @@ syncBindProject(path) / syncUnbindProject()
 machineContentHash(m)            // id/name/cat/footprint/tier/power
 machineStyleHash(m)              // presetId + overrides + accentFor(m.cat)
 machineSyncState(m)              // → none|exported|stale|missing|tampered|external
-syncExportMachine(id, opt)       // 离屏 canvas → createViewer3D → toGLB → base64 → POST
+syncExportMachine(id, opt)       // 离屏 canvas → createViewer3D → toGLB + 等轴测图标 PNG → base64 → POST
 syncExportAll(ids, onProgress)
 syncScan() / syncWatchEvents(onEvent)
 syncStateTag(state) / syncSummary()
@@ -211,7 +212,7 @@ syncStateTag(state) / syncSummary()
 
 **质量门禁**（在 `syncExportMachine` 内）：从 `st.spec.machine` 正则 `(\d+)\s*~\s*(\d+)` 取上限（默认 900），产出 `gate = {triangles, budget, over, severe, sizeCm, materials}`。**阈值逻辑写了，但没在真实数据上跑过。**
 
-**已知缺口**：`syncExportMachine` 目前只 POST 了 `mesh`（.glb）和 `preview`（等轴测 SVG），**图标 PNG 还没接进来**。导出节点要补。
+**角色**：`syncExportMachine` POST `mesh`（.glb）、`preview`（等轴测 SVG 留档）和 `icon`（256×256 PNG，供 UE 使用）。旧记录没有 `icon` 时会被标记为 `stale`，可用「只导出待更新/缺失」一键补齐。
 
 ### 3.3 `js/views/sync.js`（245 行）—— ⚠️ 有语法错误，见 §4
 
@@ -308,7 +309,7 @@ bash tests/run.sh          # 目标 48/48
 2. `python3 tools/bridge.py`（终端 A）。
 3. 浏览器开 `http://127.0.0.1:8787/`，进「同步」页，绑定 `/tmp/FakeUEProject`。
 4. 点「导出全部机器」（32 个）。观察：
-   - `_Source/Machines/<ID>/` 下是否出现 `.glb` + `_preview.svg`
+   - `_Source/机器/<中文名>/` 下是否出现 `.glb` + `_preview.svg`
    - manifest 里每条的 `meta` 是否有 `contentHash`/`styleHash`/`gate`（**这是三把 hash 状态机第一次真正生效**）
    - 质量门禁报的三角面数是多少（对照规格上限 900，验证 R14 到底多严重）
 5. 改一台机器的 footprint → 回列表看标记是否变 `stale (⟳)`。
@@ -464,7 +465,7 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 ## 12. P1.5 Blender 通道（2026-10-21）
 
 - 新增 `tools/fw_blender.py`：以 Blender 后台模式导入 GLB，校验网格数、材质槽、包围盒和落地位置，并用 EEVEE 输出 256×256 PNG 缩略图及 JSON 报告。
-- Bridge 为机器 GLB 添加串行后台队列，完成校验后把缩略图写入 `_Source/Machines/<ID>/<ID>_preview.png`，并在 manifest 记录状态、校验报告、大小和哈希；新增 `/api/thumbnail/machine/<ID>` 图片端点。失败或未安装 Blender 时 manifest 会保留相应状态。
+- Bridge 为机器 GLB 添加串行后台队列，完成校验后把缩略图写入 `_Source/机器/<中文名>/<ID>_preview.png`（按 manifest 的 `sourceDir` 定位），并在 manifest 记录状态、校验报告、大小和哈希；新增 `/api/thumbnail/machine/<ID>` 图片端点。失败或未安装 Blender 时 manifest 会保留相应状态。
 - 同步面板增加 Blender 状态与缩略图列。浏览器注入状态验证了缩略图展示路径。
 - 新增 `tests/test_fw_blender.py`，含 Blender 报告测试及 Bridge 异步队列/缩略图 API 集成测试；运行结果 2 项通过。
 - 真实 `MC_DRILL` GLB 验证：有效、1 网格、5 材质槽、尺寸约 2.00×1.95×2.79 m、2580 三角面；缩略图 API 返回 `image/png`，端到端约 1.87 秒。
@@ -478,7 +479,7 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 **目的**：GLB 原先只有 5 个纯色 PBR 材质槽（`images: 0 / textures: 0`）。本期给每类材质生成一张细节贴图，导出时内嵌进 GLB；颜色仍由风格色板决定。
 
-- `tools/fw_textures.py`：8 类材质规格（`concrete / steel / steelDark / steelLite / glass / rust / clean / ceramic`）、中性灰提示词、目录读写（`_Source/Materials/<风格>/textures.json`）、提交/轮询/落盘、路径与体积校验（单张 ≤ 20 MB）。
+- `tools/fw_textures.py`：8 类材质规格（`concrete / steel / steelDark / steelLite / glass / rust / clean / ceramic`）、中性灰提示词、目录读写（`_Source/材质/<风格>/textures.json`）、提交/轮询/落盘、路径与体积校验（单张 ≤ 20 MB）。
 - `tools/bridge.py`：`GET materials/textures`、`GET materials/texture/file`、`POST materials/texture/submit`、`POST materials/texture/poll`。提交要求同源回环 + `confirmRemote:true`，并推 `texture.progress` SSE。
 - `js/engines/material-textures.js`：拉取目录、把 AI 图压成中性明度（`fwNeutralCanvas`）、派生粗糙度、装载为 `THREE.CanvasTexture`（JPEG 内嵌）。同一套图可被任何风格复用。
 - `js/engines/viewer3d.js`：材质按 `mat.key` 挂 `map` / `roughnessMap`；目录异步到达后 `applyTextures()` 刷新，导出前在 `syncExportMachine` 等 `fwTexturesReady()`，GLTFExporter 才能把已解码的贴图写进 GLB。
@@ -552,17 +553,20 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 <Forgeworks 项目>/
 ├── forgeworks.project.json     项目标记（名称、创建时间）
 ├── project.json                全部内容（主存储；localStorage 仅离线兜底）
-├── _Source/{Machines,Items/Icons,Materials,Data}/
+├── _Source/{机器,物品/图标,材质,数据}/
 └── _Sync/{manifest.json,tool_versions,conflicts}/
 
 <UE 项目>/Forgeworks/
-├── _Source/Machines/<ID>/<ID>.glb      只复制 mesh 角色
-├── _Source/Items/Icons/<ID>/<ID>.png   只复制 icon 角色
+├── _Source/机器/<中文名>/<ID>.glb       只复制 mesh 角色
+├── _Source/机器/<中文名>/<ID>_icon.png  只复制 icon 角色
+├── _Source/物品/图标/<中文名>/<ID>.png   只复制 icon 角色
 └── _Sync/{manifest.json,ue_assets.json}
 ```
 
+- 目录名用资产显示名（`meta.name`），同名/非法字符时追加 `-<ID>`，最终回退到 `<ID>`；目录内文件名与 UE 对象名（`SM_<ID>`）仍用稳定 ASCII。`manifest.assets[<ID>].sourceDir` 是目录唯一真相。
+
 - `project.json` 由 Bridge 读写；内容变更防抖 400ms 回写，`contentRoot === 项目根` 才允许写，避免旧数据覆盖新项目。
-- **导出到 UE** 只复制机器 GLB、物品图标 PNG + 导出清单；`preview` / `thumbnail` / `pipeline` / `prompt` 不复制。`meta`（contentHash/styleHash/sizeCm/iconHash）原样带去，用于 `stale` 判定与尺寸校验。
+- **导出到 UE** 只复制机器 GLB/图标 PNG、物品图标 PNG + 导出清单；`preview` / `thumbnail` / `pipeline` / `prompt` 不复制。`meta`（contentHash/styleHash/sizeCm/iconHash）原样带去，用于 `stale` 判定与尺寸校验。
 - 导出状态机在项目层比较：项目 `contentHash/styleHash` vs UE manifest → `none | stale | exported`；同步表新增 UE 列。
 - **旧版迁移**：旧状态指向 `<UE>` 时，项目根迁移为 `<UE>/Forgeworks`（补写项目标记），且**不自动设 UE 目标**（导出根等于项目根会自拷贝）。`set_ue_target` / `publish_to_ue` 均拒绝相同目录。
 - UE 侧 `ue/fw_registry.py` 改为本地优先：先找 `PROJECT_ROOT/Forgeworks`，找不到再问 `/api/project/info`。
@@ -580,7 +584,7 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 ### 测试与验证
 
-- 新增 `tests/test_bridge_projects.py`：独立项目创建/打开、旧版迁移不设 UE 目标、旧版 UE 根不能当导出目标、发布只带 mesh、物品图标导出+发布。
+- 新增 `tests/test_bridge_projects.py`：独立项目创建/打开、旧版迁移不设 UE 目标、旧版 UE 根不能当导出目标、发布机器 GLB+图标、物品图标导出+发布。
 - `tests/test_fw_blender.py` 改用 `open_project`。Python 全套通过；`node --check` 通过。
 - Playwright 隔离环境实测（8788 端口 + `/tmp` 工程）：新建项目 → 设置 UE 目标 → 导出 MC_HAND（项目内得到 GLB + SVG/PNG 预览）→ 发布到 UE；UE 目录只有 `MC_HAND.glb` 与 `_Sync/manifest.json`，无 preview/pipeline/prompt；表格 UE 列变为「已导出」，汇总显示 `已导出 1 · 待导出 0 · 未导出 31`。
 - 隔离环境已清理；用户本机 8787 的 Bridge 需重启才能加载新路由。未提交。
@@ -589,9 +593,33 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 **用户要求**：物品图标同样要用在 UE 里，必须随项目保存并导出到 UE。
 
-- **项目侧**：`js/sync.js` 新增 `iconPngB64`（`iconURL` → Image → canvas → 透明底 256×256 PNG）、`syncExportItem`、`syncExportAllItems`，POST `kind: 'item'` 到 `/api/export/asset`；Bridge 落到 `<项目>/_Source/Items/Icons/<ID>/<ID>.png`。自定义上传图标与自动生成 SVG 走同一条路径。
+- **项目侧**：`js/sync.js` 新增 `iconPngB64`（`iconURL` → Image → canvas → 透明底 256×256 PNG）、`syncExportItem`、`syncExportAllItems`，POST `kind: 'item'` 到 `/api/export/asset`；Bridge 落到 `<项目>/_Source/物品/图标/<中文名>/<ID>.png`。自定义上传图标与自动生成 SVG 走同一条路径。
 - **状态**：`itemIconHash` 覆盖自定义图标、类型/颜色与当前风格；`itemSyncState` / `itemUEState` 与机器同样的 `none | stale | exported` 状态机。
-- **UE 发布**：`fw_project.UE_EXPORT_ROLES` 改为按类型声明（machine→mesh，item→icon），`publish_to_ue` 默认选两类资产；角色缺失分别报错/跳过。
+- **UE 发布**：`fw_project.UE_EXPORT_ROLES` 改为按类型声明（machine→mesh，item→icon），`publish_to_ue` 默认选两类资产；角色缺失分别报错/跳过。（机器图标在 §17 补入 `machine→mesh+icon`。）
 - **清单合并修复**：部分发布（如只发待更新的图标）原先会用本次结果覆盖 UE manifest，导致之前发布的机器记录消失；现改为读旧清单后合并再写。
 - **UI**：「项目资源」新增物品图标区块（导出全部 / 只导出待更新 + 状态汇总）；UE 卡按钮改为「导出全部资产（机器 N · 图标 M）」，待更新选择与汇总都包含物品；资产明细表新增类型列并列出物品图标。
-- **验证**：Python 40 项全过（新增物品发布、缺图标报错、部分发布不清旧记录、Bridge 导出+发布图标）；冒烟页 55/55。Playwright 实测 75 张图标写入项目并发布到 UE，UE manifest 107 个资产（32 机器 + 75 图标），目录只含 PNG/GLB/清单。版本戳 `?v=20261022j`。
+- **验证**：Python 41 项全过（新增物品发布、缺图标报错、部分发布不清旧记录、Bridge 导出+发布图标）；冒烟页 55/55。Playwright 实测 75 张图标写入项目并发布到 UE，UE manifest 107 个资产（32 机器 + 75 图标），目录只含 PNG/GLB/清单。版本戳 `?v=20261022j`。
+
+## 17. 机器图标导出（2026-10-23）
+
+**用户要求**：机器不能只导 GLB，图标也要给 UE。
+
+- **项目侧**：`syncExportMachine` 用 `isoPreview(m, 0, 256)` 生成与界面同视角的 SVG，再经 canvas 渲染成透明底 256×256 PNG，作为 `icon` 角色写入 `<项目>/_Source/机器/<中文名>/<ID>_icon.png`；`preview` SVG 仍留档。
+- **抽取复用**：`iconPngB64` 与新的 `machineIconB64` 共用 `imagePngB64(src, size, label)`（Image → canvas → PNG base64）。
+- **状态**：`machineSyncState` / `machineUEState` 增加 `hasAssetFile(rec, 'icon')` 判断；旧记录没有图标即标记 `stale`，可一键补导。
+- **UE 发布**：`fw_project.UE_EXPORT_ROLES['machine'] = ('mesh', 'icon')`，mesh 仍为必需角色，icon 缺失时只发 GLB（兼容旧资产）。
+- **UI**：同步页文案改为「机器 GLB/图标 PNG、物品图标 PNG 与清单」。
+- **测试**：`test_fw_project` 发布用例断言 `M1.glb` 与 `M1_icon.png` 都到 UE、preview/pipeline 不复制，并新增「无图标旧资产只发 GLB」用例；Python 42 项全过。
+
+## 18. 中文资源目录（2026-10-23）
+
+**用户要求**：导出的资产文件夹用中文，而不是英文/ID。
+
+- **目录布局**：项目与 UE 导出目录统一为 `_Source/机器/<中文名>/`、`_Source/物品/图标/<中文名>/`、`_Source/元素/<中文名>/`、`_Source/数据/`、`_Source/材质/<风格>/`；UE 内容路径同步为 `/Game/Forgeworks/机器/<中文名>`。
+- **元素资产**：每元素只含 PNG 图标（`<ID>.png`，256×256 透明底，自动生成或自定义），不参与 GLB / pipeline；与物品一样只镜像到磁盘，不导入 UE 内容浏览器。
+- **命名**：`meta.name` → NFC、压缩空白、替换 `/\:*?"<>|` 与 `#%&'{}~` 等非法字符；空名、Windows 保留名、超长名回退到资产 ID；同分类重名追加 `-<ID>`，仍冲突再追加序号。
+- **不变量**：目录内文件名保持 `<ID>.glb` / `<ID>_icon.png` / `<ID>_preview.svg`；UE 对象名保持 `SM_<ID>`，回报与注册表都从对象名解析 ID，不依赖目录名。
+- **真相来源**：`manifest.assets[<ID>].sourceDir`。Bridge 的扫盘、冲突归档、Blender 队列、缩略图、发布，以及 `fw_pipeline`、`fw_sync` 全部按它定位，不再拼英文路径。
+- **迁移**：manifest 增加 `layoutVersion: 2`。Bridge 打开项目/启动时调用 `fw_project.migrate_layout`，按 ID 排序逐个整目录移动（含 `pipeline/`、`.blend`、`.edited.glb`）并即时写回 manifest，可中断重跑；`_Source/Materials` 合并进 `材质`。绑定 UE 目标/发布时调用 `migrate_ue_export` 迁移 `<UE>/Forgeworks/_Source`，目标已存在时保留旧目录并记录，不覆盖。
+- **UE 侧**：`fw_sync.py` 从 `sourceDir` 推导磁盘路径与 `contentPath`，旧 `/Game/Forgeworks/Machines/<ID>/SM_<ID>` 仅在目标不存在时重命名；`fw_registry.py` 递归扫描 `/Game/Forgeworks`，按 `SM_<ID>` 去重并优先中文路径。
+- **状态**：机器改动 `name` 会触发 `contentHash` 变化；物品 `itemIconHash` 也纳入 `name`，改名后会标记待更新并随下次导出移动目录。

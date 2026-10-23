@@ -26,15 +26,17 @@ def _write_legacy_store(ue_root):
 def _write_machine(fw_root, asset_id='M1'):
     manifest_file = fw_root / '_Sync' / 'manifest.json'
     manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
+    meta = {'name': '钻机', 'sizeCm': [100, 100, 200], 'contentHash': 'abc'}
     manifest['assets'][asset_id] = {
         'kind': 'machine',
         'state': 'exported',
-        'sourceDir': '_Source/Machines/%s' % asset_id,
         'files': {'mesh': [{'path': asset_id + '.glb', 'sha1': 'sha1', 'size': 4}]},
-        'meta': {'name': '钻机', 'sizeCm': [100, 100, 200], 'contentHash': 'abc'},
+        'meta': meta,
     }
-    base = fw_root / '_Source' / 'Machines' / asset_id
-    base.mkdir(parents=True)
+    source_dir = fw_project.asset_source_dir(fw_root, 'machine', asset_id, meta, manifest)
+    manifest['assets'][asset_id]['sourceDir'] = source_dir
+    base = fw_root / source_dir
+    base.mkdir(parents=True, exist_ok=True)
     (base / (asset_id + '.glb')).write_bytes(b'glTF')
     pipeline = base / 'pipeline'
     pipeline.mkdir()
@@ -107,7 +109,7 @@ class BridgeProjectTest(unittest.TestCase):
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['published'], ['M1'])
 
-        exported = ue_root / 'Forgeworks' / '_Source' / 'Machines' / 'M1'
+        exported = ue_root / 'Forgeworks' / '_Source' / '机器' / '钻机'
         self.assertTrue((exported / 'M1.glb').is_file())
         self.assertFalse((exported / 'pipeline').exists())
         self.assertFalse((exported / 'prompt.txt').exists())
@@ -119,7 +121,7 @@ class BridgeProjectTest(unittest.TestCase):
             'icon': {'path': 'I1.png', 'b64': base64.b64encode(b'fake-png').decode()},
         }, {'name': '铁矿石', 'type': 'raw', 'iconHash': 'h1'})
         self.assertTrue(exported['ok'], exported)
-        self.assertTrue((fw_root / '_Source' / 'Items' / 'Icons' / 'I1' / 'I1.png').is_file())
+        self.assertTrue((fw_root / '_Source' / '物品' / '图标' / '铁矿石' / 'I1.png').is_file())
 
         ue_root = self.workspace / 'Game'
         ue_root.mkdir()
@@ -129,9 +131,55 @@ class BridgeProjectTest(unittest.TestCase):
         result = bridge.publish_to_ue()
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['published'], ['I1'])
-        published = ue_root / 'Forgeworks' / '_Source' / 'Items' / 'Icons' / 'I1' / 'I1.png'
+        published = ue_root / 'Forgeworks' / '_Source' / '物品' / '图标' / '铁矿石' / 'I1.png'
         self.assertTrue(published.is_file())
         self.assertEqual(published.read_bytes(), b'fake-png')
+
+    def test_export_and_publish_element_icon(self):
+        created = bridge.create_project(str(self.workspace), '元素工程')
+        fw_root = Path(created['fwDir'])
+        exported = bridge.export_asset('element', 'Fe', {
+            'icon': {'path': 'Fe.png', 'b64': base64.b64encode(b'fake-element-png').decode()},
+        }, {'name': '铁', 'symbol': 'Fe', 'tier': 1, 'iconHash': 'eh1'})
+        self.assertTrue(exported['ok'], exported)
+
+        icon_path = fw_root / '_Source' / '元素' / '铁' / 'Fe.png'
+        self.assertTrue(icon_path.is_file())
+        manifest = json.loads((fw_root / '_Sync' / 'manifest.json').read_text(encoding='utf-8'))
+        record = manifest['assets']['Fe']
+        self.assertEqual(record['kind'], 'element')
+        self.assertEqual(record['files']['icon'][0]['path'], 'Fe.png')
+        self.assertEqual(record['meta']['iconHash'], 'eh1')
+        self.assertEqual(record['sourceDir'], '_Source/元素/铁')
+
+        ue_root = self.workspace / 'Game'
+        ue_root.mkdir()
+        (ue_root / 'Game.uproject').write_text('{}', encoding='utf-8')
+        self.assertTrue(bridge.set_ue_target(str(ue_root))['ok'])
+
+        result = bridge.publish_to_ue()
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['published'], ['Fe'])
+        published = ue_root / 'Forgeworks' / '_Source' / '元素' / '铁' / 'Fe.png'
+        self.assertTrue(published.is_file())
+        self.assertEqual(published.read_bytes(), b'fake-element-png')
+        self.assertFalse((published.parent / 'pipeline').exists())
+
+    def test_export_rejects_cross_kind_id_collision(self):
+        created = bridge.create_project(str(self.workspace), '冲突工程')
+        fw_root = Path(created['fwDir'])
+        first = bridge.export_asset('item', 'X1', {
+            'icon': {'path': 'X1.png', 'b64': base64.b64encode(b'item').decode()},
+        }, {'name': '方块', 'iconHash': 'i1'})
+        self.assertTrue(first['ok'], first)
+
+        second = bridge.export_asset('element', 'X1', {
+            'icon': {'path': 'X1.png', 'b64': base64.b64encode(b'element').decode()},
+        }, {'name': '氙', 'symbol': 'Xe', 'iconHash': 'e1'})
+        self.assertFalse(second['ok'], second)
+        self.assertIn('已被其他类型占用', second['error'])
+        self.assertTrue((fw_root / '_Source' / '物品' / '图标' / '方块' / 'X1.png').is_file())
+        self.assertFalse((fw_root / '_Source' / '元素' / '氙').exists())
 
 
 if __name__ == '__main__':

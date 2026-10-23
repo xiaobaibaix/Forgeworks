@@ -27,21 +27,49 @@ class UEPipelineTest(unittest.TestCase):
     def test_import_plan_uses_project_content_path_and_meter_scale(self):
         manifest = {'assets': {'MC_DRILL': {
             'kind': 'machine',
+            'sourceDir': '_Source/机器/地质钻机',
             'files': {'mesh': [{'path': 'MC_DRILL.glb', 'sha1': 'abc'}]},
             'meta': {'sizeM': [2.0, 2.0, 2.79]},
         }}}
 
         with tempfile.TemporaryDirectory() as directory:
             base = pathlib.Path(directory)
-            mesh = base / '_Source' / 'Machines' / 'MC_DRILL' / 'MC_DRILL.glb'
+            mesh = base / '_Source' / '机器' / '地质钻机' / 'MC_DRILL.glb'
             mesh.parent.mkdir(parents=True)
             mesh.write_bytes(b'glb')
             plan = fw_sync.build_import_plan(manifest, base, ['MC_DRILL'])
 
         self.assertEqual(len(plan), 1)
-        self.assertEqual(plan[0]['contentPath'], '/Game/Forgeworks/Machines/MC_DRILL')
-        self.assertTrue(plan[0]['sourcePath'].endswith('/_Source/Machines/MC_DRILL/MC_DRILL.glb'))
+        self.assertEqual(plan[0]['contentPath'], '/Game/Forgeworks/机器/地质钻机')
+        self.assertTrue(plan[0]['sourcePath'].endswith('/_Source/机器/地质钻机/MC_DRILL.glb'))
+        self.assertEqual(plan[0]['assetName'], 'SM_MC_DRILL')
         self.assertEqual(plan[0]['importOptions']['uniformScale'], 100.0)
+
+    def test_import_plan_falls_back_to_chinese_draft_dir_without_source_dir(self):
+        manifest = {'assets': {'MC_DRILL': {
+            'kind': 'machine',
+            'files': {'mesh': [{'path': 'MC_DRILL.glb'}]},
+        }}}
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            mesh = base / '_Source' / '机器' / 'MC_DRILL' / 'MC_DRILL.glb'
+            mesh.parent.mkdir(parents=True)
+            mesh.write_bytes(b'glb')
+            plan = fw_sync.build_import_plan(manifest, base, ['MC_DRILL'])
+
+        self.assertEqual(plan[0]['contentPath'], '/Game/Forgeworks/机器/MC_DRILL')
+
+    def test_import_plan_skips_element_records(self):
+        manifest = {'assets': {'Fe': {
+            'kind': 'element',
+            'sourceDir': '_Source/元素/铁',
+            'files': {'icon': [{'path': 'Fe.png', 'sha1': 'eh1'}]},
+            'meta': {'name': '铁', 'symbol': 'Fe', 'iconHash': 'eh1'},
+        }}}
+
+        self.assertEqual(fw_sync.build_import_plan(manifest, ROOT, ['Fe']), [])
+        self.assertEqual(fw_sync.build_import_plan(manifest, ROOT), [])
 
     def test_import_plan_rejects_traversal_mesh_path(self):
         manifest = {'assets': {'MC_DRILL': {
@@ -62,24 +90,37 @@ class UEPipelineTest(unittest.TestCase):
         rows = fw_registry.normalize_assets([
             {'objectPath': '/Game/Forgeworks/Machines/MC_DRILL/SM_MC_DRILL.SM_MC_DRILL',
              'class': 'StaticMesh', 'bounds': {'x': 200, 'y': 195, 'z': 279},
+             'triangles': 1000, 'materialSlots': ['M_old'], 'dependencies': []},
+            {'objectPath': '/Game/Forgeworks/机器/地质钻机/SM_MC_DRILL.SM_MC_DRILL',
+             'class': 'StaticMesh', 'bounds': {'x': 200, 'y': 195, 'z': 279},
              'triangles': 2580, 'materialSlots': ['M_body'], 'dependencies': []},
             {'objectPath': '/Game/Engine/Default.Default', 'class': 'StaticMesh'},
-            {'objectPath': '/Game/Forgeworks/Machines/../Other/Bad.Bad', 'class': 'StaticMesh'},
+            {'objectPath': '/Game/Forgeworks/机器/../Other/Bad.Bad', 'class': 'StaticMesh'},
         ])
 
         self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['id'], 'MC_DRILL')
+        self.assertEqual(rows[0]['objectPath'], '/Game/Forgeworks/机器/地质钻机/SM_MC_DRILL.SM_MC_DRILL')
         self.assertEqual(rows[0]['triangles'], 2580)
         self.assertEqual(rows[0]['bounds'], {'x': 200.0, 'y': 195.0, 'z': 279.0})
 
     def test_ue_report_requires_known_machine_and_matching_content_path(self):
-        manifest = {'assets': {'MC_DRILL': {'kind': 'machine', 'files': {'mesh': [{'sha1': 'abc'}]}}}}
-        report = {'contentPath': '/Game/Forgeworks/Machines/MC_DRILL',
-                  'assets': {'mesh': '/Game/Forgeworks/Machines/MC_DRILL/SM_MC_DRILL.SM_MC_DRILL'},
+        manifest = {'assets': {'MC_DRILL': {'kind': 'machine', 'sourceDir': '_Source/机器/地质钻机',
+                                             'files': {'mesh': [{'sha1': 'abc'}]}}}}
+        report = {'contentPath': '/Game/Forgeworks/机器/地质钻机',
+                  'assets': {'mesh': '/Game/Forgeworks/机器/地质钻机/SM_MC_DRILL.SM_MC_DRILL'},
                   'bounds': {'x': 200, 'y': 195, 'z': 279}, 'triangles': 2580,
                   'materialSlots': ['M_body'], 'sourceSha1': 'abc'}
 
         normalized = bridge.normalize_ue_report('MC_DRILL', report, manifest)
         self.assertEqual(normalized['bounds']['x'], 200.0)
+        self.assertEqual(normalized['contentPath'], '/Game/Forgeworks/机器/地质钻机')
+        legacy = {'contentPath': '/Game/Forgeworks/Machines/MC_DRILL',
+                  'assets': {'mesh': '/Game/Forgeworks/Machines/MC_DRILL/SM_MC_DRILL.SM_MC_DRILL'},
+                  'bounds': {'x': 200, 'y': 195, 'z': 279}, 'triangles': 2580,
+                  'materialSlots': ['M_body'], 'sourceSha1': 'abc'}
+        self.assertEqual(bridge.normalize_ue_report('MC_DRILL', legacy, manifest)['contentPath'],
+                         '/Game/Forgeworks/Machines/MC_DRILL')
         with self.assertRaises(ValueError):
             bridge.normalize_ue_report('UNKNOWN', report, manifest)
         with self.assertRaises(ValueError):
@@ -96,13 +137,13 @@ class UEPipelineTest(unittest.TestCase):
     def test_external_mesh_change_archives_both_versions_and_keep_tool_restores(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            source = root / '_Source' / 'Machines' / 'MC_DRILL' / 'MC_DRILL.glb'
+            source = root / '_Source' / '机器' / '地质钻机' / 'MC_DRILL.glb'
             baseline = root / '_Sync' / 'tool_versions' / 'MC_DRILL' / 'MC_DRILL.glb'
             source.parent.mkdir(parents=True)
             baseline.parent.mkdir(parents=True)
             baseline.write_bytes(b'tool-version')
             source.write_bytes(b'disk-version')
-            manifest = {'assets': {'MC_DRILL': {'kind': 'machine', 'sourceDir': '_Source/Machines/MC_DRILL',
+            manifest = {'assets': {'MC_DRILL': {'kind': 'machine', 'sourceDir': '_Source/机器/地质钻机',
                 'files': {'mesh': [{'path': 'MC_DRILL.glb', 'sha1': bridge.sha1_bytes(b'tool-version')}]}}}}
             old_save, old_events = bridge.save_manifest, bridge.push_event
             bridge.save_manifest = lambda _: None

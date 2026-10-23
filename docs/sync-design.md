@@ -17,12 +17,12 @@
 ├── forgeworks.project.json              ← 项目标记（含名称、创建时间）
 ├── project.json                         ← 全部内容数据（替代 localStorage 作为主存储）
 ├── _Source/
-│   ├── Machines/<ID>/                   ← GLB + 预览 SVG/PNG + pipeline/prompt
-│   ├── Items/Icons/  Materials/  Data/
+│   ├── 机器/<中文名>/                    ← GLB + 预览 SVG/PNG + pipeline/prompt
+│   ├── 物品/图标/<中文名>/ 元素/<中文名>/ 材质/<风格>/ 数据/
 └── _Sync/                               ← manifest.json、tool_versions、conflicts
 
 <UE 项目>/Forgeworks/                     ← 仅导出目标，可随时更换
-├── _Source/Machines/<ID>/<ID>.glb       ← 只复制 mesh 角色
+├── _Source/机器/<中文名>/<ID>.glb        ← 只复制 mesh 角色
 └── _Sync/
     ├── manifest.json                    ← 导出清单（保留 meta：contentHash/styleHash/sizeCm）
     └── ue_assets.json                   ← UE 侧 AssetRegistry 快照
@@ -242,24 +242,25 @@ StellarEra/                                 ← UE 项目根（F1 绑定这一�
 ├── Config/
 ├── Content/
 │   └── Forgeworks/                         ← UE 资产根（uasset 在这）
-│       ├── Machines/
-│       │   └── MC_DRILL/
+│       ├── 机器/
+│       │   └── 地质钻机/
 │       │       ├── SM_MC_DRILL.uasset
 │       │       ├── M_MC_DRILL.uasset
 │       │       └── T_MC_DRILL_Basecolor.uasset
-│       ├── Items/Icons/
-│       └── Materials/Master/
+│       ├── 物品/图标/
+│       └── 材质/Master/
 ├── Forgeworks/                             ← ★ 工具工作区（不在 Content 下！）
 │   ├── _Source/                            工具写的中间文件
-│   │   ├── Machines/MC_DRILL/
+│   │   ├── 机器/地质钻机/
 │   │   │   ├── MC_DRILL.glb
 │   │   │   ├── MC_DRILL.meta.json
 │   │   │   └── tex/
 │   │   │       ├── T_MC_DRILL_basecolor.png
 │   │   │       ├── T_MC_DRILL_normal.png
 │   │   │       └── T_MC_DRILL_orm.png
-│   │   ├── Items/Icons/ICON_ORE_FE.png
-│   │   └── Data/DT_*.csv
+│   │   ├── 物品/图标/铁矿石/ICON_ORE_FE.png
+│   │   ├── 元素/铁/Fe.png
+│   │   └── 数据/DT_*.csv
 │   ├── _Sync/
 │   │   ├── manifest.json                   同步真相来源
 │   │   ├── ue_assets.json                  UE 侧回写的资产清单
@@ -289,7 +290,7 @@ StellarEra/                                 ← UE 项目根（F1 绑定这一�
 一个机器一个子目录，机器目录内**平铺**（不再按贴图类型分子目录），理由：UE 导入时一个目录对应一个资产集合，平铺更容易批量操作。
 
 ```
-_Source/Machines/MC_DRILL/
+_Source/机器/地质钻机/
 ├── MC_DRILL.glb              网格（单网格 + N 材质槽）
 ├── MC_DRILL.meta.json        元数据（部件层级、变换、动画、材质绑定）
 ├── tex/T_MC_DRILL_basecolor.png
@@ -337,7 +338,7 @@ _Source/Machines/MC_DRILL/
     "MC_DRILL": {
       "kind": "machine",
       "state": "exported",            // 见 §4.3 状态机
-      "sourceDir": "_Source/Machines/MC_DRILL",
+      "sourceDir": "_Source/机器/地质钻机",
       "files": {
         "mesh":   { "path": "MC_DRILL.glb", "size": 91208, "sha1": "9c1e...", "mtime": "2026-10-21T10:31:02Z" },
         "meta":   { "path": "MC_DRILL.meta.json", "sha1": "77ab..." },
@@ -348,12 +349,12 @@ _Source/Machines/MC_DRILL/
         "icon":   { "path": "ICON_MC_DRILL.png", "sha1": "..." }
       },
       "ue": {
-        "contentPath": "/Game/Forgeworks/Machines/MC_DRILL",
+        "contentPath": "/Game/Forgeworks/机器/地质钻机",
         "importedAt": "2026-10-21T10:31:40Z",
         "importedBy": "fw_sync.py@0.1",
         "assets": {
-          "mesh":     "/Game/Forgeworks/Machines/MC_DRILL/SM_MC_DRILL.SM_MC_DRILL",
-          "material": "/Game/Forgeworks/Machines/MC_DRILL/M_MC_DRILL.M_MC_DRILL"
+          "mesh":     "/Game/Forgeworks/机器/地质钻机/SM_MC_DRILL.SM_MC_DRILL",
+          "material": "/Game/Forgeworks/机器/地质钻机/M_MC_DRILL.M_MC_DRILL"
         },
         "importOptions": { "uniformScale": 100, "combineMeshes": true, "generateLightmapUV": true }
       },
@@ -419,7 +420,7 @@ _Source/Machines/MC_DRILL/
    │
    ├─2 Bridge 生成（服务端做，因为要写二进制 + 可能调 Blender）
    │     a. 构建图元（复用 buildMachineParts 的逻辑，需要移植到 Python 或由前端传几何）
-   │     b. 写 _Source/Machines/<ID>/<ID>.glb
+   │     b. 写 _Source/机器/<中文名>/<ID>.glb
    │     c. 写 <ID>.meta.json（层级 / 变换 / 材质槽 / 动画 / 风格快照）
    │     d. 生成贴图：程序化生成 basecolor / normal / ORM（见下）
    │     e. 生成图标 PNG（前端 SVG → 栅格化，或服务端用 cairosvg）
@@ -515,12 +516,12 @@ L1 的产物：
   "generatedAt": "2026-10-21T10:35:00Z",
   "assets": [
     {
-      "objectPath": "/Game/Forgeworks/Machines/MC_DRILL/SM_MC_DRILL.SM_MC_DRILL",
+      "objectPath": "/Game/Forgeworks/机器/地质钻机/SM_MC_DRILL.SM_MC_DRILL",
       "class": "StaticMesh",
       "bounds": { "x": 200.0, "y": 195.0, "z": 340.0 },
       "triangles": 612,
       "materialSlots": ["M_MC_DRILL"],
-      "dependencies": ["/Game/Forgeworks/Machines/MC_DRILL/M_MC_DRILL"]
+      "dependencies": ["/Game/Forgeworks/机器/地质钻机/M_MC_DRILL"]
     }
   ]
 }

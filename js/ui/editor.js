@@ -29,6 +29,76 @@ function openEditor(coll, id){
 }
 function closeModal(){ document.getElementById('mask').classList.add('hide'); modalState=null; }
 
+/** 图标资源区（预览 + 上传 + 恢复自动 + 可选生成按钮），物品与元素共用 */
+function iconResourceHTML(opt){
+  opt = opt || {};
+  const hasCustom = !!opt.hasCustom;
+  return `<div style="border-top:1px solid var(--border);margin:16px 0 12px;padding-top:14px">
+    <div style="font-size:12px;font-weight:500;margin-bottom:10px">图标</div>
+    <div style="display:flex;gap:14px;align-items:flex-start">
+      <div id="iconPrev" style="width:72px;height:72px;flex:0 0 72px;display:flex;align-items:center;
+           justify-content:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px">
+        ${opt.previewHTML||''}
+      </div>
+      <div style="flex:1">
+        <div id="iconHint" style="font-size:11px;color:var(--text-3);margin-bottom:8px">
+          ${hasCustom?'当前使用<strong>自定义图标</strong>':'当前使用<strong>自动生成图标</strong>'}
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <label class="sm" style="display:inline-block;padding:6px 12px;border:1px solid var(--border-2);
+                 border-radius:7px;cursor:pointer;font-size:12px;background:var(--panel)">
+            上传图标<input type="file" id="iconFile" accept="image/*" style="display:none">
+          </label>
+          <button class="sm" id="iconClear" ${hasCustom?'':'disabled'}>恢复自动生成</button>
+          ${opt.showGenerate?'<button class="sm" id="iconGen">生成图标 →</button>':''}
+        </div>
+        <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
+          上传的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/** 绑定图标资源区的交互；renderAuto 接收 makeTmp() 的临时对象，返回 <img> HTML */
+function bindIconResource(opt){
+  opt = opt || {};
+  const makeTmp = opt.makeTmp || (()=>({}));
+  const renderAuto = opt.renderAuto || (tmp=>iconHTML(tmp, 52));
+  const prev = document.getElementById('iconPrev');
+  const hint = document.getElementById('iconHint');
+  const clearBtn = document.getElementById('iconClear');
+  const setHint = html=>{ const h = document.getElementById('iconHint'); if(h) h.innerHTML = html; };
+
+  const fileInput = document.getElementById('iconFile');
+  if(fileInput) fileInput.onchange = async e=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    if(!/^image\//.test(f.type)){ toast('请选择图片文件'); return; }
+    try{
+      const dataUrl = await readIconFile(f);
+      prev.innerHTML = `<img src="${dataUrl}" width="52" height="52" style="border-radius:6px">`;
+      prev.dataset.pending = dataUrl;   // 提交时读取
+      setHint('当前使用<strong>自定义图标</strong>（待保存）');
+      if(clearBtn) clearBtn.disabled = false;
+      toast('图标已载入，点保存生效');
+    }catch(err){ toast('图标读取失败：'+err.message); }
+  };
+
+  if(clearBtn) clearBtn.onclick = ()=>{
+    delete prev.dataset.pending;
+    prev.dataset.cleared = '1';
+    prev.innerHTML = renderAuto(makeTmp());
+    setHint('已恢复<strong>自动生成图标</strong>（待保存）');
+    toast('已恢复自动生成（待保存）');
+  };
+
+  const gen = document.getElementById('iconGen');
+  if(gen && opt.onGenerate) gen.onclick = opt.onGenerate;
+
+  return { prev, hint, makeTmp, renderAuto };
+}
+
 function renderEditorForm(coll, d, isNew){
   const b=document.getElementById('mBody');
   const F=(name,label,val,type='text',extra='')=>
@@ -38,10 +108,34 @@ function renderEditorForm(coll, d, isNew){
       `<option value="${o.v}" ${o.v===val?'selected':''}>${o.t}</option>`).join('')}</select></div>`;
 
   if(coll==='elements'){
+    const hasCustom = !!(d && d.icon && d.icon.trim());
     b.innerHTML = F('id','ID（建议 元素符号，如 Fe）', d?.id||'','text','required') +
       F('name','名称', d?.name||'') + F('symbol','符号', d?.symbol||'') +
       F('color','颜色（hex）', d?.color||'#888780') +
-      SEL('tier','等级', String(d?.tier??0), [0,1,2,3].map(t=>({v:String(t),t:'T'+t})));
+      SEL('tier','等级', String(d?.tier??0), [0,1,2,3].map(t=>({v:String(t),t:'T'+t}))) +
+      iconResourceHTML({ previewHTML: d?elementIconHTML(d,52):'', hasCustom });
+
+    const makeTmp = ()=>({
+      id:document.getElementById('f_id').value,
+      name:document.getElementById('f_name').value,
+      symbol:document.getElementById('f_symbol').value,
+      color:document.getElementById('f_color').value,
+      tier:document.getElementById('f_tier').value,
+      icon:'',
+    });
+    bindIconResource({ makeTmp, renderAuto: tmp=>elementIconHTML(tmp, 52) });
+
+    // 字段变化时刷新自动图标预览（自定义/待保存状态不覆盖）
+    const refreshAuto = ()=>{
+      const prev = document.getElementById('iconPrev');
+      if(prev.dataset.pending) return;
+      if(!prev.dataset.cleared && d && d.icon && d.icon.trim()) return;
+      prev.innerHTML = elementIconHTML(makeTmp(), 52);
+    };
+    ['f_id','f_name','f_symbol','f_color','f_tier'].forEach(n=>{
+      const el = document.getElementById(n);
+      if(el){ el.oninput = refreshAuto; el.onchange = refreshAuto; }
+    });
   }
   else if(coll==='items'){
     const hasCustom = !!(d && d.icon && d.icon.trim());
@@ -52,33 +146,8 @@ function renderEditorForm(coll, d, isNew){
         ['raw','concentrate','ingot','part','material','module','mega','byproduct','fluid'].map(t=>({v:t,t:typeLabel(t)}))) +
       F('value','价值', d?.value??1,'number') + F('color','颜色', d?.color||'#888780') +
       F('desc','说明', d?.desc||'') +
-      // ---- 资源区 ----
-      `<div style="border-top:1px solid var(--border);margin:16px 0 12px;padding-top:14px">
-        <div style="font-size:12px;font-weight:500;margin-bottom:10px">图标</div>
-        <div style="display:flex;gap:14px;align-items:flex-start">
-          <div id="iconPrev" style="width:72px;height:72px;flex:0 0 72px;display:flex;align-items:center;
-               justify-content:center;background:var(--panel-2);border:1px solid var(--border);border-radius:10px">
-            ${d?iconHTML(d,52):''}
-          </div>
-          <div style="flex:1">
-            <div style="font-size:11px;color:var(--text-3);margin-bottom:8px">
-              ${hasCustom?'当前使用<strong>自定义图标</strong>':'当前使用<strong>自动生成图标</strong>（按颜色+类型绘制）'}
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              <label class="sm" style="display:inline-block;padding:6px 12px;border:1px solid var(--border-2);
-                     border-radius:7px;cursor:pointer;font-size:12px;background:var(--panel)">
-                上传图标<input type="file" id="iconFile" accept="image/*" style="display:none">
-              </label>
-              <button class="sm" id="iconClear" ${hasCustom?'':'disabled'}>恢复自动生成</button>
-              <button class="sm" id="iconGen" ${isNew?'disabled':''}>生成图标 →</button>
-            </div>
-            <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
-              上传的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
-            </div>
-          </div>
-        </div>
-      </div>
-      <div style="border-top:1px solid var(--border);margin:14px 0 12px;padding-top:14px">
+      iconResourceHTML({ previewHTML: d?iconHTML(d,52):'', hasCustom, showGenerate:!isNew }) +
+      `<div style="border-top:1px solid var(--border);margin:14px 0 12px;padding-top:14px">
         <div style="font-size:12px;font-weight:500;margin-bottom:10px">模型</div>
         <div class="row">
           <div class="field"><label>模型状态</label>
@@ -95,47 +164,29 @@ function renderEditorForm(coll, d, isNew){
         </div>
       </div>`;
 
-    // 图标上传
-    const fileInput = document.getElementById('iconFile');
-    fileInput.onchange = async e=>{
-      const f = e.target.files[0];
-      if(!f) return;
-      if(!/^image\//.test(f.type)){ toast('请选择图片文件'); return; }
-      try{
-        const dataUrl = await readIconFile(f);
-        const prev = document.getElementById('iconPrev');
-        prev.innerHTML = `<img src="${dataUrl}" width="52" height="52" style="border-radius:6px">`;
-        prev.dataset.pending = dataUrl;   // 提交时读取
-        const hint = prev.parentElement.querySelector('div > div');
-        if(hint) hint.innerHTML = '当前使用<strong>自定义图标</strong>（待保存）';
-        document.getElementById('iconClear').disabled = false;
-        toast('图标已载入，点保存生效');
-      }catch(err){ toast('图标读取失败：'+err.message); }
-    };
-    document.getElementById('iconClear').onclick = ()=>{
-      const prev = document.getElementById('iconPrev');
-      delete prev.dataset.pending;
-      prev.dataset.cleared = '1';
-      // 用当前表单值临时构造物品来预览自动图标
-      const tmp = {id:document.getElementById('f_id').value, type:document.getElementById('f_type').value,
-                   color:document.getElementById('f_color').value, icon:''};
-      prev.innerHTML = iconHTML(tmp, 52);
-      toast('已恢复自动生成（待保存）');
-    };
-    document.getElementById('iconGen').onclick = ()=>{
-      if(!d) return;
-      if(!confirm('进入生成管线？当前未保存的修改会丢失。')) return;
-      const fromView = cur;
-      closeModal();
-      pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor'});
-    };
+    const makeItemTmp = ()=>({
+      id:document.getElementById('f_id').value,
+      type:document.getElementById('f_type').value,
+      color:document.getElementById('f_color').value,
+      icon:'',
+    });
+    bindIconResource({
+      makeTmp: makeItemTmp,
+      renderAuto: tmp=>iconHTML(tmp, 52),
+      onGenerate: ()=>{
+        if(!d) return;
+        if(!confirm('进入生成管线？当前未保存的修改会丢失。')) return;
+        const fromView = cur;
+        closeModal();
+        pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor'});
+      },
+    });
     // 类型/颜色变化时刷新自动图标预览
     const refreshAuto = ()=>{
       const prev = document.getElementById('iconPrev');
       if(prev.dataset.pending) return;
       if(!prev.dataset.cleared && d && d.icon && d.icon.trim()) return;
-      const tmp = {id:document.getElementById('f_id').value, type:document.getElementById('f_type').value,
-                   color:document.getElementById('f_color').value, icon:''};
+      const tmp = makeItemTmp();
       prev.innerHTML = iconHTML(tmp, 52);
       const box = document.getElementById('modelHintBox');
       if(box) box.textContent = '建议：' + modelHint(tmp);
@@ -222,15 +273,22 @@ function commitEditor(){
   const {coll,id,isNew}=modalState;
   const g=n=>document.getElementById('f_'+n)?.value;
   let obj=null;
-  if(coll==='elements') obj={id:g('id').trim(),name:g('name').trim(),symbol:g('symbol').trim(),
-    color:g('color').trim(),tier:+g('tier')};
+  if(coll==='elements'){
+    const prev = document.getElementById('iconPrev');
+    let iconVal = '';
+    if(prev && prev.dataset.pending) iconVal = prev.dataset.pending;
+    else if(prev && prev.dataset.cleared) iconVal = '';
+    else iconVal = S.elements.find(x=>x.id===id)?.icon || '';
+    obj={id:g('id').trim(),name:g('name').trim(),symbol:g('symbol').trim(),
+      color:g('color').trim(),tier:+g('tier'),icon:iconVal};
+  }
   else if(coll==='items'){
     // 图标：优先取刚上传的，其次看是否点了"恢复自动"，否则沿用原值
     const prev = document.getElementById('iconPrev');
     let iconVal = '';
     if(prev && prev.dataset.pending) iconVal = prev.dataset.pending;
     else if(prev && prev.dataset.cleared) iconVal = '';
-    else iconVal = d?.icon || '';
+    else iconVal = S.items.find(x=>x.id===id)?.icon || '';
     obj={id:g('id').trim(),name:g('name').trim(),tier:+g('tier'),
       type:g('type'),value:+g('value')||0,color:g('color').trim(),desc:g('desc'),
       icon:iconVal,

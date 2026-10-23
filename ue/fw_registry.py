@@ -6,7 +6,8 @@ import urllib.request
 
 BRIDGE_URL = 'http://127.0.0.1:8787'
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAFE_OBJECT_PATH = re.compile(r'^/Game/Forgeworks/Machines/([A-Za-z0-9_]+)/([A-Za-z0-9_.]+)$')
+SAFE_OBJECT_PATH = re.compile(r'^/Game/Forgeworks/((?:[^/<>:"\\|?*\x00]+/)+)(SM_([A-Za-z0-9_]{1,64}))\.\2$')
+LEGACY_MACHINE_ROOT = '/Game/Forgeworks/Machines/'
 
 
 def target_forgeworks_root():
@@ -21,10 +22,17 @@ def target_forgeworks_root():
     return root if os.path.basename(root) == 'Forgeworks' else os.path.join(root, 'Forgeworks')
 
 
+def _path_priority(object_path):
+    """中文目录优先于旧 /Machines/ 路径，避免同 ID 旧资产盖掉新资产。"""
+    return 0 if object_path.startswith(LEGACY_MACHINE_ROOT) else 1
+
+
 def normalize_assets(assets):
     rows = []
+    by_id = {}
     for asset in assets or []:
-        match = SAFE_OBJECT_PATH.fullmatch(str(asset.get('objectPath') or ''))
+        object_path = str(asset.get('objectPath') or '')
+        match = SAFE_OBJECT_PATH.fullmatch(object_path)
         if not match or asset.get('class') != 'StaticMesh':
             continue
         bounds = asset.get('bounds') or {}
@@ -41,21 +49,25 @@ def normalize_assets(assets):
             continue
         slots = [str(slot) for slot in asset.get('materialSlots', []) if str(slot)]
         dependencies = [str(path) for path in asset.get('dependencies', []) if str(path).startswith('/Game/')]
-        rows.append({
-            'id': match.group(1),
-            'objectPath': match.group(0),
+        row = {
+            'id': match.group(3),
+            'objectPath': object_path,
             'class': 'StaticMesh',
             'bounds': clean_bounds,
             'triangles': triangles,
             'materialSlots': slots,
             'dependencies': dependencies,
-        })
+        }
+        existing = by_id.get(row['id'])
+        if existing is None or _path_priority(object_path) > _path_priority(existing['objectPath']):
+            by_id[row['id']] = row
+    rows = list(by_id.values())
     return sorted(rows, key=lambda item: item['objectPath'])
 
 
 def collect_assets(unreal):
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    data = registry.get_assets_by_path('/Game/Forgeworks/Machines', recursive=True)
+    data = registry.get_assets_by_path('/Game/Forgeworks', recursive=True)
     rows = []
     for asset_data in data or []:
         class_name = str(getattr(asset_data, 'asset_class_path', getattr(asset_data, 'asset_class', '')))

@@ -21,7 +21,7 @@ function typeLabel(t){
 function addBtn(label){
   const b=document.createElement('button');
   b.className='primary'; b.textContent=label;
-  b.onclick=()=>openEditor(null);
+  b.onclick=()=>openEditor(cur);
   document.getElementById('headActions').appendChild(b);
   return b;
 }

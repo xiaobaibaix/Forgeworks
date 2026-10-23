@@ -62,17 +62,24 @@ class PipelineGraphTest(unittest.TestCase):
             graph = fw_pipeline.starter_graph('M1')
             graph['nodes'][0]['params']['text'] = '重型钻机'
             fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
-            archive = Path(directory) / '_Source' / 'Machines' / 'M1' / 'pipeline'
+            archive = Path(directory) / '_Source' / '机器' / 'M1' / 'pipeline'
             self.assertTrue((archive / 'graph.json').is_file())
             self.assertEqual((archive / 'prompt.txt').read_text(encoding='utf-8'), '重型钻机')
             info = fw_pipeline.archive_info(directory, 'M1', 'machine')
             self.assertTrue(info['exists'])
-            self.assertEqual(info['path'], '_Source/Machines/M1/pipeline')
+            self.assertEqual(info['path'], '_Source/机器/M1/pipeline')
 
     def test_item_archive_uses_items_icons_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             fw_pipeline.save_graph(directory, 'I1', fw_pipeline.starter_graph('I1'), kind='item')
-            self.assertTrue((Path(directory) / '_Source' / 'Items' / 'Icons' / 'I1' / 'pipeline' / 'graph.json').is_file())
+            self.assertTrue((Path(directory) / '_Source' / '物品' / '图标' / 'I1' / 'pipeline' / 'graph.json').is_file())
+
+    def test_element_archive_uses_elements_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(fw_pipeline.pipeline_root(directory, 'Fe', 'element'),
+                             str(Path(directory) / '_Source' / '元素' / 'Fe' / 'pipeline'))
+            fw_pipeline.save_graph(directory, 'Fe', fw_pipeline.starter_graph('Fe'), kind='element')
+            self.assertTrue((Path(directory) / '_Source' / '元素' / 'Fe' / 'pipeline' / 'graph.json').is_file())
 
     def test_legacy_graph_is_still_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -92,10 +99,26 @@ class PipelineGraphTest(unittest.TestCase):
             legacy.mkdir(parents=True)
             (legacy / name).write_bytes(b'legacy')
             self.assertEqual(fw_pipeline.resolve_output(directory, 'M1', 'machine', name), str(legacy / name))
-            archive = Path(directory) / '_Source' / 'Machines' / 'M1' / 'pipeline' / 'outputs'
+            archive = Path(directory) / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs'
             archive.mkdir(parents=True)
             (archive / name).write_bytes(b'archive')
             self.assertEqual(fw_pipeline.resolve_output(directory, 'M1', 'machine', name), str(archive / name))
+
+    def test_manifest_source_dir_wins_over_kind_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            asset_dir = Path(directory) / '_Source' / '机器' / '地质钻机'
+            asset_dir.mkdir(parents=True)
+            (Path(directory) / '_Sync').mkdir()
+            (Path(directory) / '_Sync' / 'manifest.json').write_text(json.dumps({'assets': {
+                'M1': {'kind': 'machine', 'sourceDir': '_Source/机器/地质钻机'},
+            }}), encoding='utf-8')
+
+            self.assertEqual(fw_pipeline.pipeline_root(directory, 'M1', 'machine'),
+                             str(asset_dir / 'pipeline'))
+
+    def test_kind_dirs_match_project_module(self):
+        import fw_project
+        self.assertEqual(fw_pipeline.ASSET_KIND_DIRS, fw_project.ASSET_KIND_DIRS)
 
     def test_invalid_kind_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

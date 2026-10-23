@@ -3,6 +3,7 @@
 function renderElements(){
   const v=document.getElementById('view');
   v.innerHTML = tableHTML([
+    {t:'图标',w:'46px',f:r=>elementIconHTML(r, 24)},
     {t:'颜色',w:'60px',f:r=>`<span class="swatch" style="background:${r.color}"></span>`},
     {t:'ID',w:'90px',f:r=>`<code>${r.id}</code>`},
     {t:'名称',f:r=>r.name},

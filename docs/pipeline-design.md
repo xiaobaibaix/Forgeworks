@@ -187,7 +187,7 @@ Blender 已实测可用（0.15s 导入 + 修改器 + 导出全程 <2s）。
 
 ### 3.8 `export` 导出节点
 
-把最终 GLB + 贴图写进 `_Source/Machines/<ID>/` 标准位置，更新 manifest，触发 sync-design 的 UE 导入流程。到此本文职责结束。
+把最终 GLB + 贴图写进 `_Source/机器/<中文名>/` 标准位置，更新 manifest，触发 sync-design 的 UE 导入流程。到此本文职责结束。
 
 ### 3.9 `variant` 变体节点（可选，后期）
 
@@ -437,7 +437,7 @@ edited.glb（人工精修） > styled.glb（风格对齐后） > low.glb > raw.g
 ```
 pipeline（本文）                       sync（姊妹篇）
 ──────────────────────                ──────────────────────
-export 节点写 _Source/Machines/<ID>/ ─▶ manifest 状态机变 exported
+export 节点写 _Source/机器/<中文名>/ ─▶ manifest 状态机变 exported
                                        ─▶ UE 侧 fw_sync.py 导入
                                        ─▶ 回写 ue 资产路径
 graph.json 的状态                      ─▶ manifest.pipeline（§7）

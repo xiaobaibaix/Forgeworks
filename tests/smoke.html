@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261022j">
-<link rel="stylesheet" href="../css/layout.css?v=20261022j">
-<link rel="stylesheet" href="../css/components.css?v=20261022j">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261022j">
+<link rel="stylesheet" href="../css/theme.css?v=20261023e">
+<link rel="stylesheet" href="../css/layout.css?v=20261023e">
+<link rel="stylesheet" href="../css/components.css?v=20261023e">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261023e">
 </head>
 <body>
 <div class="app">
@@ -51,63 +51,63 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261022j"></script>
-<script src="../js/core/color.js?v=20261022j"></script>
-<script src="../js/data/styles.js?v=20261022j"></script>
-<script src="../js/data/seed.js?v=20261022j"></script>
-<script src="../js/data/prompts.js?v=20261022j"></script>
+<script src="../js/core/config.js?v=20261023e"></script>
+<script src="../js/core/color.js?v=20261023e"></script>
+<script src="../js/data/styles.js?v=20261023e"></script>
+<script src="../js/data/seed.js?v=20261023e"></script>
+<script src="../js/data/prompts.js?v=20261023e"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261022j"></script>
-<script src="../js/core/lookup.js?v=20261022j"></script>
-<script src="../js/core/style.js?v=20261022j"></script>
+<script src="../js/core/state.js?v=20261023e"></script>
+<script src="../js/core/lookup.js?v=20261023e"></script>
+<script src="../js/core/style.js?v=20261023e"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261022j"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261022j"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261022j"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261022j"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261022j"></script>
+<script src="../js/vendor/three.min.js?v=20261023e"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261023e"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261023e"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261023e"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261023e"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261022j"></script>
-<script src="../js/engines/material-textures.js?v=20261022j"></script>
-<script src="../js/engines/asset-layers.js?v=20261022j"></script>
-<script src="../js/engines/viewer3d.js?v=20261022j"></script>
-<script src="../js/views/editor3d.js?v=20261022j"></script>
-<script src="../js/engines/validate.js?v=20261022j"></script>
-<script src="../js/engines/solver.js?v=20261022j"></script>
-<script src="../js/engines/balance.js?v=20261022j"></script>
-<script src="../js/engines/csv.js?v=20261022j"></script>
-<script src="../js/core/io.js?v=20261022j"></script>
-<script src="../js/sync.js?v=20261022j"></script>
-<script src="../js/pipeline.js?v=20261022j"></script>
-<script src="../js/pipeline-templates.js?v=20261022j"></script>
+<script src="../js/engines/icons.js?v=20261023e"></script>
+<script src="../js/engines/material-textures.js?v=20261023e"></script>
+<script src="../js/engines/asset-layers.js?v=20261023e"></script>
+<script src="../js/engines/viewer3d.js?v=20261023e"></script>
+<script src="../js/views/editor3d.js?v=20261023e"></script>
+<script src="../js/engines/validate.js?v=20261023e"></script>
+<script src="../js/engines/solver.js?v=20261023e"></script>
+<script src="../js/engines/balance.js?v=20261023e"></script>
+<script src="../js/engines/csv.js?v=20261023e"></script>
+<script src="../js/core/io.js?v=20261023e"></script>
+<script src="../js/sync.js?v=20261023e"></script>
+<script src="../js/pipeline.js?v=20261023e"></script>
+<script src="../js/pipeline-templates.js?v=20261023e"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261022j"></script>
-<script src="../js/ui/router.js?v=20261022j"></script>
-<script src="../js/ui/editor.js?v=20261022j"></script>
+<script src="../js/ui/table.js?v=20261023e"></script>
+<script src="../js/ui/router.js?v=20261023e"></script>
+<script src="../js/ui/editor.js?v=20261023e"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261022j"></script>
-<script src="../js/views/elements.js?v=20261022j"></script>
-<script src="../js/views/items.js?v=20261022j"></script>
-<script src="../js/views/machines.js?v=20261022j"></script>
-<script src="../js/views/recipes.js?v=20261022j"></script>
-<script src="../js/views/techs.js?v=20261022j"></script>
-<script src="../js/views/assets.js?v=20261022j"></script>
-<script src="../js/views/prompts.js?v=20261022j"></script>
-<script src="../js/views/validate.js?v=20261022j"></script>
-<script src="../js/views/balance.js?v=20261022j"></script>
-<script src="../js/views/solve.js?v=20261022j"></script>
-<script src="../js/views/graph.js?v=20261022j"></script>
-<script src="../js/views/sync.js?v=20261022j"></script>
-<script src="../js/views/pipeline.js?v=20261022j"></script>
-<script src="../js/views/export.js?v=20261022j"></script>
+<script src="../js/views/style.js?v=20261023e"></script>
+<script src="../js/views/elements.js?v=20261023e"></script>
+<script src="../js/views/items.js?v=20261023e"></script>
+<script src="../js/views/machines.js?v=20261023e"></script>
+<script src="../js/views/recipes.js?v=20261023e"></script>
+<script src="../js/views/techs.js?v=20261023e"></script>
+<script src="../js/views/assets.js?v=20261023e"></script>
+<script src="../js/views/prompts.js?v=20261023e"></script>
+<script src="../js/views/validate.js?v=20261023e"></script>
+<script src="../js/views/balance.js?v=20261023e"></script>
+<script src="../js/views/solve.js?v=20261023e"></script>
+<script src="../js/views/graph.js?v=20261023e"></script>
+<script src="../js/views/sync.js?v=20261023e"></script>
+<script src="../js/views/pipeline.js?v=20261023e"></script>
+<script src="../js/views/export.js?v=20261023e"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261022j"></script>
+<script src="../js/main.js?v=20261023e"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -523,6 +523,32 @@
         try { var u = iconURL(it); return !u || u.indexOf('data:') !== 0; } catch(e){ return true; }
       });
       return bad.length === 0 ? S.items.length + ' 个' : '失败 ' + bad.length;
+    });
+
+    check('元素图标生成', function(){
+      var bad = S.elements.filter(function(el){
+        try { var u = elementIconURL(el); return !u || u.indexOf('data:image/svg+xml') !== 0; } catch(e){ return true; }
+      });
+      return bad.length === 0 ? S.elements.length + ' 个' : '失败 ' + bad.length;
+    });
+
+    check('元素自定义图标优先', function(){
+      var el = S.elements[0];
+      var custom = 'data:image/png;base64,AAAA';
+      var before = el.icon;
+      try {
+        el.icon = custom;
+        if(elementIconURL(el) !== custom) return '自定义图标未生效';
+      } finally { el.icon = before; }
+      return '自定义覆盖自动';
+    });
+
+    check('元素图标转义特殊字符', function(){
+      var url = elementIconURL({id:'T1', symbol:'A&B', name:'<铁>', tier:1, color:'#888780'});
+      var svg = decodeURIComponent(url.replace('data:image/svg+xml;charset=utf-8,', ''));
+      if(svg.indexOf('A&B') >= 0) return '& 未转义';
+      if(svg.indexOf('<铁>') >= 0) return '< > 未转义';
+      return svg.indexOf('A&amp;B') >= 0 && svg.indexOf('&lt;铁&gt;') >= 0 ? '转义正确' : '转义失败';
     });
 
     check('物料平衡', function(){

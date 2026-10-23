@@ -336,8 +336,12 @@ def open_project(path):
         except ValueError:
             ue_target = None
     _remember_current(project, ue_target)
+    with _watch_lock:
+        migration = fw_project.migrate_layout(root)
+        ue_migration = fw_project.migrate_ue_export(root, ue_target['root']) if ue_target else None
     push_event('project.opened', {'root': root, 'name': project['name']})
-    return {'ok': True, 'project': project, 'fwDir': root, 'ueTarget': ue_target, 'created': []}
+    return {'ok': True, 'project': project, 'fwDir': root, 'ueTarget': ue_target, 'created': [],
+            'migrated': migration, 'ueMigrated': ue_migration}
 
 
 def create_project(parent, name):
@@ -370,8 +374,10 @@ def set_ue_target(path):
         return {'ok': False, 'error': '该目录就是当前 Forgeworks 项目，请选择另一个 UE 导出目标'}
     _state['ueProjectRoot'] = target['root']
     save_state()
+    with _watch_lock:
+        migrated = fw_project.migrate_ue_export(fw_dir(), target['root']) if fw_dir() else None
     push_event('project.ue_target', {'root': target['root'], 'uproject': target['uproject']})
-    return {'ok': True, 'ueTarget': target}
+    return {'ok': True, 'ueTarget': target, 'ueMigrated': migrated}
 
 
 def publish_to_ue(asset_ids=None):
@@ -382,7 +388,8 @@ def publish_to_ue(asset_ids=None):
         return {'ok': False, 'error': '尚未设置 UE 导出目标'}
     if _same_as_project(target):
         return {'ok': False, 'error': 'UE 导出目标与当前 Forgeworks 项目相同，请重新设置'}
-    result = fw_project.publish_to_ue(root, ue_project_root(), asset_ids, BRIDGE_VERSION)
+    with _watch_lock:
+        result = fw_project.publish_to_ue(root, ue_project_root(), asset_ids, BRIDGE_VERSION)
     if result.get('published'):
         push_event('asset.published', {'assets': result['published'], 'target': ue_project_root()})
     return result
@@ -398,26 +405,33 @@ def unbind_project():
 
 
 def normalize_bound_project():
-    """把旧版「状态指向 UE 项目根」迁移为「Forgeworks 项目根」。"""
+    """把旧版「状态指向 UE 项目根」迁移为「Forgeworks 项目根」，并升级目录布局。"""
     root = _state.get('projectRoot')
-    if not root or fw_project.is_project(root):
+    if not root:
         return
-    found = fw_project.detect_project(root)
-    if not found:
-        return
-    fw_root = found['root']
-    if not fw_project.is_project(fw_root):
-        ue_root = found.get('ueRoot')
-        label = project_label(ue_root, find_uproject(ue_root)) if ue_root else None
-        fw_project.initialize_project(fw_root, label, BRIDGE_VERSION)
-    _state['projectRoot'] = fw_root
-    ue_root = found.get('ueRoot')
-    # 旧布局的 Forgeworks 目录同时是导出目录，迁移后不自动绑定 UE 目标
-    if ue_root and os.path.realpath(os.path.join(ue_root, FW_DIR_NAME)) != os.path.realpath(fw_root):
-        _state['ueProjectRoot'] = ue_root
+    if fw_project.is_project(root):
+        fw_root = root
     else:
-        _state.pop('ueProjectRoot', None)
-    save_state()
+        found = fw_project.detect_project(root)
+        if not found:
+            return
+        fw_root = found['root']
+        if not fw_project.is_project(fw_root):
+            ue_root = found.get('ueRoot')
+            label = project_label(ue_root, find_uproject(ue_root)) if ue_root else None
+            fw_project.initialize_project(fw_root, label, BRIDGE_VERSION)
+        _state['projectRoot'] = fw_root
+        ue_root = found.get('ueRoot')
+        # 旧布局的 Forgeworks 目录同时是导出目录，迁移后不自动绑定 UE 目标
+        if ue_root and os.path.realpath(os.path.join(ue_root, FW_DIR_NAME)) != os.path.realpath(fw_root):
+            _state['ueProjectRoot'] = ue_root
+        else:
+            _state.pop('ueProjectRoot', None)
+        save_state()
+    with _watch_lock:
+        fw_project.migrate_layout(fw_root)
+        if _state.get('ueProjectRoot'):
+            fw_project.migrate_ue_export(fw_root, _state['ueProjectRoot'])
 
 
 PICK_PROMPT = '选择 Forgeworks 项目文件夹或 UE 导出目标'
@@ -466,19 +480,31 @@ def save_manifest(mf):
         write_json(manifest_path(), mf)
 
 
+UE_MESH_PATH = re.compile(r'^(/Game/Forgeworks/(?:[^/<>:"\\|?*\x00]+/)+)(SM_([A-Za-z0-9_]{1,64}))\.\2$')
+
+
+def parse_ue_mesh_path(value):
+    match = UE_MESH_PATH.fullmatch(str(value or ''))
+    if not match:
+        return None
+    return {'id': match.group(3), 'contentPath': match.group(1).rstrip('/'), 'objectPath': match.group(0)}
+
+
 def normalize_ue_report(asset_id, ue, manifest):
     if not re.fullmatch(r'[A-Za-z0-9_]+', str(asset_id or '')):
         raise ValueError('资产 ID 不合法')
     record = (manifest or {}).get('assets', {}).get(asset_id)
     if not record or record.get('kind') != 'machine':
         raise ValueError('manifest 中不存在该机器')
-    base_path = '/Game/Forgeworks/Machines/%s' % asset_id
-    if not isinstance(ue, dict) or ue.get('contentPath') != base_path:
-        raise ValueError('UE 内容目录与资产 ID 不匹配')
+    expected_path = fw_project.content_path_for(record)
+    legacy_path = '/Game/Forgeworks/Machines/%s' % asset_id
+    if not isinstance(ue, dict) or ue.get('contentPath') not in (expected_path, legacy_path):
+        raise ValueError('UE 内容目录与资产目录不匹配')
     assets = ue.get('assets') or {}
     mesh_path = assets.get('mesh')
-    if not isinstance(mesh_path, str) or not re.fullmatch(
-            r'/Game/Forgeworks/Machines/%s/[A-Za-z0-9_.]+\.[A-Za-z0-9_]+$' % re.escape(asset_id), mesh_path):
+    parsed = parse_ue_mesh_path(mesh_path)
+    if (not parsed or parsed['id'] != asset_id
+            or parsed['contentPath'] not in (expected_path, legacy_path)):
         raise ValueError('StaticMesh 对象路径非法')
     bounds = ue.get('bounds') or {}
     clean_bounds = {}
@@ -499,7 +525,7 @@ def normalize_ue_report(asset_id, ue, manifest):
     if expected_sha1 and ue.get('sourceSha1') != expected_sha1:
         raise ValueError('UE 回报对应的源 GLB 已过期')
     return {
-        'contentPath': base_path,
+        'contentPath': parsed['contentPath'],
         'importedAt': str(ue.get('importedAt') or now_iso())[:64],
         'importedBy': 'fw_sync.py',
         'assets': {'mesh': mesh_path},
@@ -537,25 +563,33 @@ def normalize_ue_snapshot_path(forgeworks_root):
     rows = snapshot.get('assets', []) if isinstance(snapshot, dict) else []
     if not isinstance(rows, list):
         rows = []
+    manifest = load_manifest() or {}
+    best = {}
     for row in rows:
         try:
             if not isinstance(row, dict):
                 continue
-            match = re.fullmatch(r'/Game/Forgeworks/Machines/([A-Za-z0-9_]+)/([A-Za-z0-9_.]+)', row.get('objectPath', ''))
+            parsed = parse_ue_mesh_path(row.get('objectPath'))
             bounds = row.get('bounds') or {}
             triangles = row.get('triangles')
-            if not match or row.get('class') != 'StaticMesh' or isinstance(triangles, bool) or not isinstance(triangles, int) or triangles < 0:
+            if not parsed or row.get('class') != 'StaticMesh' or isinstance(triangles, bool) or not isinstance(triangles, int) or triangles < 0:
                 continue
             clean_bounds = {axis: float(bounds[axis]) for axis in ('x', 'y', 'z')}
             if any(not math.isfinite(value) or value < 0 for value in clean_bounds.values()):
                 continue
-            assets.append({'id': match.group(1), 'objectPath': match.group(0), 'class': 'StaticMesh',
-                           'bounds': clean_bounds, 'triangles': triangles,
-                           'materialSlots': [str(slot)[:128] for slot in row.get('materialSlots', [])[:256]],
-                           'dependencies': [path for path in row.get('dependencies', [])[:512]
-                                            if isinstance(path, str) and path.startswith('/Game/')][:512]})
+            asset = {'id': parsed['id'], 'objectPath': parsed['objectPath'], 'class': 'StaticMesh',
+                     'bounds': clean_bounds, 'triangles': triangles,
+                     'materialSlots': [str(slot)[:128] for slot in row.get('materialSlots', [])[:256]],
+                     'dependencies': [path for path in row.get('dependencies', [])[:512]
+                                      if isinstance(path, str) and path.startswith('/Game/')][:512]}
+            expected = fw_project.content_path_for((manifest.get('assets') or {}).get(parsed['id']) or {})
+            legacy = parsed['contentPath'].startswith('/Game/Forgeworks/Machines/')
+            score = 2 if expected and parsed['contentPath'] == expected else (0 if legacy else 1)
+            if parsed['id'] not in best or score > best[parsed['id']][0]:
+                best[parsed['id']] = (score, asset)
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
+    assets = [asset for _, asset in sorted(best.values(), key=lambda item: item[1]['objectPath'])]
     return {'schemaVersion': 1, 'generatedAt': snapshot.get('generatedAt'), 'assets': assets}
 
 
@@ -592,12 +626,12 @@ def save_tool_baseline(forgeworks_root, asset_id, relative_path, data):
         stream.write(data)
 
 
-def archive_conflict(forgeworks_root, asset_id, relative_path):
+def archive_conflict(forgeworks_root, asset_id, source_dir, relative_path):
     relative_path = _safe_sync_relative(relative_path)
     stamp = time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + ('%03d' % int((time.time() % 1) * 1000))
     conflict_id = stamp + '_' + str(time.monotonic_ns() % 1000000)
     conflict_root = _safe_join(forgeworks_root, SYNC_DIR, 'conflicts', asset_id, conflict_id)
-    disk_source = _safe_join(forgeworks_root, SOURCE_DIR, 'Machines', asset_id, relative_path)
+    disk_source = _safe_join(forgeworks_root, source_dir, relative_path)
     baseline = _tool_baseline_path(forgeworks_root, asset_id, relative_path)
     tool_copy = _safe_join(conflict_root, 'tool', relative_path)
     disk_copy = _safe_join(conflict_root, 'disk', relative_path)
@@ -635,11 +669,12 @@ def watch_source_once(forgeworks_root=None, manifest=None):
             continue
         previous_state = record.get('state') or 'exported'
         has_missing = False
+        source_dir = record.get('sourceDir')
         pending_paths = {entry.get('path') for entry in record.get('conflicts', []) if entry.get('status') == 'pending'}
         for role, tracked in _tracked_files(record):
             relative_path = _safe_sync_relative(tracked['path'])
-            source = _safe_join(forgeworks_root, SOURCE_DIR, 'Machines', asset_id, relative_path)
-            if not os.path.isfile(source):
+            source = _safe_join(forgeworks_root, source_dir, relative_path) if source_dir else None
+            if not source or not os.path.isfile(source):
                 has_missing = True
                 if previous_state != 'missing':
                     changes.append({'id': asset_id, 'path': relative_path, 'state': 'missing'})
@@ -651,7 +686,7 @@ def watch_source_once(forgeworks_root=None, manifest=None):
             if not os.path.isfile(baseline) and tracked.get('sha1') == disk_hash:
                 save_tool_baseline(forgeworks_root, asset_id, relative_path, disk_data)
             if tracked.get('sha1') and disk_hash != tracked['sha1'] and relative_path not in pending_paths:
-                conflict = archive_conflict(forgeworks_root, asset_id, relative_path)
+                conflict = archive_conflict(forgeworks_root, asset_id, source_dir, relative_path)
                 conflict.update({'role': role, 'toolSha1': tracked.get('sha1')})
                 record.setdefault('conflicts', []).append(conflict)
                 changes.append({'id': asset_id, 'path': relative_path, 'state': 'conflict'})
@@ -699,7 +734,10 @@ def resolve_file_conflict(asset_id, conflict_id, choice):
     if not conflict:
         return {'ok': False, 'error': '冲突不存在或已处理'}
     root = fw_dir()
-    target = _safe_join(root, SOURCE_DIR, 'Machines', asset_id, _safe_sync_relative(conflict['path']))
+    source_dir = record.get('sourceDir')
+    if not source_dir:
+        return {'ok': False, 'error': '资产目录记录缺失'}
+    target = _safe_join(root, source_dir, _safe_sync_relative(conflict['path']))
     sync_root = sync_dir()
     tool_copy = _safe_join(sync_root, _safe_sync_relative(conflict['toolCopy']))
     disk_copy = _safe_join(sync_root, _safe_sync_relative(conflict['diskCopy']))
@@ -788,10 +826,19 @@ def _queue_blender_check(asset_id, mesh_path, mesh_sha1, expected_materials, bou
 def _process_blender_job(job):
     asset_id, mesh_path, mesh_sha1, expected_materials, bound_root = job
     project_dir = bound_root
-    source_path = os.path.join(project_dir, SOURCE_DIR)
     manifest_file = os.path.join(project_dir, SYNC_DIR, 'manifest.json')
-    mesh_file = os.path.join(source_path, 'Machines', asset_id, mesh_path)
-    target_dir = os.path.dirname(mesh_file)
+    with _manifest_lock:
+        snapshot = read_json(manifest_file, None) or {}
+    source_dir = (((snapshot.get('assets') or {}).get(asset_id)) or {}).get('sourceDir')
+    if not source_dir:
+        _mark_blender_error(job, '资产目录记录缺失')
+        return
+    try:
+        target_dir = _safe_join(project_dir, source_dir)
+        mesh_file = _safe_join(target_dir, mesh_path)
+    except ValueError as error:
+        _mark_blender_error(job, str(error))
+        return
     target_thumbnail = os.path.join(target_dir, asset_id + '_preview.png')
     report = None
     error = None
@@ -877,13 +924,22 @@ def scan_source():
             rec['state'] = 'missing'
             report[aid] = 'missing'
             continue
-        abs_base = os.path.join(fw_dir(), base)
+        try:
+            abs_base = _safe_join(fw_dir(), base)
+        except ValueError:
+            rec['state'] = 'missing'
+            report[aid] = 'missing'
+            continue
         files = rec.get('files') or {}
         state, bad = 'exported', []
         for role, finfo in files.items():
             flist = finfo if isinstance(finfo, list) else [finfo]
             for fi in flist:
-                fp = os.path.join(abs_base, fi.get('path', ''))
+                try:
+                    fp = _safe_join(abs_base, fi.get('path', ''))
+                except ValueError:
+                    bad.append('missing:' + fi.get('path', ''))
+                    continue
                 if not os.path.isfile(fp):
                     bad.append('missing:' + fi.get('path', ''))
                     continue
@@ -913,24 +969,30 @@ def export_asset(kind, asset_id, files, meta):
     """
     files: { 'mesh': {'path':'MC.glb','b64':'...'}, 'icon': {...},
               'tex': [{'path':..., 'b64':...}] }
-    写入 _Source/<Kind>/<ID>/，更新 manifest（hash/mtime/state）。
+    写入 _Source/<中文分类>/<中文名>/（manifest.sourceDir），更新 manifest。
     """
     bound_root = project_root()
     if not bound_root:
         return {'ok': False, 'error': '未绑定项目'}
-    kind_dir = {'machine': 'Machines', 'item': 'Items/Icons', 'data': 'Data'}.get(kind)
-    if not kind_dir:
+    if kind not in fw_project.ASSET_KIND_DIRS:
         return {'ok': False, 'error': '未知资产类型: %s' % kind}
     if not re.match(r'^[A-Za-z0-9_]+$', asset_id or ''):
         return {'ok': False, 'error': '资产 ID 不合法（仅字母数字下划线）: %r' % asset_id}
 
-    rel_dir = '%s/%s/%s' % (SOURCE_DIR, kind_dir, asset_id)
-    abs_dir = os.path.join(fw_dir(), rel_dir)
     previous_manifest = load_manifest() or {}
     previous_record = (previous_manifest.get('assets') or {}).get(asset_id) or {}
+    previous_kind = previous_record.get('kind')
+    if previous_kind and previous_kind != kind:
+        return {'ok': False,
+                'error': '资产 ID 已被其他类型占用（%s → %s）: %s' % (previous_kind, kind, asset_id)}
+    if kind == 'machine' and any(item.get('status') == 'pending' for item in previous_record.get('conflicts', [])):
+        return {'ok': False, 'error': '该机器有待裁决的外部冲突，请先处理', 'conflict': True}
+    try:
+        rel_dir = fw_project.asset_source_dir(bound_root, kind, asset_id, meta or {}, previous_manifest)
+        abs_dir = _safe_join(bound_root, rel_dir)
+    except (OSError, ValueError) as error:
+        return {'ok': False, 'error': str(error)}
     if kind == 'machine' and os.path.isdir(abs_dir):
-        if any(item.get('status') == 'pending' for item in previous_record.get('conflicts', [])):
-            return {'ok': False, 'error': '该机器有待裁决的外部冲突，请先处理', 'conflict': True}
         if any(name.lower().endswith(('.blend', '.edited.glb')) for name in os.listdir(abs_dir)):
             return {'ok': False, 'error': '检测到 Blender 精修文件，已保护现有资产；先处理精修回灌再导出', 'protected': True}
         previous_hashes = {item.get('path'): item.get('sha1') for _, item in _tracked_files(previous_record)}
@@ -944,7 +1006,7 @@ def export_asset(kind, asset_id, files, meta):
                     with open(existing, 'rb') as stream:
                         actual_hash = sha1_bytes(stream.read())
                     if actual_hash != expected_hash:
-                        conflict = archive_conflict(fw_dir(), asset_id, relative)
+                        conflict = archive_conflict(fw_dir(), asset_id, rel_dir, relative)
                         conflict.update({'role': role, 'toolSha1': expected_hash})
                         previous_record.setdefault('conflicts', []).append(conflict)
                         previous_record['state'] = 'conflict'
@@ -1167,11 +1229,11 @@ class BridgeHandler(SimpleHTTPRequestHandler):
         if thumbnail.get('state') != 'ready' or thumbnail.get('thumbnail') != asset_id + '_preview.png':
             self._json({'ok': False, 'error': '缩略图尚未生成'}, 404)
             return
-        path = os.path.join(source_dir(), 'Machines', asset_id, asset_id + '_preview.png')
         try:
+            path = _safe_join(fw_dir(), record.get('sourceDir'), asset_id + '_preview.png')
             with open(path, 'rb') as image_file:
                 data = image_file.read()
-        except OSError:
+        except (OSError, TypeError, ValueError):
             self._json({'ok': False, 'error': '缩略图文件不存在'}, 404)
             return
         self.send_response(200)

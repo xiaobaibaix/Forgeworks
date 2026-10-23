@@ -66,7 +66,7 @@ def asset_key(value):
 def texture_dir(fw_root, style):
     if not fw_root:
         raise ValueError('未绑定项目')
-    return os.path.join(fw_root, '_Source', 'Materials', style_id(style))
+    return os.path.join(fw_root, '_Source', '材质', style_id(style))
 
 
 def catalog_path(fw_root, style):

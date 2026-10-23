@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import time
+import unicodedata
 import uuid
 
 PROJECT_MARKER = 'forgeworks.project.json'
@@ -14,10 +15,19 @@ PROJECT_CONTENT = 'project.json'
 SOURCE_DIR = '_Source'
 SYNC_DIR = '_Sync'
 UE_DIR_NAME = 'Forgeworks'
-ASSET_KIND_DIRS = {'machine': 'Machines', 'item': 'Items/Icons', 'data': 'Data'}
-UE_EXPORT_ROLES = {'machine': ('mesh',), 'item': ('icon',)}
+ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
+TEXTURE_DIR = '材质'
+LAYOUT_VERSION = 2
+UE_EXPORT_ROLES = {'machine': ('mesh', 'icon'), 'item': ('icon',), 'element': ('icon',)}
 MAX_CONTENT_BYTES = 16 * 1024 * 1024
 MAX_NAME_LENGTH = 64
+MAX_FOLDER_LENGTH = 64
+_INVALID_FOLDER_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f#%&\'{}~]')
+_WINDOWS_RESERVED = {
+    'con', 'prn', 'aux', 'nul',
+    *('com%d' % index for index in range(1, 10)),
+    *('lpt%d' % index for index in range(1, 10)),
+}
 
 
 def _now_iso():
@@ -26,6 +36,122 @@ def _now_iso():
 
 def _sha1(data):
     return hashlib.sha1(data).hexdigest()
+
+
+def _folder_identity(value):
+    return unicodedata.normalize('NFKC', str(value or '')).casefold()
+
+
+def sanitize_asset_folder(name, asset_id):
+    """把资产显示名转成安全的目录名；空名或非法名回退到资产 ID。"""
+    normalized = unicodedata.normalize('NFC', str(name or '')).strip()
+    normalized = re.sub(r'\s+', ' ', normalized)
+    normalized = _INVALID_FOLDER_CHARS.sub('-', normalized)
+    normalized = normalized.strip(' .')
+    if _folder_identity(normalized) in _WINDOWS_RESERVED:
+        normalized = ''
+    normalized = normalized[:MAX_FOLDER_LENGTH].strip(' .')
+    return normalized or str(asset_id or '').strip()
+
+
+def _folder_candidates(name, asset_id):
+    asset_id = str(asset_id or '').strip()
+    base = sanitize_asset_folder(name, asset_id)
+    candidates = [base]
+    if base != asset_id:
+        candidates.append('%s-%s' % (base, asset_id))
+    candidates.append(asset_id)
+    for index in range(2, 100):
+        candidates.append('%s-%d' % (asset_id, index))
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
+def asset_folder(asset_id, meta, claimed=None):
+    claimed = set(claimed or ())
+    for candidate in _folder_candidates((meta or {}).get('name'), asset_id):
+        if _folder_identity(candidate) not in claimed:
+            return candidate
+    return str(asset_id)
+
+
+def move_asset_dir(root, old_rel, new_rel):
+    if old_rel == new_rel:
+        return new_rel
+    old_abs = _safe_join(root, old_rel)
+    new_abs = _safe_join(root, new_rel)
+    if not os.path.isdir(old_abs):
+        return new_rel
+    if os.path.exists(new_abs):
+        try:
+            same = os.path.samefile(old_abs, new_abs)
+        except OSError:
+            same = False
+        if not same:
+            raise ValueError('目标资产目录已存在: %s' % new_rel)
+        temp_abs = old_abs + '.fw-rename'
+        os.rename(old_abs, temp_abs)
+        os.rename(temp_abs, new_abs)
+        return new_rel
+    os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+    os.rename(old_abs, new_abs)
+    return new_rel
+
+
+def asset_source_dir(root, kind, asset_id, meta, manifest):
+    """计算资产的中文目录，并把旧目录/ID 草稿目录整体迁过去。"""
+    kind_dir = ASSET_KIND_DIRS.get(kind)
+    if not kind_dir:
+        raise ValueError('不支持的资产类型: %s' % kind)
+    assets = (manifest or {}).get('assets') or {}
+    record = assets.get(asset_id) or {}
+    old_rel = record.get('sourceDir')
+    claimed = set()
+    for other_id, other in assets.items():
+        if other_id == asset_id or not isinstance(other, dict) or other.get('kind') != kind:
+            continue
+        other_rel = other.get('sourceDir')
+        if other_rel:
+            claimed.add(_folder_identity(other_rel.split('/')[-1]))
+        other_name = (other.get('meta') or {}).get('name')
+        if other_name:
+            claimed.add(_folder_identity(sanitize_asset_folder(other_name, other_id)))
+    chosen = None
+    for candidate in _folder_candidates((meta or {}).get('name'), asset_id):
+        candidate_rel = '/'.join((SOURCE_DIR, kind_dir, candidate))
+        if _folder_identity(candidate) in claimed:
+            continue
+        if candidate_rel == old_rel or not os.path.isdir(_safe_join(root, candidate_rel)):
+            chosen = candidate_rel
+            break
+    if not chosen:
+        chosen = '/'.join((SOURCE_DIR, kind_dir, asset_id))
+    draft_rel = '/'.join((SOURCE_DIR, kind_dir, asset_id))
+    if old_rel and old_rel != chosen:
+        return move_asset_dir(root, old_rel, chosen)
+    if not old_rel and draft_rel != chosen and os.path.isdir(_safe_join(root, draft_rel)):
+        return move_asset_dir(root, draft_rel, chosen)
+    return chosen
+
+
+def asset_dir_from_record(root, asset_id, record):
+    relative = (record or {}).get('sourceDir')
+    if relative:
+        return _safe_join(root, _safe_relative(relative))
+    kind_dir = ASSET_KIND_DIRS.get((record or {}).get('kind'))
+    if not kind_dir or not asset_id:
+        return None
+    return _safe_join(root, SOURCE_DIR, *kind_dir.split('/'), str(asset_id))
+
+
+def content_path_for(record):
+    try:
+        relative = _safe_relative((record or {}).get('sourceDir'))
+    except ValueError:
+        return None
+    parts = relative.split('/')
+    if parts and parts[0] == SOURCE_DIR:
+        parts = parts[1:]
+    return '/Game/Forgeworks/' + '/'.join(parts) if parts else None
 
 
 def validate_project_name(name):
@@ -95,8 +221,9 @@ def project_info(root):
 
 
 def _ensure_store(root):
-    for relative in [SOURCE_DIR, SYNC_DIR] + [
-            os.path.join(SOURCE_DIR, *kind.split('/')) for kind in ASSET_KIND_DIRS.values()]:
+    for relative in ([SOURCE_DIR, SYNC_DIR]
+                     + [os.path.join(SOURCE_DIR, *kind.split('/')) for kind in ASSET_KIND_DIRS.values()]
+                     + [os.path.join(SOURCE_DIR, TEXTURE_DIR)]):
         os.makedirs(os.path.join(root, relative), exist_ok=True)
 
 
@@ -116,6 +243,7 @@ def initialize_project(root, name=None, bridge_version='0.1.0'):
     if not os.path.isfile(manifest_path(root)):
         _write_json(manifest_path(root), {
             'schemaVersion': 1,
+            'layoutVersion': LAYOUT_VERSION,
             'forgeworksVersion': 'bridge-%s' % bridge_version,
             'project': {'name': marker['name'], 'kind': 'forgeworks', 'root': root},
             'assets': {},
@@ -202,6 +330,130 @@ def _load_manifest(root):
     return manifest if isinstance(manifest, dict) else None
 
 
+def _load_json_file(path):
+    try:
+        with open(path, encoding='utf-8') as stream:
+            value = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _remove_empty_dirs(path):
+    if os.path.islink(path) or not os.path.isdir(path):
+        return
+    for name in os.listdir(path):
+        child = os.path.join(path, name)
+        if name == '.DS_Store' and os.path.isfile(child):
+            try:
+                os.remove(child)
+            except OSError:
+                pass
+            continue
+        _remove_empty_dirs(child)
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+LEGACY_SOURCE_DIRS = ('Machines', 'Items/Icons', 'Items', 'Data')
+
+
+def _prune_legacy_dirs(root):
+    for legacy in LEGACY_SOURCE_DIRS:
+        _remove_empty_dirs(os.path.join(root, SOURCE_DIR, *legacy.split('/')))
+
+
+def _migrate_materials(root):
+    old = os.path.join(root, SOURCE_DIR, 'Materials')
+    new = os.path.join(root, SOURCE_DIR, TEXTURE_DIR)
+    if not os.path.isdir(old):
+        return []
+    os.makedirs(new, exist_ok=True)
+    moved = []
+    for name in os.listdir(old):
+        source = os.path.join(old, name)
+        target = os.path.join(new, name)
+        if os.path.exists(target):
+            continue
+        shutil.move(source, target)
+        moved.append(name)
+    try:
+        os.rmdir(old)
+    except OSError:
+        pass
+    return moved
+
+
+def migrate_layout(root):
+    """把旧英文/ID 目录迁移为中文目录；幂等，可中断后重跑。"""
+    root = os.path.abspath(str(root or ''))
+    manifest = _load_manifest(root)
+    if not manifest:
+        return {'ok': False, 'error': '项目 manifest 不存在'}
+    _prune_legacy_dirs(root)
+    if int(manifest.get('layoutVersion') or 0) >= LAYOUT_VERSION:
+        return {'ok': True, 'moved': [], 'version': LAYOUT_VERSION}
+    assets = manifest.setdefault('assets', {})
+    moved = []
+    for asset_id in sorted(assets):
+        record = assets[asset_id]
+        if not isinstance(record, dict) or record.get('kind') not in ASSET_KIND_DIRS:
+            continue
+        old_rel = record.get('sourceDir')
+        try:
+            new_rel = asset_source_dir(root, record['kind'], asset_id, record.get('meta') or {}, manifest)
+        except (OSError, ValueError) as error:
+            return {'ok': False, 'error': '迁移失败（%s）: %s' % (asset_id, error),
+                    'moved': moved, 'version': manifest.get('layoutVersion')}
+        if old_rel != new_rel:
+            record['sourceDir'] = new_rel
+            moved.append({'id': asset_id, 'from': old_rel, 'to': new_rel})
+            _write_json(manifest_path(root), manifest)
+    materials = _migrate_materials(root)
+    _prune_legacy_dirs(root)
+    manifest['layoutVersion'] = LAYOUT_VERSION
+    _write_json(manifest_path(root), manifest)
+    return {'ok': True, 'moved': moved, 'materials': materials, 'version': LAYOUT_VERSION}
+
+
+def migrate_ue_export(fw_root, ue_root):
+    """把 UE 导出目录里的旧分类/ID 目录跟随项目 sourceDir 迁移。"""
+    fw_root = os.path.abspath(str(fw_root or ''))
+    if not ue_root:
+        return {'ok': False, 'error': '未设置 UE 导出目标'}
+    fw_manifest = _load_manifest(fw_root) or {}
+    fw_assets = fw_manifest.get('assets') or {}
+    export_root = os.path.join(os.path.abspath(ue_root), UE_DIR_NAME)
+    ue_manifest_file = os.path.join(export_root, SYNC_DIR, 'manifest.json')
+    ue_manifest = _load_json_file(ue_manifest_file)
+    if not ue_manifest:
+        return {'ok': True, 'moved': [], 'skipped': []}
+    moved, skipped = [], []
+    for asset_id, record in (ue_manifest.get('assets') or {}).items():
+        if not isinstance(record, dict):
+            continue
+        target_rel = ((fw_assets.get(asset_id) or {}).get('sourceDir'))
+        old_rel = record.get('sourceDir')
+        if not target_rel or not old_rel or old_rel == target_rel:
+            continue
+        old_abs = _safe_join(export_root, _safe_relative(old_rel))
+        new_abs = _safe_join(export_root, _safe_relative(target_rel))
+        if os.path.isdir(old_abs) and not os.path.exists(new_abs):
+            os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+            os.rename(old_abs, new_abs)
+            record['sourceDir'] = target_rel
+            moved.append({'id': asset_id, 'from': old_rel, 'to': target_rel})
+        elif os.path.isdir(old_abs):
+            skipped.append({'id': asset_id, 'reason': '目标目录已存在'})
+    for legacy in (*LEGACY_SOURCE_DIRS, 'Materials'):
+        _remove_empty_dirs(os.path.join(export_root, SOURCE_DIR, *legacy.split('/')))
+    if moved:
+        _write_json(ue_manifest_file, ue_manifest)
+    return {'ok': True, 'moved': moved, 'skipped': skipped}
+
+
 def _uproject_name(root):
     try:
         for name in sorted(os.listdir(root)):
@@ -241,6 +493,7 @@ def publish_to_ue(fw_root, ue_root, asset_ids=None, bridge_version='0.1.0'):
         target = prepare_ue_target(ue_root)
     except ValueError as error:
         return {'ok': False, 'error': str(error)}
+    migrate_ue_export(fw_root, ue_root)
     manifest = _load_manifest(fw_root)
     if not manifest:
         return {'ok': False, 'error': '项目 manifest 不存在，请先生成资产'}

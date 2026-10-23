@@ -192,20 +192,27 @@ async function syncLoadUEManifest(){
   return SYNC.ueManifest;
 }
 
-/** UE 侧状态：none=未导出，stale=设计已变，exported=与设计一致。 */
+/** manifest 记录里是否含某个角色的文件（老记录可能只有 mesh）。 */
+function hasAssetFile(rec, role){
+  const files = (rec && rec.files) || {};
+  return !!(files[role] && files[role].length);
+}
+
+/** UE 侧状态：none=未导出，stale=设计已变或缺图标，exported=与设计一致。 */
 function machineUEState(m){
   const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[m.id];
   if(!rec) return { state:'none', rec:null };
   const meta = rec.meta || {};
-  const stale = (meta.contentHash && meta.contentHash !== machineContentHash(m))
+  const stale = !hasAssetFile(rec, 'icon')
+             || (meta.contentHash && meta.contentHash !== machineContentHash(m))
              || (meta.styleHash   && meta.styleHash   !== machineStyleHash(m));
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
-/** 物品图标 hash：自定义图标、类型/颜色、当前风格任一变化都要重导出 */
+/** 物品图标 hash：自定义图标、类型/颜色、名称、当前风格任一变化都要重导出 */
 function itemIconHash(it){
   return syncDataHash({
-    id: it.id, type: it.visual || it.type, color: it.color || '',
+    id: it.id, name: it.name, type: it.visual || it.type, color: it.color || '',
     customIcon: (it.icon || '').trim(), style: styleCacheTag(),
   });
 }
@@ -215,6 +222,23 @@ function itemUEState(it){
   if(!rec) return { state:'none', rec:null };
   const meta = rec.meta || {};
   const stale = meta.iconHash && meta.iconHash !== itemIconHash(it);
+  return { state: stale ? 'stale' : 'exported', rec };
+}
+
+/** 元素图标 hash：自定义图标、符号/名称/等级/颜色、当前风格任一变化都要重导出 */
+function elementIconHash(el){
+  return syncDataHash({
+    id: el.id, name: el.name, symbol: el.symbol || '', tier: el.tier,
+    color: el.color || '', customIcon: (el.icon || '').trim(), style: styleCacheTag(),
+  });
+}
+
+function elementUEState(el){
+  const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[el.id];
+  if(!rec || rec.kind !== 'element') return { state:'none', rec:null };
+  const meta = rec.meta || {};
+  const stale = !hasAssetFile(rec, 'icon')
+             || (meta.iconHash && meta.iconHash !== elementIconHash(el));
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
@@ -369,7 +393,8 @@ function machineSyncState(m){
   const saved = rec.meta || {};
   const ch = machineContentHash(m);
   const sh = machineStyleHash(m);
-  const stale = (saved.contentHash && saved.contentHash !== ch)
+  const stale = !hasAssetFile(rec, 'icon')
+             || (saved.contentHash && saved.contentHash !== ch)
              || (saved.styleHash   && saved.styleHash   !== sh);
   return { state: stale ? 'stale' : 'exported', rec };
 }
@@ -383,6 +408,19 @@ function itemSyncState(it){
   if(diskState !== 'exported') return { state: diskState, rec };
   const saved = rec.meta || {};
   const stale = saved.iconHash && saved.iconHash !== itemIconHash(it);
+  return { state: stale ? 'stale' : 'exported', rec };
+}
+
+/** 元素图标在项目里的同步状态（同物品；用 kind 防止与同名物品互认） */
+function elementSyncState(el){
+  const mf = SYNC.manifest;
+  if(!mf || !mf.assets || !mf.assets[el.id]) return { state:'none', rec:null };
+  const rec = mf.assets[el.id];
+  if(rec.kind !== 'element') return { state:'none', rec:null };
+  const diskState = rec.state || 'exported';
+  if(diskState !== 'exported') return { state: diskState, rec };
+  const saved = rec.meta || {};
+  const stale = saved.iconHash && saved.iconHash !== elementIconHash(el);
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
@@ -434,7 +472,7 @@ function bufToB64(buf){
 }
 
 /**
- * 导出单个机器到 Bridge（→ _Source/Machines/<ID>/）。
+ * 导出单个机器到 Bridge（→ _Source/机器/<中文名>/）。
  * 流程：离屏 canvas → createViewer3D → toGLB → base64 → POST。
  * 同时带质量门禁信息（三角面 vs 风格规格）。
  */
@@ -476,8 +514,14 @@ async function syncExportMachine(id, opt){
     materials: meta.materials,
   };
 
-  // 3. 等轴测预览（SVG 文本直接落盘，Bridge 不区分文件类型）
+  // 3. 等轴测预览（SVG 留档）+ 同一视角的 256×256 PNG 图标（UE 可直接消费）
   const previewSvg = isoPreview(m, 0, 132);
+  let iconB64;
+  try{
+    iconB64 = await machineIconB64(m, 256);
+  }catch(e){
+    return { ok:false, error:'机器图标生成失败: ' + e.message };
+  }
 
   // 4. POST 给 Bridge
   const body = {
@@ -486,6 +530,7 @@ async function syncExportMachine(id, opt){
     files: {
       mesh:    { path: m.id + '.glb', b64: bufToB64(glbBuf) },
       preview: { path: m.id + '_preview.svg', b64: btoa(unescape(encodeURIComponent(previewSvg))) },
+      icon:    { path: m.id + '_icon.png', b64: iconB64 },
     },
     meta: {
       name: m.name, category: m.cat, footprint: m.footprint, tier: m.tier,
@@ -502,6 +547,7 @@ async function syncExportMachine(id, opt){
   const r = await syncApi('export/asset', body);
   if(r && r.ok){
     syncLog('导出 ' + m.id + '：' + (r.files.mesh ? r.files.mesh[0] : '') +
+            ((r.files.icon && r.files.icon[0]) ? ' + ' + r.files.icon[0] : '') +
             '（' + gate.triangles + ' 三角面' + (gate.over ? '，超预算 ' + budget + ' ⚠' : '') + '）',
             gate.severe ? 'warn' : 'ok');
     await syncLoadManifest();
@@ -520,8 +566,8 @@ async function syncExportAll(ids, onProgress){
   return results;
 }
 
-/** 把物品图标（自动生成 SVG 或自定义位图）渲染成透明底 PNG 的 base64 */
-function iconPngB64(it, size){
+/** 把图片地址渲染成透明底 PNG 的 base64（图标 / 等轴测 SVG 共用）。 */
+function imagePngB64(src, size, label){
   size = size || 256;
   return new Promise(function(resolve, reject){
     const img = new Image();
@@ -536,12 +582,24 @@ function iconPngB64(it, size){
         resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
       }catch(e){ reject(e); }
     };
-    img.onerror = function(){ reject(new Error('图标加载失败: ' + it.id)); };
-    img.src = iconURL(it);
+    img.onerror = function(){ reject(new Error(label + ' 加载失败')); };
+    img.src = src;
   });
 }
 
-/** 导出单个物品图标到 Bridge（→ _Source/Items/Icons/<ID>/<ID>.png）。 */
+/** 把物品图标（自动生成 SVG 或自定义位图）渲染成透明底 PNG 的 base64 */
+function iconPngB64(it, size){
+  return imagePngB64(iconURL(it), size || 256, '图标 ' + it.id);
+}
+
+/** 把等轴测预览 SVG 渲染成透明底 PNG 的 base64（机器图标）。 */
+function machineIconB64(m, size){
+  const svg = isoPreview(m, 0, size || 256);
+  return imagePngB64('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
+                     size || 256, '机器图标 ' + m.id);
+}
+
+/** 导出单个物品图标到 Bridge（→ _Source/物品/图标/<中文名>/<ID>.png）。 */
 async function syncExportItem(id){
   if(!SYNC.online) return { ok:false, error:'Bridge 不在线（先启动 tools/bridge.py）' };
   const it = (S.items || []).find(function(item){ return item.id === id; });
@@ -580,6 +638,49 @@ async function syncExportAllItems(ids, onProgress){
   for(let i = 0; i < ids.length; i++){
     if(onProgress) onProgress(i, ids.length, ids[i]);
     results.push({ id: ids[i], r: await syncExportItem(ids[i]) });
+  }
+  if(onProgress) onProgress(ids.length, ids.length, null);
+  return results;
+}
+
+/** 导出单个元素图标到 Bridge（→ _Source/元素/<中文名>/<ID>.png）。 */
+async function syncExportElement(id){
+  if(!SYNC.online) return { ok:false, error:'Bridge 不在线（先启动 tools/bridge.py）' };
+  const el = (S.elements || []).find(function(x){ return x.id === id; });
+  if(!el) return { ok:false, error:'元素不存在: ' + id };
+  let b64;
+  try{
+    b64 = await imagePngB64(elementIconURL(el), 256, '元素图标 ' + el.id);
+  }catch(e){
+    return { ok:false, error:'图标生成失败: ' + e.message };
+  }
+  const st = getStyle();
+  const body = {
+    kind: 'element',
+    id: el.id,
+    files: { icon: { path: el.id + '.png', b64: b64 } },
+    meta: {
+      name: el.name, symbol: el.symbol || '', tier: el.tier, color: el.color || '',
+      customIcon: !!(el.icon && el.icon.trim()),
+      size: 256,
+      style: { presetId: st.id, name: st.name },
+      iconHash: elementIconHash(el),
+    },
+  };
+  const r = await syncApi('export/asset', body);
+  if(r && r.ok){
+    syncLog('导出元素图标 ' + el.id + '：' + ((r.files && r.files.icon) ? r.files.icon[0] : ''), 'ok');
+    await syncLoadManifest();
+  }
+  return { ok: !!(r && r.ok), response: r };
+}
+
+/** 批量导出元素图标（顺序执行） */
+async function syncExportAllElements(ids, onProgress){
+  const results = [];
+  for(let i = 0; i < ids.length; i++){
+    if(onProgress) onProgress(i, ids.length, ids[i]);
+    results.push({ id: ids[i], r: await syncExportElement(ids[i]) });
   }
   if(onProgress) onProgress(ids.length, ids.length, null);
   return results;
@@ -675,11 +776,12 @@ function ueStateTag(state){
     title="${m.label}">${m.icon} ${m.label}</span>`;
 }
 
-/** UE 侧汇总：机器与物品图标合计的已发布/待重导/未导出。 */
+/** UE 侧汇总：机器、物品图标、元素图标合计的已发布/待重导/未导出。 */
 function syncUESummary(){
   const counts = { exported:0, stale:0, none:0 };
   S.machines.forEach(function(m){ counts[machineUEState(m).state]++; });
   (S.items || []).forEach(function(it){ counts[itemUEState(it).state]++; });
+  (S.elements || []).forEach(function(el){ counts[elementUEState(el).state]++; });
   return counts;
 }
 
@@ -698,6 +800,16 @@ function itemSyncSummary(){
   const counts = {};
   (S.items || []).forEach(function(it){
     const s = SYNC.online ? itemSyncState(it).state : (SYNC.checkedAt ? 'unknown' : 'offline');
+    counts[s] = (counts[s] || 0) + 1;
+  });
+  return counts;
+}
+
+/** 汇总所有元素图标的同步状态 */
+function elementSyncSummary(){
+  const counts = {};
+  (S.elements || []).forEach(function(el){
+    const s = SYNC.online ? elementSyncState(el).state : (SYNC.checkedAt ? 'unknown' : 'offline');
     counts[s] = (counts[s] || 0) + 1;
   });
   return counts;

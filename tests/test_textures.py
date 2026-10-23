@@ -46,7 +46,7 @@ class TextureCatalogTest(unittest.TestCase):
         self.assertEqual(catalog['styleId'], 'industrial')
 
     def test_catalog_drops_unknown_keys_and_missing_files(self):
-        directory = self.root / '_Source' / 'Materials' / 'industrial'
+        directory = self.root / '_Source' / '材质' / 'industrial'
         directory.mkdir(parents=True)
         (directory / 'textures.json').write_text(json.dumps({'items': {
             'steel': {'state': 'ready', 'file': 'gone.png'},
@@ -96,7 +96,7 @@ class TextureJobTest(unittest.TestCase):
         catalog = fw_textures.load_catalog(str(self.root), 'industrial')
         self.assertEqual(catalog['items']['steel']['state'], 'queued')
         self.assertEqual(catalog['items']['steel']['taskId'], 'task-1')
-        self.assertTrue((self.root / '_Source' / 'Materials' / 'industrial' / 'textures.json').is_file())
+        self.assertTrue((self.root / '_Source' / '材质' / 'industrial' / 'textures.json').is_file())
 
     def test_submit_skips_ready_and_inflight(self):
         self.submit(['steel'])
@@ -106,7 +106,7 @@ class TextureJobTest(unittest.TestCase):
 
         catalog = fw_textures.load_catalog(str(self.root), 'industrial')
         catalog['items']['steel'].update(state='ready', file='steel.png')
-        directory = self.root / '_Source' / 'Materials' / 'industrial'
+        directory = self.root / '_Source' / '材质' / 'industrial'
         (directory / 'steel.png').write_bytes(b'png')
         fw_textures.save_catalog(str(self.root), 'industrial', catalog)
 
@@ -120,7 +120,7 @@ class TextureJobTest(unittest.TestCase):
         catalog, item = fw_textures.poll_one(
             self.providers, {}, str(self.root), 'industrial', 'steel')
 
-        directory = self.root / '_Source' / 'Materials' / 'industrial'
+        directory = self.root / '_Source' / '材质' / 'industrial'
         self.assertEqual(item['state'], 'ready')
         self.assertEqual(item['file'], 'steel.png')
         self.assertEqual((directory / 'steel.png').read_bytes(), b'\x89PNG-fake')

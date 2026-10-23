@@ -39,7 +39,7 @@ function renderExport(){
       <tr><td><code>DT_MachineDef</code></td><td><code>FMachineDef</code></td><td>Id / DisplayName / Tier / Footprint / PowerDraw</td><td><code>${S.machines.length}</code></td></tr>
       <tr><td><code>DT_RecipeDef</code></td><td><code>FRecipeDef</code></td><td>Id / MachineType / Inputs[] / Outputs[] / CycleTime</td><td><code>${S.recipes.length}</code></td></tr>
       <tr><td><code>DT_TechDef</code></td><td><code>FTechDef</code></td><td>Id / Cost / Prerequisites[] / Unlocks[]</td><td><code>${S.techs.length}</code></td></tr>
-      <tr><td><code>DT_ElementDef</code></td><td><code>FElementDef</code></td><td>Id / Symbol / Name / Color / Tier</td><td><code>${S.elements.length}</code></td></tr>
+      <tr><td><code>DT_ElementDef</code></td><td><code>FElementDef</code></td><td>Id / Symbol / Name / Color / Tier / HasCustomIcon</td><td><code>${S.elements.length}</code></td></tr>
     </tbody></table></div>
     <div style="margin-top:12px;font-size:11.5px;color:var(--text-2);background:var(--panel-2);
          padding:10px 12px;border-radius:8px">
