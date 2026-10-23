@@ -369,6 +369,27 @@ function itemPrompt(it, opt){
   return p;
 }
 
+/**
+ * 元素（周期表图标）的生成描述词
+ */
+function elementPrompt(el, opt){
+  opt = opt || {};
+  const st = getStyle();
+  const fit = fitColor(el.color || '#888780', 'accent', st);
+  const symbol = el.symbol || el.id;
+
+  let p = '';
+  p += `【主体】${st.form.body}风格的元素图标：${el.name}（${symbol}，T${el.tier}）\n`;
+  p += `【形态】2D 游戏图标，圆角方形底板，居中元素符号 ${symbol}，底部小字名称，右上角等级角标\n`;
+  p += `【配色】主色 ${fit.hex}\n`;
+  p += styleBrief(st, { withNegative:false });
+  if(opt.withTech !== false){
+    p += `【技术规格】${st.spec.item}\n`;
+    p += `【负向】${st.negative.join('、')}\n`;
+  }
+  return p;
+}
+
 /* ---------- 等轴测体块预览 ----------
    不生成模型文件，只在界面上用 SVG 画一个体块，
    让设计者能直观看到「占地尺寸 + 体量比例」是否合理。

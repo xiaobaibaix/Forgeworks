@@ -113,7 +113,7 @@ function renderEditorForm(coll, d, isNew){
       F('name','名称', d?.name||'') + F('symbol','符号', d?.symbol||'') +
       F('color','颜色（hex）', d?.color||'#888780') +
       SEL('tier','等级', String(d?.tier??0), [0,1,2,3].map(t=>({v:String(t),t:'T'+t}))) +
-      iconResourceHTML({ previewHTML: d?elementIconHTML(d,52):'', hasCustom });
+      iconResourceHTML({ previewHTML: d?elementIconHTML(d,52):'', hasCustom, showGenerate:!isNew });
 
     const makeTmp = ()=>({
       id:document.getElementById('f_id').value,
@@ -123,7 +123,17 @@ function renderEditorForm(coll, d, isNew){
       tier:document.getElementById('f_tier').value,
       icon:'',
     });
-    bindIconResource({ makeTmp, renderAuto: tmp=>elementIconHTML(tmp, 52) });
+    bindIconResource({
+      makeTmp,
+      renderAuto: tmp=>elementIconHTML(tmp, 52),
+      onGenerate: ()=>{
+        if(!d) return;
+        if(!confirm('进入生成管线？当前未保存的修改会丢失。')) return;
+        const fromView = cur;
+        closeModal();
+        pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor', coll: 'elements'});
+      },
+    });
 
     // 字段变化时刷新自动图标预览（自定义/待保存状态不覆盖）
     const refreshAuto = ()=>{

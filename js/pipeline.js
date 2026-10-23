@@ -228,7 +228,7 @@ function pipelineReturn(){
   cur = target.view || 'assets';
   render();
   if(target.modal === '3d') open3DViewer(target.assetId);
-  else if(target.modal === 'editor') openEditor('items', target.assetId);
+  else if(target.modal === 'editor') openEditor(target.coll || 'items', target.assetId);
 }
 
 async function pipelineCreateTemplate(template){
@@ -619,6 +619,8 @@ function pipelineAssetTarget(assetId){
   if(machine) return {kind:'machine', machine};
   const item = (S.items || []).find(value => value.id === id);
   if(item) return {kind:'item', item};
+  const element = (S.elements || []).find(value => value.id === id);
+  if(element) return {kind:'element', element};
   return null;
 }
 
@@ -805,7 +807,7 @@ function renderPipelineView(){
   const view=document.getElementById('view');
   if(!view) return;
   const bridgeReady=pipelineBridgeReady();
-  const candidates=[...S.machines.map(machine=>({id:machine.id,name:machine.name,kind:'machine'})),...S.items.map(item=>({id:item.id,name:item.name,kind:'item'}))];
+  const candidates=[...S.machines.map(machine=>({id:machine.id,name:machine.name,kind:'machine'})),...S.items.map(item=>({id:item.id,name:item.name,kind:'item'})),...(S.elements||[]).map(element=>({id:element.id,name:element.name,kind:'element'}))];
   if(!candidates.length){view.innerHTML='<div class="card"><p>当前没有可建立流水线的机器或物品。</p></div>';return;}
   if(!PIPELINE.assetId && candidates[0]) PIPELINE.assetId=candidates[0].id;
   if(!PIPELINE.graph){
@@ -817,15 +819,17 @@ function renderPipelineView(){
   const selected=candidates.find(item=>item.id===PIPELINE.assetId);
   const machine= S.machines.find(item=>item.id===PIPELINE.assetId);
   const item= S.items.find(value=>value.id===PIPELINE.assetId);
+  const element= (S.elements||[]).find(value=>value.id===PIPELINE.assetId);
   const promptNode=PIPELINE.graph.nodes.find(node=>node.type==='prompt');
   if(promptNode && !promptNode.params.text && machine && typeof machinePrompt==='function') promptNode.params.text=machinePrompt(machine,{withTech:true});
   if(promptNode && !promptNode.params.text && item && typeof itemPrompt==='function') promptNode.params.text=itemPrompt(item,{withTech:true});
+  if(promptNode && !promptNode.params.text && element && typeof elementPrompt==='function') promptNode.params.text=elementPrompt(element,{withTech:true});
   const edgeSvg=pipelineEdgeSvg();
   view.innerHTML=`<div class="pipeline-toolbar card">
     <div class="pt-field"><label for="pipelineAsset">资产</label>
       <select id="pipelineAsset">${candidates.map(item=>`<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}${pipelineHasArchive(item.id)?' · 已存档':''}</option>`).join('')}</select></div>
     <div class="pt-field"><label for="pipelineTemplate">模板</label>
-      <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}">${template.label}</option>`).join('')}</select></div>
+      <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}" ${template.id===(PIPELINE.graph.template || (PIPELINE.kind==='element'?'icon':'machine'))?'selected':''}>${template.label}</option>`).join('')}</select></div>
     <div class="pt-btns">
       ${PIPELINE.returnTo?`<button id="pipelineBack">${pipelineReturnLabel()}</button>`:''}
       <button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineZoomReset" title="滚轮缩放 · 按住右键拖动平移 · 点击复位">100%</button><button id="pipelineRunAll" class="primary">运行全部（本地节点）</button>
