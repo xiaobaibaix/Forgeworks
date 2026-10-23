@@ -16,6 +16,7 @@
 
 const SYNC = {
   online: false,          // Bridge 是否在线
+  probing: true,          // 首次探测未返回时，页面先显示「正在连接」而不是离线引导
   checkedAt: 0,
   status: null,           // /api/status 的结果
   manifest: null,         // 项目 manifest 缓存（Bridge 在线时以它为准）
@@ -47,6 +48,7 @@ async function syncApi(route, body){
 async function syncPing(force){
   if(!force && Date.now() - SYNC.checkedAt < 15000) return SYNC.online;
   SYNC.checkedAt = Date.now();
+  SYNC.probing = true;
   try{
     const ctl = new AbortController();
     const t = setTimeout(()=>ctl.abort(), 2000);
@@ -64,6 +66,8 @@ async function syncPing(force){
   }catch(e){
     SYNC.online = false;
     SYNC.status = null;
+  }finally{
+    SYNC.probing = false;
   }
   return SYNC.online;
 }

@@ -66,10 +66,15 @@ function syncUECardHTML(){
 function renderSync(){
   const v = document.getElementById('view');
   const on = SYNC.online;
+  const probing = SYNC.probing && !on;
   const proj = SYNC.status && SYNC.status.project;
 
   v.innerHTML = `
-    ${!on ? `
+    ${probing ? `
+    <div class="card">
+      <h3>正在连接 Forge Bridge…</h3>
+      <p class="hint">首次探测需要几秒钟；离线时同步功能不可用，其余功能不受影响。</p>
+    </div>` : !on ? `
     <div class="card">
       <h3>Bridge 未连接</h3>
       <div class="issue warn" style="margin-top:8px"><span class="ic">!</span><div>

@@ -37,13 +37,20 @@ VIEWS = makeViews();
   if(typeof syncPing !== 'function') return;
   syncPing(true).then(function(online){
     if(typeof renderProjectChip === 'function') renderProjectChip();
-    if(!online) return;
-    syncWatchEvents(function(){
-      // 事件到来时，若正停在同步页就局部刷新（避免打断用户操作）
-      if(cur === 'sync'){ syncLoadManifest().then(function(){ renderSyncLog(); renderSyncTable(); renderSyncSummary(); }); }
-    });
-    // 首次探测成功 → 若在同步页，整页重绘一次（显示绑定/导出区）
-    if(cur === 'sync') render();
+    if(online){
+      syncWatchEvents(function(){
+        // 事件到来时，若正停在同步页就局部刷新（避免打断用户操作）
+        if(cur === 'sync'){ syncLoadManifest().then(function(){ renderSyncLog(); renderSyncTable(); renderSyncSummary(); }); }
+      });
+    }
+    // 探测结束（无论在线与否）都要替换掉首帧的「正在连接」占位
+    if(cur !== 'sync' && cur !== 'project' && cur !== 'pipeline') return;
+    if(online && cur === 'project' && typeof providerLoad === 'function' && !PROVIDERS.loadedAt){
+      // 先取回 Provider 状态再渲染，避免项目页整页重绘两次
+      providerLoad().catch(function(){}).then(function(){ if(cur === 'project') render(); });
+      return;
+    }
+    render();
   });
 })();
 // 版本戳：直接从 main.js 自己的 src 里读 ?v=，保证与资源版本号一致

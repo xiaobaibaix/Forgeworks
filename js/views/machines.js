@@ -78,7 +78,7 @@ function renderMachines(){
       + `<button class="sm" id="mcGoSync" style="margin-left:auto">去同步页导出</button>`;
     v.appendChild(bar);
     const go = document.getElementById('mcGoSync');
-    if(go) go.onclick = function(){ cur='sync'; render(); };
+    if(go) go.onclick = function(){ cur='sync'; render(); syncHash('sync'); };
   }
 
   // 提示条

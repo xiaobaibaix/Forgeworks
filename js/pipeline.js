@@ -1,5 +1,6 @@
 const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}};
 const PIPELINE_STORE_PREFIX = 'fw.pipeline.';
+const PIPELINE_LAST_ASSET_KEY = 'fw.pipeline.lastAsset';
 
 const PIPELINE_NODE_LABELS = {
   prompt:'描述词', textToImage:'概念图生成', imageTo3D:'图生 3D', decimate:'减面',
@@ -68,6 +69,18 @@ function pipelineLocalRead(assetId){
 function pipelineLocalWrite(assetId, graph){
   try{ localStorage.setItem(PIPELINE_STORE_PREFIX + assetId, JSON.stringify(graph)); return true; }
   catch(_){ return false; }
+}
+
+function pipelineRememberLastAsset(assetId, kind){
+  try{ localStorage.setItem(PIPELINE_LAST_ASSET_KEY, JSON.stringify({id:assetId, kind})); }catch(_){}
+}
+
+function pipelineLastAsset(){
+  try{
+    const raw = localStorage.getItem(PIPELINE_LAST_ASSET_KEY);
+    const saved = raw ? JSON.parse(raw) : null;
+    return saved && saved.id ? saved : null;
+  }catch(_){ return null; }
 }
 
 function pipelineHasArchive(assetId){
@@ -169,6 +182,7 @@ async function pipelineLoad(assetId){
   PIPELINE.assetId = assetId;
   const target = pipelineAssetTarget(assetId);
   PIPELINE.kind = target ? target.kind : 'machine';
+  pipelineRememberLastAsset(assetId, PIPELINE.kind);
   PIPELINE.providers = {};
   PIPELINE.source = 'local';
   PIPELINE.archive = null;
@@ -211,6 +225,7 @@ function pipelineEnter(assetId, returnTo){
   PIPELINE.pan.y = 0;
   cur = 'pipeline';
   render();
+  syncHash('pipeline');
 }
 
 function pipelineReturnLabel(){
@@ -227,6 +242,7 @@ function pipelineReturn(){
   PIPELINE.returnTo = null;
   cur = target.view || 'assets';
   render();
+  syncHash(cur);
   if(target.modal === '3d') open3DViewer(target.assetId);
   else if(target.modal === 'editor') openEditor(target.coll || 'items', target.assetId);
 }
@@ -1254,10 +1270,18 @@ function renderPipelineView(){
   const view=document.getElementById('view');
   if(!view) return;
   pipelineDisposeAllNodePreviews();
+  if(SYNC.probing && !SYNC.online){
+    view.innerHTML='<div class="card"><p>正在连接 Forge Bridge…</p></div>';
+    return;
+  }
   const bridgeReady=pipelineBridgeReady();
   const candidates=[...S.machines.map(machine=>({id:machine.id,name:machine.name,kind:'machine'})),...S.items.map(item=>({id:item.id,name:item.name,kind:'item'})),...(S.elements||[]).map(element=>({id:element.id,name:element.name,kind:'element'}))];
   if(!candidates.length){view.innerHTML='<div class="card"><p>当前没有可建立流水线的机器或物品。</p></div>';return;}
-  if(!PIPELINE.assetId && candidates[0]) PIPELINE.assetId=candidates[0].id;
+  if(!PIPELINE.assetId){
+    const last = pipelineLastAsset();
+    const hit = last && candidates.find(item=>item.id===last.id && item.kind===last.kind);
+    PIPELINE.assetId = (hit || candidates[0]).id;
+  }
   if(!PIPELINE.graph){
     view.innerHTML='<div class="card"><p>正在读取资产流水线…</p></div>';
     pipelineLoad(PIPELINE.assetId).then(renderPipelineView).catch(error=>{view.innerHTML=`<div class="card">${pipelineEscape(error.message)}</div>`;});

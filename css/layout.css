@@ -73,7 +73,7 @@
 .head{padding:15px 26px 13px;border-bottom:1px solid var(--border);flex:0 0 auto;
   display:flex;align-items:flex-end;gap:16px;
   background:rgba(251,249,243,.88);backdrop-filter:blur(10px)}
-.head-title{min-width:0}
+.head-title{min-width:0;min-height:41px} /* 标题由脚本首帧填入，先占住高度避免刷新时头部跳动 */
 .crumb{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;
   color:var(--brand);margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .title-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}

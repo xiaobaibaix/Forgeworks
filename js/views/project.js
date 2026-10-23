@@ -19,6 +19,11 @@ function _projectRecentHTML(proj){
 function renderProject(){
   const v = document.getElementById('view');
   const on = SYNC.online;
+  if(SYNC.probing && !on){
+    v.innerHTML = `<div class="card"><h3>正在连接 Forge Bridge…</h3>
+      <p class="hint">首次探测需要几秒钟；离线时新建/打开项目不可用，其余功能不受影响。</p></div>`;
+    return;
+  }
   const st = SYNC.status || {};
   const proj = st.project;
 
