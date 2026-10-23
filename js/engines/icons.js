@@ -158,10 +158,10 @@ function makeIconSVG(item, size){
          iconInner(item)+`</svg>`;
 }
 
-/** 当前风格的缓存标识（换风格/调旋钮都会变，图标必须跟着重画） */
+/** 当前风格的缓存标识（调旋钮会变，图标必须跟着重画） */
 function styleCacheTag(){
   if(typeof styleState === 'undefined') return '';
-  return styleState.presetId + ':' + JSON.stringify(styleState.overrides || {});
+  return JSON.stringify(styleState.overrides || {});
 }
 
 /** 图标 URL：有自定义图标就用自定义，否则用生成的

@@ -69,8 +69,8 @@ function resolveMaterial(role, accentColor, presetKey){
 
   // presetKey 可能是「风格 id」，也可能是旧体系的「材质方案名」
   let map = null;
-  if(typeof STYLE_PRESETS !== 'undefined' && STYLE_PRESETS[presetKey]){
-    map = STYLE_PRESETS[presetKey].matMap;
+  if(typeof STYLE_PRESET !== 'undefined' && STYLE_PRESET.id === presetKey){
+    map = STYLE_PRESET.matMap;
   }
   if(!map && MATERIAL_PRESETS[presetKey]) map = MATERIAL_PRESETS[presetKey].map;
   if(!map) map = MATERIAL_PRESETS.industrial.map;
@@ -94,7 +94,7 @@ const ACCENT_BY_CAT = {
 
 /** 当前项目风格 id（风格模块没加载时返回 null） */
 function currentStyleId(){
-  return (typeof styleState !== 'undefined' && styleState) ? styleState.presetId : null;
+  return (typeof STYLE_PRESET !== 'undefined') ? STYLE_PRESET.id : null;
 }
 /** 分类强调色：跟随项目风格 */
 function categoryAccent(cat){
@@ -1495,15 +1495,11 @@ function open3DViewer(machineId){
     return;
   }
 
-  // 材质下拉 = 项目风格（推荐，与描述词同源）+ 旧材质方案（快速试效果）
+  // 材质下拉 = 项目风格（与描述词同源）+ 旧材质方案（快速试效果）
   const curStyle = currentStyleId();
   let presetOpts = '';
-  if(typeof STYLE_PRESETS !== 'undefined'){
-    presetOpts += '<optgroup label="项目风格（与描述词同源）">'
-      + stylePresetList().map(function(p){
-          return '<option value="'+p.id+'">'+p.name+'</option>';
-        }).join('')
-      + '</optgroup>';
+  if(typeof STYLE_PRESET !== 'undefined'){
+    presetOpts += '<option value="'+STYLE_PRESET.id+'">'+STYLE_PRESET.name+'（项目风格）</option>';
   }
   presetOpts += '<optgroup label="材质方案（仅改渲染，不改描述词）">'
     + Object.keys(MATERIAL_PRESETS)

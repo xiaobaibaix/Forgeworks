@@ -129,11 +129,11 @@ python3 tools/stamp.py
 
 一句话：**风格是描述词、模型配色、图标、材质参数的唯一来源。**
 
-- 6 套预设（`voxel-industrial` 默认 / `hardsurface-scifi` / `weathered-frontier` / `cleanroom-orbit` / `dieselpunk-foundry` / `bio-xeno`），每套含形态语言、表面处理、色板、呈现、材质映射、规格、负向词、图标参数。
+- 唯一一套风格基线（`STYLE_PRESET`，`voxel-industrial`），含形态语言、表面处理、色板、呈现、材质映射、规格、负向词、图标参数。
 - `fitColor(hex, role, st)` 按角色带强制校正（`STYLE_TONES`：structure / metal / accent / glow / hazard，色相负责区分功能，饱和度×明度负责统一风格）。
 - 一致性检查 `styleCheck()` + 配色修正闭环 `stylePaletteFixTable()`。
 - 存储：`localStorage['forgeworks.style.v1']`，与内容数据**分开**存。
-- 换风格时清图标缓存（缓存键含 `presetId + overrides`）。
+- 调旋钮时清图标缓存（缓存键含 `overrides`）。
 
 ### 2.3 实测已验证的事实（别重复验证）
 
@@ -314,7 +314,7 @@ bash tests/run.sh          # 目标 48/48
    - 质量门禁报的三角面数是多少（对照规格上限 900，验证 R14 到底多严重）
 5. 改一台机器的 footprint → 回列表看标记是否变 `stale (⟳)`。
 6. 去磁盘删掉一个 `.glb` → 点「核对磁盘状态」→ 标记应变 `missing (✕)`。
-7. 换一套风格预设 → 全部应变 `stale`。
+7. 改风格旋钮 → 全部应变 `stale`。
 
 ---
 

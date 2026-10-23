@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261023f">
-<link rel="stylesheet" href="../css/layout.css?v=20261023f">
-<link rel="stylesheet" href="../css/components.css?v=20261023f">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261023f">
+<link rel="stylesheet" href="../css/theme.css?v=20261023g">
+<link rel="stylesheet" href="../css/layout.css?v=20261023g">
+<link rel="stylesheet" href="../css/components.css?v=20261023g">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261023g">
 </head>
 <body>
 <div class="app">
@@ -51,62 +51,62 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261023f"></script>
-<script src="../js/core/color.js?v=20261023f"></script>
-<script src="../js/data/styles.js?v=20261023f"></script>
-<script src="../js/data/seed.js?v=20261023f"></script>
-<script src="../js/data/prompts.js?v=20261023f"></script>
+<script src="../js/core/config.js?v=20261023g"></script>
+<script src="../js/core/color.js?v=20261023g"></script>
+<script src="../js/data/styles.js?v=20261023g"></script>
+<script src="../js/data/seed.js?v=20261023g"></script>
+<script src="../js/data/prompts.js?v=20261023g"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261023f"></script>
-<script src="../js/core/lookup.js?v=20261023f"></script>
-<script src="../js/core/style.js?v=20261023f"></script>
+<script src="../js/core/state.js?v=20261023g"></script>
+<script src="../js/core/lookup.js?v=20261023g"></script>
+<script src="../js/core/style.js?v=20261023g"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261023f"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261023f"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261023f"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261023f"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261023f"></script>
+<script src="../js/vendor/three.min.js?v=20261023g"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261023g"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261023g"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261023g"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261023g"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261023f"></script>
-<script src="../js/engines/material-textures.js?v=20261023f"></script>
-<script src="../js/engines/asset-layers.js?v=20261023f"></script>
-<script src="../js/engines/viewer3d.js?v=20261023f"></script>
-<script src="../js/views/editor3d.js?v=20261023f"></script>
-<script src="../js/engines/validate.js?v=20261023f"></script>
-<script src="../js/engines/solver.js?v=20261023f"></script>
-<script src="../js/engines/balance.js?v=20261023f"></script>
-<script src="../js/engines/csv.js?v=20261023f"></script>
-<script src="../js/core/io.js?v=20261023f"></script>
-<script src="../js/sync.js?v=20261023f"></script>
-<script src="../js/pipeline.js?v=20261023f"></script>
-<script src="../js/pipeline-templates.js?v=20261023f"></script>
+<script src="../js/engines/icons.js?v=20261023g"></script>
+<script src="../js/engines/material-textures.js?v=20261023g"></script>
+<script src="../js/engines/asset-layers.js?v=20261023g"></script>
+<script src="../js/engines/viewer3d.js?v=20261023g"></script>
+<script src="../js/views/editor3d.js?v=20261023g"></script>
+<script src="../js/engines/validate.js?v=20261023g"></script>
+<script src="../js/engines/solver.js?v=20261023g"></script>
+<script src="../js/engines/balance.js?v=20261023g"></script>
+<script src="../js/engines/csv.js?v=20261023g"></script>
+<script src="../js/core/io.js?v=20261023g"></script>
+<script src="../js/sync.js?v=20261023g"></script>
+<script src="../js/pipeline.js?v=20261023g"></script>
+<script src="../js/pipeline-templates.js?v=20261023g"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261023f"></script>
-<script src="../js/ui/router.js?v=20261023f"></script>
-<script src="../js/ui/editor.js?v=20261023f"></script>
+<script src="../js/ui/table.js?v=20261023g"></script>
+<script src="../js/ui/router.js?v=20261023g"></script>
+<script src="../js/ui/editor.js?v=20261023g"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261023f"></script>
-<script src="../js/views/elements.js?v=20261023f"></script>
-<script src="../js/views/items.js?v=20261023f"></script>
-<script src="../js/views/machines.js?v=20261023f"></script>
-<script src="../js/views/recipes.js?v=20261023f"></script>
-<script src="../js/views/techs.js?v=20261023f"></script>
-<script src="../js/views/assets.js?v=20261023f"></script>
-<script src="../js/views/validate.js?v=20261023f"></script>
-<script src="../js/views/balance.js?v=20261023f"></script>
-<script src="../js/views/solve.js?v=20261023f"></script>
-<script src="../js/views/graph.js?v=20261023f"></script>
-<script src="../js/views/sync.js?v=20261023f"></script>
-<script src="../js/views/pipeline.js?v=20261023f"></script>
-<script src="../js/views/export.js?v=20261023f"></script>
+<script src="../js/views/style.js?v=20261023g"></script>
+<script src="../js/views/elements.js?v=20261023g"></script>
+<script src="../js/views/items.js?v=20261023g"></script>
+<script src="../js/views/machines.js?v=20261023g"></script>
+<script src="../js/views/recipes.js?v=20261023g"></script>
+<script src="../js/views/techs.js?v=20261023g"></script>
+<script src="../js/views/assets.js?v=20261023g"></script>
+<script src="../js/views/validate.js?v=20261023g"></script>
+<script src="../js/views/balance.js?v=20261023g"></script>
+<script src="../js/views/solve.js?v=20261023g"></script>
+<script src="../js/views/graph.js?v=20261023g"></script>
+<script src="../js/views/sync.js?v=20261023g"></script>
+<script src="../js/views/pipeline.js?v=20261023g"></script>
+<script src="../js/views/export.js?v=20261023g"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261023f"></script>
+<script src="../js/main.js?v=20261023g"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -170,14 +170,9 @@
     /* ============================================================
        风格引擎 —— 重点是验证「跨模块联动」真的接上了
        ============================================================ */
-    check('风格预设齐全', function(){
-      var n = stylePresetList().length;
-      return n >= 6 ? n + ' 套' : '只有 ' + n + ' 套';
-    });
-
-    check('当前风格可解析', function(){
+    check('风格基线可解析', function(){
       var st = getStyle();
-      return (st && st.palette && st.palette.structure)
+      return (st && st.palette && st.palette.structure && st.id === STYLE_PRESET.id)
         ? st.name + ' / ' + Object.keys(st.palette.accent).length + ' 个强调色'
         : false;
     });
@@ -185,22 +180,17 @@
     check('色板全部落在角色带内（统一性算法）', function(){
       var bad = [];
       var roles = ['structure','metal','metalDark','metalLite','glass','glow','hazard'];
-      try{
-        stylePresetList().forEach(function(p){
-          setStylePreset(p.id);
-          var st = getStyle();
-          roles.forEach(function(role){
-            var b = toneBand(role, st);
-            var f = fitColor(st.palette[role], role, st);
-            if(f.satAfter < b.sat[0]-0.6 || f.satAfter > b.sat[1]+0.6)
-              bad.push(p.id+'/'+role+' S='+f.satAfter.toFixed(1));
-            if(f.ligAfter < b.lig[0]-0.6 || f.ligAfter > b.lig[1]+0.6)
-              bad.push(p.id+'/'+role+' L='+f.ligAfter.toFixed(1));
-          });
-        });
-      }finally{ setStylePreset(DEFAULT_STYLE_ID); }
+      var st = getStyle();
+      roles.forEach(function(role){
+        var b = toneBand(role, st);
+        var f = fitColor(st.palette[role], role, st);
+        if(f.satAfter < b.sat[0]-0.6 || f.satAfter > b.sat[1]+0.6)
+          bad.push(role+' S='+f.satAfter.toFixed(1));
+        if(f.ligAfter < b.lig[0]-0.6 || f.ligAfter > b.lig[1]+0.6)
+          bad.push(role+' L='+f.ligAfter.toFixed(1));
+      });
       return bad.length === 0
-        ? roles.length + ' 角色 × ' + stylePresetList().length + ' 套全部合规'
+        ? roles.length + ' 角色全部合规'
         : '违规：' + bad.slice(0, 3).join(' | ');
     });
 
@@ -216,27 +206,27 @@
       }finally{ resetKnobs(); }
     });
 
-    check('换风格 → 描述词跟着变', function(){
+    check('旋钮 → 描述词跟着变', function(){
       var m = S.machines[0], a, b;
       try{
-        setStylePreset('voxel-industrial');
+        setKnob('detail', 0);
         a = machinePrompt(m, {withTech:true});
-        setStylePreset('bio-xeno');
+        setKnob('detail', 1);
         b = machinePrompt(m, {withTech:true});
-      }finally{ setStylePreset(DEFAULT_STYLE_ID); }
-      return a !== b ? '描述词随风格改写' : '描述词没变（风格没接上）';
+      }finally{ resetKnobs(); }
+      return a !== b ? '描述词随旋钮改写' : '描述词没变（旋钮没接上）';
     });
 
-    check('换风格 → 图标跟着变', function(){
+    check('旋钮 → 图标跟着变', function(){
       var it = S.items[0], a, b;
       clearIconCache();
       try{
-        setStylePreset('voxel-industrial');
+        setKnob('satBoost', -40);
         a = iconURL(it);
-        setStylePreset('dieselpunk-foundry');
+        setKnob('satBoost', 40);
         b = iconURL(it);
-      }finally{ setStylePreset(DEFAULT_STYLE_ID); clearIconCache(); }
-      return a !== b ? '图标配色随风格变' : '图标没变';
+      }finally{ resetKnobs(); clearIconCache(); }
+      return a !== b ? '图标配色随旋钮变' : '图标没变';
     });
 
     check('图标采用风格校正色（不是原始 item.color）', function(){
@@ -255,21 +245,21 @@
         : '仍在用原色 ' + orig;
     });
 
-    check('换风格 → 3D 材质跟着变', function(){
+    check('材质方案可切换（仅渲染）', function(){
       var m = S.machines[0];
-      var a = buildMachineParts(m, 'voxel-industrial').parts[0].mat.color;
-      var b = buildMachineParts(m, 'cleanroom-orbit').parts[0].mat.color;
+      var a = buildMachineParts(m, 'industrial').parts[0].mat.color;
+      var b = buildMachineParts(m, 'rusted').parts[0].mat.color;
       return a !== b ? a + ' → ' + b : '材质没变';
     });
 
-    check('3D 强调色跟随风格', function(){
+    check('3D 强调色跟随风格旋钮', function(){
       var m = S.machines[0], a, b;
       try{
-        setStylePreset('voxel-industrial');
+        setKnob('satBoost', -30);
         a = buildMachineParts(m).accent;
-        setStylePreset('dieselpunk-foundry');
+        setKnob('satBoost', 30);
         b = buildMachineParts(m).accent;
-      }finally{ setStylePreset(DEFAULT_STYLE_ID); }
+      }finally{ resetKnobs(); }
       return a !== b ? a + ' → ' + b : '强调色没变';
     });
 

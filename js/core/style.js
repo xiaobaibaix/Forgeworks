@@ -10,7 +10,7 @@
    结果是「预览里看到的」和「描述词让 AI 生成的」不是一个风格。
 
    本模块把这四者统一到一处，并提供**强制统一**的能力：
-     - getStyle()      返回当前有效风格（预设 + 用户覆盖）
+     - getStyle()      返回当前有效风格（基线 + 用户覆盖）
      - fitColor()      把任意颜色校正进该风格的「角色带」
      - stylePalette()  派生出成套的完整色板
      - styleCheck()    扫描全部内容，报告哪些颜色破坏统一
@@ -33,13 +33,11 @@ function loadStyleState(){
     const raw = localStorage.getItem(LS_STYLE_KEY);
     if(raw){
       const p = JSON.parse(raw);
-      if(p && typeof p.presetId === 'string') s = p;
+      // 旧数据可能带 presetId，单风格之后只保留旋钮覆盖
+      if(p && p.overrides && typeof p.overrides === 'object') s = { overrides:p.overrides };
     }
   }catch(e){ console.warn('style load fail', e); }
-  if(!s) s = { presetId: DEFAULT_STYLE_ID, overrides:{} };
-  // 预设可能被删掉或改名，兜底
-  if(!STYLE_PRESETS[s.presetId]) s.presetId = DEFAULT_STYLE_ID;
-  if(!s.overrides || typeof s.overrides !== 'object') s.overrides = {};
+  if(!s) s = { overrides:{} };
   return s;
 }
 function saveStyleState(){
@@ -51,9 +49,9 @@ function saveStyleState(){
    一、读取与切换
    ============================================================ */
 
-function stylePreset(){ return STYLE_PRESETS[styleState.presetId] || STYLE_PRESETS[DEFAULT_STYLE_ID]; }
+function stylePreset(){ return STYLE_PRESET; }
 
-/** 某个旋钮的当前值（覆盖优先，其次预设隐含值，最后旋钮默认值） */
+/** 某个旋钮的当前值（覆盖优先，其次基线隐含值，最后旋钮默认值） */
 function knobValue(key){
   const k = STYLE_KNOBS.find(x=>x.key===key);
   if(!k) return 0;
@@ -61,14 +59,14 @@ function knobValue(key){
     const v = Number(styleState.overrides[key]);
     if(!isNaN(v)) return v;
   }
-  // 预设可以隐含旋钮值（例如硬表面科幻默认金属感更高）
+  // 基线可以隐含旋钮值
   const p = stylePreset();
   if(p.knobs && p.knobs[key] !== undefined) return Number(p.knobs[key]);
   return k.def;
 }
 
 /**
- * 当前有效风格 = 预设（深拷贝）+ 旋钮值 + 派生色板
+ * 当前有效风格 = 基线（深拷贝）+ 旋钮值 + 派生色板
  * 每次调用都重新计算，所以改了旋钮立刻生效，不需要手动失效缓存。
  */
 function getStyle(){
@@ -82,7 +80,7 @@ function getStyle(){
     knobs,
     isDirty: Object.keys(styleState.overrides).length > 0,
   };
-  // 磨损度覆盖预设里的定性描述
+  // 磨损度覆盖基线里的定性描述
   st.wearLabel = wearLabel(knobs.wear);
   st.detailLabel = detailLabel(knobs.detail);
   st.palette = stylePalette(st, p);
@@ -95,20 +93,11 @@ function _bumpStyleDependents(){
   if(typeof clearIconCache === 'function') clearIconCache();
 }
 
-function setStylePreset(id){
-  if(!STYLE_PRESETS[id]) return false;
-  styleState.presetId = id;
-  // 换预设时清掉覆盖：不同预设的旋钮基准不同，混着用没有意义
-  styleState.overrides = {};
-  saveStyleState();
-  _bumpStyleDependents();
-  return true;
-}
 function setKnob(key, val){
   const k = STYLE_KNOBS.find(x=>x.key===key);
   if(!k) return;
   const v = Math.max(k.min, Math.min(k.max, Number(val)));
-  // 等于该预设下的默认值时不存，保持"未修改"状态
+  // 等于基线默认值时不存，保持"未修改"状态
   const p = stylePreset();
   const base = (p.knobs && p.knobs[key] !== undefined) ? Number(p.knobs[key]) : k.def;
   if(Math.abs(v - base) < 1e-6) delete styleState.overrides[key];
@@ -230,16 +219,6 @@ function matParams(st){
   };
 }
 
-/** 某套预设在「默认旋钮」下的旋钮值（用于预览尚未选中的风格） */
-function defaultKnobsFor(preset){
-  const o = {};
-  STYLE_KNOBS.forEach(k=>{
-    o[k.key] = (preset.knobs && preset.knobs[k.key] !== undefined)
-      ? Number(preset.knobs[k.key]) : k.def;
-  });
-  return o;
-}
-
 /**
  * 3D 查看器的材质下拉里既有风格 id 也有旧材质方案名，这里统一解析。
  * @param {string} id 风格 id 或 MATERIAL_PRESETS 的 key
@@ -250,19 +229,8 @@ function matParamsFor(id){
   if(typeof MATERIAL_PRESETS !== 'undefined' && MATERIAL_PRESETS[id]){
     return { map: MATERIAL_PRESETS[id].map, metalAdd:0, roughAdd:0, emissiveScale:1 };
   }
-  const p = STYLE_PRESETS[id];
-  if(!p) return null;
-  // 当前选中的风格用实时旋钮；其他风格用它的默认旋钮
-  const knobs = (id === styleState.presetId)
-    ? getStyle().knobs
-    : defaultKnobsFor(p);
-  const tw = p.matTweak || {};
-  return {
-    map: p.matMap,
-    metalAdd: (tw.metalAdd || 0) + ((knobs.metal - 0.5) * 0.5),
-    roughAdd: (tw.roughAdd || 0) + ((knobs.wear - 0.3) * 0.35),
-    emissiveScale: (tw.emissiveScale || 1) * (knobs.glow || 1),
-  };
+  if(id !== STYLE_PRESET.id) return null;
+  return matParams(getStyle());
 }
 
 /* ============================================================

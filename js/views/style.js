@@ -36,36 +36,6 @@ function sw(hex, size, title){
    各区块的 HTML
    ============================================================ */
 
-/** 预设卡片 */
-function stylePresetCards(st){
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:10px">`
-    + stylePresetList().map(function(p){
-        const on = p.id === st.id;
-        // 卡片上的色板缩略：用该预设在当前旋钮下会得到的色
-        const demo = ['structure','metal','metalDark','accent','glow'].map(function(role){
-          let hex;
-          if(role === 'accent'){
-            const a = p.palette.accent || {};
-            hex = a['冶炼'] || a['加工'] || Object.keys(a)[0] && a[Object.keys(a)[0]] || '#8a97a8';
-          }else{
-            hex = p.palette[role];
-          }
-          return `<span style="flex:1;height:14px;background:${hex};
-                    box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)"></span>`;
-        }).join('');
-        return `<div class="sty-card ${on ? 'on' : ''}" data-spreset="${p.id}">
-          <div style="display:flex;align-items:baseline;gap:6px">
-            <strong style="font-size:13px">${p.name}</strong>
-            ${on ? '<span class="pill" style="background:var(--accent);color:#fff;border-color:var(--accent)">当前</span>' : ''}
-          </div>
-          <div style="font-size:11px;color:var(--text-3);margin:2px 0 6px">${p.eraHint || ''}</div>
-          <div style="font-size:11.5px;color:var(--text-2);line-height:1.55;min-height:34px">${p.tagline}</div>
-          <div style="display:flex;gap:2px;margin-top:8px;border-radius:4px;overflow:hidden">${demo}</div>
-        </div>`;
-      }).join('')
-    + `</div>`;
-}
-
 /** 旋钮滑块 */
 function styleKnobRows(st){
   return STYLE_KNOBS.map(function(k){
@@ -131,7 +101,7 @@ function stylePaletteHTML(st){
 
   return `<table><thead><tr>
       <th style="width:150px">角色</th><th style="width:78px">采用</th>
-      <th style="width:150px">预设原色</th><th style="width:150px">允许区间</th><th>说明</th>
+      <th style="width:150px">基线原色</th><th style="width:150px">允许区间</th><th>说明</th>
     </tr></thead><tbody>${body}</tbody></table>
     <div style="margin-top:12px">
       <div style="font-size:11.5px;color:var(--text-2);margin-bottom:6px">
@@ -263,30 +233,27 @@ function renderStyle(){
         物品图标、体块预览、GLB 元数据会<strong>全部跟着变</strong>。
         引擎会把每个颜色校正进「角色带」内 —— <strong>色相负责区分功能，饱和度/明度负责统一风格</strong>。
       </p>
+      <div style="font-size:12px;color:var(--text-2);margin-top:8px">
+        <strong>${st.name}</strong> · ${st.tagline}
+      </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
         <button class="primary" id="styExportJson">导出风格 JSON</button>
         <button id="styCopyBrief">复制完整风格描述</button>
         <button id="styFixPalette">修正建筑配色（生成代码）</button>
-        <button id="styResetKnobs" ${st.isDirty ? '' : 'disabled'}>恢复预设默认值</button>
+        <button id="styResetKnobs" ${st.isDirty ? '' : 'disabled'}>恢复默认值</button>
       </div>
       <div id="styFixOut"></div>
     </div>
 
     <div class="card">
-      <h3>风格预设</h3>
-      <p class="hint">选一套作为项目基线。切换会清掉下面的微调（不同预设的旋钮基准不同，混着用没有意义）。</p>
-      <div id="styPresets" style="margin-top:10px">${stylePresetCards(st)}</div>
-    </div>
-
-    <div class="card">
-      <h3>微调（覆盖当前预设）</h3>
-      <p class="hint">预设是"别人的答案"，这里是"你的项目"。覆盖值单独保存，不影响内容数据。</p>
+      <h3>微调</h3>
+      <p class="hint">基线是起点，这里的覆盖值是"你的项目"，单独保存，不影响内容数据。</p>
       <div id="styKnobs" style="margin-top:12px">${styleKnobRows(st)}</div>
     </div>
 
     <div class="card">
       <h3>色板</h3>
-      <p class="hint">「预设原色 → 采用」列出了引擎做了多少校正。校正量大说明该色本来就不在这套风格里。</p>
+      <p class="hint">「基线原色 → 采用」列出了引擎做了多少校正。校正量大说明该色本来就不在这套风格里。</p>
       <div id="styPalette" style="margin-top:10px">${stylePaletteHTML(st)}</div>
     </div>
 
@@ -301,13 +268,6 @@ function renderStyle(){
       <div id="styCheck" style="margin-top:10px">${styleCheckHTML()}</div>
     </div>
   `;
-
-  /* ---------- 绑定：预设卡 ---------- */
-  v.querySelectorAll('[data-spreset]').forEach(function(el){
-    el.onclick = function(){
-      if(setStylePreset(el.dataset.spreset)) render();
-    };
-  });
 
   /* ---------- 绑定：滑块 ----------
      oninput 只刷新「预览/色板/检查」三块 + 数值标签，
@@ -334,7 +294,7 @@ function renderStyle(){
   if(resetBtn) resetBtn.onclick = function(){
     resetKnobs();
     render();
-    toast('已恢复预设默认值');
+    toast('已恢复默认值');
   };
 
   /* ---------- 绑定：配色修正（诊断 → 行动） ---------- */

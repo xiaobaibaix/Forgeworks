@@ -138,13 +138,6 @@ details.tierbox .inner{padding:8px 12px 12px}
 .setup-step b{display:block;font-size:12px;font-weight:600}
 .setup-step p{font-size:11px;line-height:1.55;color:var(--text-3);margin-top:2px}
 
-/* ---- 风格预设卡（views/style.js） ---- */
-.sty-card{padding:11px 13px;border:1px solid var(--border);border-radius:10px;cursor:pointer;
-  background:var(--panel);transition:border-color .15s,background .15s,box-shadow .15s}
-.sty-card:hover{border-color:var(--border-2);background:var(--panel-2)}
-.sty-card.on{border-color:var(--brand);background:var(--brand-soft);
-  box-shadow:0 0 0 2px rgba(194,65,12,.12)}
-
 /* ---- 3D 预览资产图层（engines/viewer3d.js） ---- */
 .v3-layers{position:absolute;right:10px;top:10px;width:172px;max-height:calc(100% - 20px);
   overflow:auto;padding:9px 10px;border:1px solid var(--border);border-radius:9px;
