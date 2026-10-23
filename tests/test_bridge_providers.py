@@ -238,6 +238,62 @@ class ProviderConnectionTest(unittest.TestCase):
             fw_providers.test_connection({}, 'openai')
 
 
+class ProviderParameterTest(unittest.TestCase):
+    config = {'providers': {'tripo': {'api_key': 'k'}, 'ark': {'api_key': 'k'}}}
+
+    def _capture_tripo(self, params):
+        captured = {}
+
+        def fake(url, api_key, payload=None, timeout=30):
+            captured.update(payload)
+            return {'task_id': 'task_abcdef'}
+
+        with mock.patch.object(fw_providers, '_request', side_effect=fake):
+            fw_providers._tripo_submit(self.config, 'imageTo3D', params, '', 'task_input')
+        return captured
+
+    def test_tripo_image_to_3d_forwards_quality_options(self):
+        body = self._capture_tripo({
+            'texture': True, 'pbr': True, 'faceLimit': 12000, 'smartLowPoly': True,
+            'textureQuality': 'detailed', 'autoSize': True, 'orientation': 'align_image',
+            'modelSeed': 7, 'textureSeed': 9, 'tripoModel': 'v3.0-20250812',
+        })
+        self.assertEqual(body['face_limit'], 12000)
+        self.assertEqual(body['texture_quality'], 'detailed')
+        self.assertTrue(body['auto_size'])
+        self.assertEqual(body['orientation'], 'align_image')
+        self.assertEqual(body['model_seed'], 7)
+        self.assertEqual(body['texture_seed'], 9)
+        self.assertEqual(body['model'], 'v3.0-20250812')
+
+    def test_tripo_texture_only_options_are_dropped_without_texture(self):
+        body = self._capture_tripo({
+            'texture': False, 'pbr': True, 'textureQuality': 'detailed',
+            'autoSize': True, 'orientation': 'align_image', 'textureSeed': 5,
+        })
+        self.assertFalse(body['pbr'])
+        for key in ('texture_quality', 'auto_size', 'orientation', 'texture_seed'):
+            self.assertNotIn(key, body)
+
+    def test_tripo_face_limit_is_clamped(self):
+        self.assertEqual(self._capture_tripo({'texture': False, 'faceLimit': 10})['face_limit'], 500)
+        self.assertEqual(self._capture_tripo({'texture': False, 'faceLimit': 999999})['face_limit'], 150000)
+
+    def test_ark_text_to_image_forwards_size_and_format(self):
+        captured = {}
+
+        def fake(config, path, payload=None, timeout=60):
+            captured.update(payload)
+            return {'data': [{'url': 'https://ark-content.volces.com/x.png'}]}
+
+        with mock.patch.object(fw_providers, '_ark_request', side_effect=fake):
+            fw_providers._ark_submit(self.config, 'textToImage',
+                                     {'size': '2K', 'outputFormat': 'jpeg', 'watermark': True}, 'prompt', '')
+        self.assertEqual(captured['size'], '2K')
+        self.assertEqual(captured['output_format'], 'jpeg')
+        self.assertTrue(captured['watermark'])
+
+
 class ProviderErrorTest(unittest.TestCase):
     def test_tripo_error_body_is_surfaced(self):
         body = json.dumps({'code': 2010, 'status': 'error',

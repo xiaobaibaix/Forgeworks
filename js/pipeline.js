@@ -831,7 +831,8 @@ async function pipelineSubmitRemote(nodeId){
   if(!info || !info.configured){toast(`先在「项目」页配置 ${provider} API key`);return;}
   const label=provider==='ark'?'火山方舟 Ark':'Tripo';
   const model=provider==='ark'?(node.type==='textToImage'?'Seedream 5.0 Pro':'Seed3D 2.0'):(node.type==='textToImage'?'Seedream v5':'v3.1');
-  const estimated=provider==='ark'?0:(node.type==='textToImage'?5:(node.params.texture?40:30));
+  const estimated=provider==='ark'?0:(node.type==='textToImage'?5:
+    (node.params.texture?(node.params.textureQuality==='detailed'?50:40):30)+(node.params.smartLowPoly===false?0:10));
   const price=estimated?`，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）`:'';
   if(!window.confirm(`此操作会调用 ${label}（${model}）${price}；最终以任务实耗为准。现在提交？`)) return;
   PIPELINE.remote[nodeId]='submitting';
@@ -880,8 +881,31 @@ function pipelineWireCard(card){
   card.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
   card.querySelectorAll('[data-preview-model]').forEach(button=>button.onclick=event=>{event.stopPropagation();openPipelineModelPreview(button.dataset.previewModel);});
   card.querySelectorAll('[data-delete-node]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRemoveNode(button.dataset.deleteNode);});
-  card.querySelectorAll('[data-param="text"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);if(node){node.params.text=input.value;pipelineSave({quiet:true}).catch(error=>toast(error.message));}});
-  card.querySelectorAll('[data-param="json"]').forEach(input=>input.onchange=()=>{const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);try{node.params=JSON.parse(input.value);pipelineSave({quiet:true}).catch(error=>toast(error.message));}catch(_){toast('参数必须是合法 JSON');}});
+  card.querySelectorAll('[data-param]').forEach(input=>input.onchange=()=>{
+    const node=PIPELINE.graph.nodes.find(item=>item.id===card.dataset.node);
+    if(!node) return;
+    const key=input.dataset.param;
+    if(key==='text'){node.params.text=input.value;}
+    else if(key==='json'){
+      try{node.params=JSON.parse(input.value);}catch(_){toast('参数必须是合法 JSON');return;}
+    }
+    else if(input.type==='checkbox'){node.params[key]=input.checked;}
+    else if(key==='provider'){if(input.value) node.params[key]=input.value; else delete node.params[key];}
+    else if(input.type==='number'){
+      const raw=input.value.trim();
+      if(!raw){delete node.params[key];}
+      else{
+        const number=Number(raw);
+        if(!Number.isFinite(number)){toast('请输入有效数字');return;}
+        node.params[key]=Math.trunc(number);
+      }
+    }
+    else{
+      const raw=input.value.trim();
+      if(raw) node.params[key]=raw; else delete node.params[key];
+    }
+    pipelineSave({quiet:true}).catch(error=>toast(error.message));
+  });
 }
 
 let _pipelinePreview = null;
@@ -1029,6 +1053,59 @@ function pipelineOutputURL(file){
     encodeURIComponent(String(file).split('/').pop()) + '?kind=' + encodeURIComponent(PIPELINE.kind);
 }
 
+const PIPELINE_PROVIDER_OPTIONS = [{value:'',label:'自动'},{value:'tripo',label:'Tripo'},{value:'ark',label:'Ark'}];
+const PIPELINE_MODEL_OPTIONS = [{value:'',label:'默认'},{value:'v3.1-20260211',label:'v3.1'},{value:'v3.0-20250812',label:'v3.0'}];
+
+function pipelineParamRow(label, control){
+  return `<label><span>${pipelineEscape(label)}</span>${control}</label>`;
+}
+function pipelineParamText(node, key, label, placeholder){
+  const value = node.params[key] == null ? '' : node.params[key];
+  return pipelineParamRow(label, `<input data-param="${key}" type="text" value="${pipelineEscape(value)}" placeholder="${pipelineEscape(placeholder || '')}">`);
+}
+function pipelineParamNumber(node, key, label, attrs, placeholder){
+  const value = node.params[key] == null ? '' : node.params[key];
+  return pipelineParamRow(label, `<input data-param="${key}" type="number" ${attrs || ''} value="${pipelineEscape(value)}" placeholder="${pipelineEscape(placeholder || '')}">`);
+}
+function pipelineParamCheck(node, key, label, fallback){
+  const on = node.params[key] == null ? !!fallback : !!node.params[key];
+  return pipelineParamRow(label, `<input data-param="${key}" type="checkbox" ${on ? 'checked' : ''}>`);
+}
+function pipelineParamSelect(node, key, label, options, fallback){
+  const value = node.params[key] == null ? '' : String(node.params[key]);
+  return pipelineParamRow(label, `<select data-param="${key}">${options.map(option =>
+    `<option value="${pipelineEscape(option.value)}" ${(value || fallback) === option.value ? 'selected' : ''}>${pipelineEscape(option.label)}</option>`).join('')}</select>`);
+}
+function pipelineParamForm(node){
+  if(node.type === 'textToImage'){
+    return `<div class="pipeline-params">
+      ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
+      ${pipelineParamText(node, 'size', '分辨率', '1K / 1.5K / 2K')}
+      ${pipelineParamSelect(node, 'outputFormat', '格式', [{value:'png',label:'PNG'},{value:'jpeg',label:'JPEG'}], 'png')}
+      ${pipelineParamCheck(node, 'watermark', '水印', false)}
+      <small class="pipeline-params-hint">Ark 可选 1K/1.5K/2K；也可填像素尺寸，如 2048x1152。</small>
+    </div>`;
+  }
+  if(node.type === 'imageTo3D'){
+    const textureOn = !!node.params.texture;
+    return `<div class="pipeline-params">
+      ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
+      ${pipelineParamSelect(node, 'tripoModel', 'Tripo 模型', PIPELINE_MODEL_OPTIONS, '')}
+      ${pipelineParamNumber(node, 'faceLimit', '面数上限', 'min="500" max="150000" step="500"', '20000')}
+      ${pipelineParamCheck(node, 'texture', '生成贴图', false)}
+      ${pipelineParamCheck(node, 'pbr', 'PBR 材质', textureOn)}
+      ${pipelineParamSelect(node, 'textureQuality', '贴图精度', [{value:'standard',label:'标准'},{value:'detailed',label:'精细'},{value:'',label:'默认'}], 'standard')}
+      ${pipelineParamCheck(node, 'smartLowPoly', '智能低模', true)}
+      ${pipelineParamCheck(node, 'autoSize', '自动尺寸', false)}
+      ${pipelineParamSelect(node, 'orientation', '朝向', [{value:'default',label:'默认'},{value:'align_image',label:'对齐参考图'}], 'default')}
+      ${pipelineParamNumber(node, 'modelSeed', '模型种子', 'min="0" step="1"', '随机')}
+      ${pipelineParamNumber(node, 'textureSeed', '贴图种子', 'min="0" step="1"', '随机')}
+      <small class="pipeline-params-hint">面数/贴图参数仅 Tripo 生效；PBR 需先开启贴图。</small>
+    </div>`;
+  }
+  return `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
+}
+
 function pipelineNodeCard(node){
   const state = pipelineNodeState(node);
   const busy = pipelineNodeBusy(node);
@@ -1037,7 +1114,7 @@ function pipelineNodeCard(node){
   const progress = task && task.progress;
   const params = node.type === 'prompt'
     ? `<textarea data-param="text" rows="3" placeholder="输入模型描述词">${pipelineEscape(node.params.text || '')}</textarea>`
-    : `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
+    : pipelineParamForm(node);
   const taskOutput=task&&task.output||node.result&&node.result.output||{};
   const outputFile=taskOutput.modelPath||taskOutput.imagePath;
   const outputURL=pipelineOutputURL(outputFile);

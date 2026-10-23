@@ -122,6 +122,28 @@ def _pick_provider(config, params, fallback=False):
     return wanted if wanted else 'tripo'
 
 
+def _bool_param(params, key, default=False):
+    value = params.get(key)
+    return value if isinstance(value, bool) else default
+
+
+def _int_param(params, key, low=None, high=None):
+    value = params.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = int(value)
+    if low is not None:
+        number = max(low, number)
+    if high is not None:
+        number = min(high, number)
+    return number
+
+
+def _choice_param(params, key, allowed, default):
+    value = str(params.get(key) or '').strip().lower()
+    return value if value in allowed else default
+
+
 def _ark_base(config):
     base = str(_provider_config(config, 'ark').get('endpoint') or ARK_BASE).strip().rstrip('/')
     if base.endswith('/api/compatible'):
@@ -200,16 +222,30 @@ def _tripo_submit(config, kind, params, prompt, input_task_id):
         if not prompt.strip():
             raise ValueError('描述词不能为空')
         body = {'prompt': prompt, 'model': str(params.get('model') or 'seedream_v5'),
-                'size': str(params.get('size') or '2K'), 'output_format': 'png'}
+                'size': str(params.get('size') or '2K'),
+                'output_format': _choice_param(params, 'outputFormat', ('png', 'jpeg'), 'png')}
         path = '/generation/text-to-image'
     elif kind == 'imageTo3D':
         task_id = input_task_id or params.get('inputTaskId')
         if not isinstance(task_id, str) or not re.fullmatch(r'task_[A-Za-z0-9_-]{4,128}', task_id):
             raise ValueError('图生 3D 需要上游 textToImage 的成功任务 ID')
-        body = {'input': task_id, 'model': str(params.get('model') or 'v3.1-20260211'),
-                'texture': bool(params.get('texture', False)), 'pbr': bool(params.get('texture', False)),
-                'face_limit': max(500, min(150000, int(params.get('faceLimit') or 20000))),
-                'smart_low_poly': bool(params.get('smartLowPoly', True))}
+        texture = _bool_param(params, 'texture', False)
+        body = {'input': task_id, 'model': str(params.get('tripoModel') or params.get('model') or 'v3.1-20260211'),
+                'texture': texture, 'pbr': texture and _bool_param(params, 'pbr', True),
+                'face_limit': _int_param(params, 'faceLimit', 500, 150000) or 20000,
+                'smart_low_poly': _bool_param(params, 'smartLowPoly', True)}
+        if texture:
+            body['texture_quality'] = _choice_param(params, 'textureQuality', ('standard', 'detailed'), 'standard')
+            if _bool_param(params, 'autoSize'):
+                body['auto_size'] = True
+            if _choice_param(params, 'orientation', ('default', 'align_image'), 'default') == 'align_image':
+                body['orientation'] = 'align_image'
+            texture_seed = _int_param(params, 'textureSeed', 0)
+            if texture_seed is not None:
+                body['texture_seed'] = texture_seed
+        model_seed = _int_param(params, 'modelSeed', 0)
+        if model_seed is not None:
+            body['model_seed'] = model_seed
         path = '/generation/image-to-model'
     else:
         raise ValueError('当前 Provider 不支持此节点类型')
@@ -228,7 +264,9 @@ def _ark_submit(config, kind, params, prompt, image_data):
             raise ValueError('描述词不能为空')
         body = {'model': str(params.get('model') or _provider_config(config, 'ark').get('image_model') or ARK_IMAGE_MODEL),
                 'prompt': prompt, 'size': str(params.get('size') or '1K'),
-                'response_format': 'url', 'output_format': 'png', 'watermark': False}
+                'response_format': 'url',
+                'output_format': _choice_param(params, 'outputFormat', ('png', 'jpeg'), 'png'),
+                'watermark': _bool_param(params, 'watermark', False)}
         result = _ark_request(config, '/images/generations', body, timeout=240)
         items = result.get('data')
         if not isinstance(items, list) or not items or not isinstance(items[0], dict):
