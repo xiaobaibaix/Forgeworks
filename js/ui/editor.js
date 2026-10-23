@@ -29,6 +29,23 @@ function openEditor(coll, id){
 }
 function closeModal(){ document.getElementById('mask').classList.add('hide'); modalState=null; }
 
+/** 表单快照与图标待保存状态，用于判断进入管线前是否真有未保存修改 */
+function editorFormSnapshot(names){
+  return JSON.stringify(names.map(name=>{
+    const el = document.getElementById('f_'+name);
+    return el ? el.value : '';
+  }));
+}
+
+function editorIconDirty(){
+  const prev = document.getElementById('iconPrev');
+  return !!(prev && (prev.dataset.pending || prev.dataset.cleared));
+}
+
+function editorConfirmLeave(dirty){
+  return !dirty || confirm('进入生成管线？当前未保存的修改会丢失。');
+}
+
 /** 图标资源区（预览 + 上传 + 恢复自动 + 可选生成按钮），物品与元素共用 */
 function iconResourceHTML(opt){
   opt = opt || {};
@@ -123,12 +140,15 @@ function renderEditorForm(coll, d, isNew){
       tier:document.getElementById('f_tier').value,
       icon:'',
     });
+    const watchedFields = ['id','name','symbol','color','tier'];
+    const initialForm = editorFormSnapshot(watchedFields);
     bindIconResource({
       makeTmp,
       renderAuto: tmp=>elementIconHTML(tmp, 52),
       onGenerate: ()=>{
         if(!d) return;
-        if(!confirm('进入生成管线？当前未保存的修改会丢失。')) return;
+        const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+        if(!editorConfirmLeave(dirty)) return;
         const fromView = cur;
         closeModal();
         pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor', coll: 'elements'});
@@ -180,12 +200,15 @@ function renderEditorForm(coll, d, isNew){
       color:document.getElementById('f_color').value,
       icon:'',
     });
+    const watchedFields = ['id','name','tier','type','value','color','desc','modelStatus','mesh','mat'];
+    const initialForm = editorFormSnapshot(watchedFields);
     bindIconResource({
       makeTmp: makeItemTmp,
       renderAuto: tmp=>iconHTML(tmp, 52),
       onGenerate: ()=>{
         if(!d) return;
-        if(!confirm('进入生成管线？当前未保存的修改会丢失。')) return;
+        const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+        if(!editorConfirmLeave(dirty)) return;
         const fromView = cur;
         closeModal();
         pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor'});
