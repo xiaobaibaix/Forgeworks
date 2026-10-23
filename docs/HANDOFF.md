@@ -118,7 +118,7 @@ python3 tools/stamp.py
 | 视图 | 文件 | 状态 |
 |---|---|---|
 | 元素 / 物品 / 机器 / 配方 / 科技 | `js/views/{elements,items,machines,recipes,techs}.js` | ✅ |
-| 资产（图标与模型） | `js/views/assets.js` | ✅ |
+| 资产（物品 / 元素图标与模型） | `js/views/assets.js` | ✅ |
 | 校验 / 物料平衡 / 求解器 / 依赖图谱 | `js/views/{validate,balance,solve,graph}.js` + `js/engines/*` | ✅ |
 | 导出（CSV / Markdown / JSON） | `js/views/export.js` + `js/engines/csv.js` | ✅ |
 | 3D 预览 + GLB 导出 | `js/engines/viewer3d.js` | ✅（three.js r147） |

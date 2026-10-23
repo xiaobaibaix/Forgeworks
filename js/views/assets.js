@@ -79,6 +79,37 @@ function renderAssets(){
   });
   h+=`</div>`;
 
+  // 元素图标
+  const els = S.elements || [];
+  const elCustom = els.filter(e=>e.icon && e.icon.trim()).length;
+  h+=`<div class="card" style="margin-top:16px">
+    <h3>元素图标 <span style="font-size:11px;font-weight:400;color:var(--text-3)">
+      共 ${els.length} · 自动生成 ${els.length-elCustom} · 自定义 ${elCustom}</span></h3>
+    <p class="hint">
+      周期表元素牌由「元素颜色 × 符号 × 等级」算法生成，换风格会跟着变；导出到项目的 PNG 在「同步」页完成。
+    </p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">`;
+  els.forEach(el=>{
+    const hasCustom = !!(el.icon && el.icon.trim());
+    h+=`<div class="element-card" data-elicon="${el.id}"
+      style="background:var(--panel);border:1px solid var(--border);border-radius:10px;
+             padding:12px;cursor:pointer;transition:.12s;text-align:center">
+      <div style="width:56px;height:56px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;
+                  background:var(--panel-2);border-radius:8px;border:1px solid var(--border)">
+        ${elementIconHTML(el, 44)}
+      </div>
+      <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+           title="${el.name}">${el.name}</div>
+      <div style="font-size:10px;color:var(--text-3);font-family:var(--mono);margin-bottom:6px;
+                  white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${el.id}</div>
+      <div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap">
+        ${tierTag(el.tier)}
+        <span class="tag">${hasCustom?'自定义':'自动生成'}</span>
+      </div>
+    </div>`;
+  });
+  h+=`</div></div>`;
+
   // 建模任务清单
   const needBuild = S.items.filter(i=>i.modelStatus==='needed' || i.modelStatus==='primitive');
   h+=`<div class="card" style="margin-top:16px">
@@ -109,6 +140,11 @@ function renderAssets(){
     c.onmouseenter=()=>{ c.style.borderColor='var(--accent)'; c.style.transform='translateY(-1px)'; };
     c.onmouseleave=()=>{ c.style.borderColor='var(--border)'; c.style.transform='none'; };
     c.onclick=()=>openEditor('items', c.dataset.item);
+  });
+  v.querySelectorAll('.element-card').forEach(c=>{
+    c.onmouseenter=()=>{ c.style.borderColor='var(--accent)'; c.style.transform='translateY(-1px)'; };
+    c.onmouseleave=()=>{ c.style.borderColor='var(--border)'; c.style.transform='none'; };
+    c.onclick=()=>openEditor('elements', c.dataset.elicon);
   });
   v.querySelectorAll('[data-genicon]').forEach(b=>{
     b.onclick=function(e){

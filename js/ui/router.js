@@ -64,7 +64,7 @@ function makeViews(){
     recipes:{title:'配方', sub:'生产链的核心', render:()=>renderRecipes()},
     techs:{title:'科技树', sub:'配方解锁链', render:()=>renderTechs()},
     style:{title:'风格', sub:'项目美术风格的单一来源', render:()=>renderStyle()},
-    assets:{title:'资源', sub:'物品图标与模型', render:()=>renderAssets()},
+    assets:{title:'资源', sub:'物品与元素图标 · 模型', render:()=>renderAssets()},
     validate:{title:'校验', sub:'数据健康检查', render:()=>renderValidate()},
     balance:{title:'物料平衡', sub:'原料 ↔ 成品 双向换算', render:()=>renderBalance()},
     solve:{title:'产线求解器', sub:'目标物品 → 完整生产链', render:()=>renderSolve()},
@@ -88,7 +88,7 @@ function renderNav(){
       let cnt = '';
       if(dataViews.includes(k)){
         const n = k==='elements' ? S.elements.length
-                : k==='assets'   ? S.items.length
+                : k==='assets'   ? S.items.length + (S.elements || []).length
                 : S[k].length;
         cnt = `<span class="cnt">${n}</span>`;
       }
