@@ -827,7 +827,10 @@ function renderPipelineView(){
   const edgeSvg=pipelineEdgeSvg();
   view.innerHTML=`<div class="pipeline-toolbar card">
     <div class="pt-field"><label for="pipelineAsset">资产</label>
-      <select id="pipelineAsset">${candidates.map(item=>`<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}${pipelineHasArchive(item.id)?' · 已存档':''}</option>`).join('')}</select></div>
+      <select id="pipelineAsset">${candidates.map(item=>{
+        const archived=pipelineHasArchive(item.id);
+        return `<option value="${pipelineEscape(item.id)}" ${item.id===PIPELINE.assetId?'selected':''}>${archived?'🟢 ':''}${pipelineEscape(item.name)} · ${pipelineEscape(item.id)}${archived?' · 已存档':''}</option>`;
+      }).join('')}</select></div>
     <div class="pt-field"><label for="pipelineTemplate">模板</label>
       <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}" ${template.id===(PIPELINE.graph.template || (PIPELINE.kind==='element'?'icon':'machine'))?'selected':''}>${template.label}</option>`).join('')}</select></div>
     <div class="pt-btns">
