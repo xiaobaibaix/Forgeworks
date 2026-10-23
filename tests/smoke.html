@@ -633,8 +633,15 @@
 
   window.addEventListener('load', function(){
     setTimeout(function(){
+      var initialView = cur;
       runSync();
-      runAsync(function(){ setTimeout(finish, 60); });
+      runAsync(function(){
+        setTimeout(function(){
+          // 测试会逐个渲染所有视图，结束后恢复原视图，避免侧栏与内容对不上
+          if(initialView && VIEWS[initialView]){ cur = initialView; render(); }
+          finish();
+        }, 60);
+      });
     }, 250);
   });
 })();
