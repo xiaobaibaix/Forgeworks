@@ -83,6 +83,7 @@
 <script src="../js/engines/csv.js?v=20261024a1"></script>
 <script src="../js/core/io.js?v=20261024a1"></script>
 <script src="../js/sync.js?v=20261024a1"></script>
+<script src="../js/pipeline-adopt.js?v=20261024a1"></script>
 <script src="../js/pipeline.js?v=20261024a1"></script>
 <script src="../js/pipeline-templates.js?v=20261024a1"></script>
 
@@ -958,6 +959,16 @@
       var up = {id:'I1', name:'测试物品', type:'material', color:'#c8c8c0',
                 icon:'', iconSource:'upload'};
       if(itemIconHash(gen) === itemIconHash(up)) throw new Error('iconSource 未参与哈希');
+      return 'ok';
+    });
+    check('管线输出 URL 仅使用文件名', function(){
+      var url = pipelineOutputURLFor('M1', 'machine', 'C:\\tmp\\..\\M1.glb');
+      if(url !== '/api/pipeline/output/M1/M1.glb?kind=machine')
+        throw new Error('异常: ' + url);
+      return 'ok';
+    });
+    check('管线落地编排已加载', function(){
+      if(typeof pipelineAdoptTask !== 'function') throw new Error('未加载');
       return 'ok';
     });
   }
