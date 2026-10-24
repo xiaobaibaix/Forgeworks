@@ -759,24 +759,38 @@
         recipes:[], techs:[]
       };
       normalizeAssets(tmp);
-      if(tmp.elements[0].icon !== '' || tmp.elements[0].iconSource !== '') return '元素图标字段未补全';
-      if(!tmp.elements[0].generated || tmp.elements[0].model !== undefined) return '元素 generated/model 未归一化';
-      if(tmp.items[0].model !== null) return '物品非 AI 模型应为 null';
-      if(!tmp.items[0].generated) return '物品 generated 未补全';
+      if(tmp.elements[0].icon !== '' || tmp.elements[0].iconSource !== '') return false;
+      if(!tmp.elements[0].generated || tmp.elements[0].model !== undefined) return false;
+      if(tmp.items[0].model !== null) return false;
+      if(!tmp.items[0].generated) return false;
       var m = tmp.machines[0];
-      if(m.icon !== '' || m.iconSource !== '') return '机器图标字段未补全';
-      if(m.model.source !== 'ai' || m.model.autoFit !== false) return 'AI 模型字段未保留';
+      if(m.icon !== '' || m.iconSource !== '') return false;
+      if(m.model.source !== 'ai' || m.model.autoFit !== false) return false;
       var t = m.model.transform;
-      if(t.position.x !== 2 || t.position.z !== 0) return '位置归一化错误';
-      if(t.scale.x !== 1 || t.scale.y !== 3) return '缩放归一化错误';
-      if(t.rotation.y !== 0) return '旋转归一化错误';
+      if(t.position.x !== 2 || t.position.z !== 0) return false;
+      if(t.scale.x !== 1 || t.scale.y !== 3) return false;
+      if(t.rotation.y !== 0) return false;
       return '三种资产字段一致';
     });
     check('AI 模型变换默认值', function(){
       var t = normalizeModelTransform(null);
       return t.position.x === 0 && t.position.y === 0 && t.position.z === 0 &&
              t.rotation.x === 0 && t.rotation.y === 0 && t.rotation.z === 0 &&
-             t.scale.x === 1 && t.scale.y === 1 && t.scale.z === 1 ? 'ok' : '默认值错误';
+             t.scale.x === 1 && t.scale.y === 1 && t.scale.z === 1 ? 'ok' : false;
+    });
+    check('资产字段补全 · 保留上传图标绑定', function(){
+      var dataURL = 'data:image/png;base64,iVBORw0KGgo=';
+      var tmp = {
+        elements:[{id:'E1', icon:dataURL, iconSource:'upload'}],
+        items:[{id:'I1', icon:dataURL, iconSource:'upload'}],
+        machines:[{id:'M1', icon:dataURL, iconSource:'upload'}],
+        recipes:[], techs:[]
+      };
+      normalizeAssets(tmp);
+      var kept = [tmp.elements[0], tmp.items[0], tmp.machines[0]].every(function(a){
+        return a.icon === dataURL && a.iconSource === 'upload';
+      });
+      return kept ? '上传图标绑定保留' : false;
     });
   }
 
