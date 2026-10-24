@@ -320,35 +320,45 @@ function renumber(listId){
     r.querySelectorAll('[data-i]').forEach(x=>x.dataset.i=i);
   });
 }
+/** 读取图标区的待提交值，并标记来源 */
+function editorIconValue(coll, id){
+  const prev = document.getElementById('iconPrev');
+  const existing = (S[coll] || []).find(x=>x.id===id) || {};
+  if(prev && prev.dataset.pending) return {icon: prev.dataset.pending, iconSource: 'upload'};
+  if(prev && prev.dataset.cleared) return {icon: '', iconSource: ''};
+  return {icon: existing.icon || '', iconSource: existing.iconSource || ''};
+}
+
+/** 编辑保存时保留未在表单里出现的字段（ui3d / generated / model 等） */
+function mergeEditorRecord(existing, patch){
+  return existing ? Object.assign({}, existing, patch) : patch;
+}
+
 function commitEditor(){
   const {coll,id,isNew}=modalState;
   const g=n=>document.getElementById('f_'+n)?.value;
   let obj=null;
   if(coll==='elements'){
-    const prev = document.getElementById('iconPrev');
-    let iconVal = '';
-    if(prev && prev.dataset.pending) iconVal = prev.dataset.pending;
-    else if(prev && prev.dataset.cleared) iconVal = '';
-    else iconVal = S.elements.find(x=>x.id===id)?.icon || '';
+    const iconState = editorIconValue('elements', id);
     obj={id:g('id').trim(),name:g('name').trim(),symbol:g('symbol').trim(),
-      color:g('color').trim(),tier:+g('tier'),icon:iconVal};
+      color:g('color').trim(),tier:+g('tier'),
+      icon:iconState.icon,iconSource:iconState.iconSource};
   }
   else if(coll==='items'){
-    // 图标：优先取刚上传的，其次看是否点了"恢复自动"，否则沿用原值
-    const prev = document.getElementById('iconPrev');
-    let iconVal = '';
-    if(prev && prev.dataset.pending) iconVal = prev.dataset.pending;
-    else if(prev && prev.dataset.cleared) iconVal = '';
-    else iconVal = S.items.find(x=>x.id===id)?.icon || '';
+    const iconState = editorIconValue('items', id);
     obj={id:g('id').trim(),name:g('name').trim(),tier:+g('tier'),
       type:g('type'),value:+g('value')||0,color:g('color').trim(),desc:g('desc'),
-      icon:iconVal,
+      icon:iconState.icon,iconSource:iconState.iconSource,
       mesh:(g('mesh')||'').trim(),
       mat:(g('mat')||'').trim(),
       modelStatus:g('modelStatus')||'primitive'};
   }
-  else if(coll==='machines') obj={id:g('id').trim(),name:g('name').trim(),cat:g('cat'),
-    tier:+g('tier'),footprint:g('footprint').trim(),power:+g('power')||0,desc:g('desc')};
+  else if(coll==='machines'){
+    const iconState = editorIconValue('machines', id);
+    obj={id:g('id').trim(),name:g('name').trim(),cat:g('cat'),
+      tier:+g('tier'),footprint:g('footprint').trim(),power:+g('power')||0,desc:g('desc'),
+      icon:iconState.icon,iconSource:iconState.iconSource};
+  }
   else if(coll==='recipes'){
     const readIO=(listId,prefix)=>[...document.getElementById(listId).querySelectorAll('.io-row')]
       .map(r=>({
@@ -372,8 +382,13 @@ function commitEditor(){
   if(isNew){ S[coll].push(obj); }
   else {
     const arr = S[coll];
-    const i=arr.findIndex(x=>x.id===id);
-    arr[i]=obj;
+    const i = arr.findIndex(x=>x.id===id);
+    if(i >= 0){
+      obj = mergeEditorRecord(arr[i], obj);
+      arr[i] = obj;
+    }else{
+      S[coll].push(obj);
+    }
   }
   saveState(); closeModal(); clearCostCache(); clearIconCache(); render(); toast('已保存');
 }

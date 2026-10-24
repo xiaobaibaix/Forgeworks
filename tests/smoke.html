@@ -792,6 +792,25 @@
       });
       return kept ? '上传图标绑定保留' : false;
     });
+    check('编辑器保存保留旧字段', function(){
+      var merged = mergeEditorRecord(
+        {id:'M1', name:'旧', ui3d:{parts:{a:{}}}, model:{source:'ai'}, generated:{model:{taskId:'t'}}},
+        {id:'M1', name:'新', icon:'', iconSource:''});
+      if(merged.name !== '新') return '新值未覆盖';
+      if(!merged.ui3d || !merged.ui3d.parts.a) return 'ui3d 丢失';
+      if(!merged.model || merged.model.source !== 'ai') return 'model 丢失';
+      if(!merged.generated || merged.generated.model.taskId !== 't') return 'generated 丢失';
+      return 'ok';
+    });
+    check('编辑器图标来源标记', function(){
+      var host = document.createElement('div');
+      host.innerHTML = '<div id="iconPrev" data-pending="data:image/png;base64,AA"></div>';
+      document.body.appendChild(host);
+      var value = editorIconValue('machines', 'NOT_EXIST');
+      host.remove();
+      return value.icon === 'data:image/png;base64,AA' && value.iconSource === 'upload'
+        ? 'ok' : '来源标记错误';
+    });
   }
 
   function runAsync(done){
