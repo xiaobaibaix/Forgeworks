@@ -734,10 +734,21 @@ def pick_folder():
                 ['osascript', '-e', 'POSIX path of (choose folder with prompt "%s")' % PICK_PROMPT],
                 capture_output=True, text=True, timeout=300)
         elif os.name == 'nt':
-            script = ("Add-Type -AssemblyName System.Windows.Forms; "
+            # Bridge 是后台进程，Windows 前台锁不允许它抢焦点；没有 owner 的
+            # 对话框会被压在浏览器/编辑器后面，用户以为按钮没反应。用一个透明
+            # 置顶 Form 当 owner，模态框才会浮到最前面。
+            script = ("$ErrorActionPreference = 'Stop'; "
+                      "Add-Type -AssemblyName System.Windows.Forms; "
+                      "$owner = New-Object System.Windows.Forms.Form; "
+                      "$owner.FormBorderStyle = 'None'; $owner.ShowInTaskbar = $false; "
+                      "$owner.StartPosition = 'CenterScreen'; "
+                      "$owner.Size = New-Object System.Drawing.Size(1,1); "
+                      "$owner.TopMost = $true; $owner.Opacity = 0; "
+                      "$owner.Show(); [System.Windows.Forms.Application]::DoEvents(); "
                       "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
                       "$d.Description = '%s'; "
-                      "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }" % PICK_PROMPT)
+                      "if ($d.ShowDialog($owner) -eq 'OK') { $d.SelectedPath }; "
+                      "$owner.Close()" % PICK_PROMPT)
             out = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
                                  capture_output=True, text=True, timeout=300)
         else:
@@ -748,6 +759,11 @@ def pick_folder():
     except subprocess.TimeoutExpired:
         return {'ok': False, 'cancelled': True, 'error': '选择超时'}
     if out.returncode != 0:
+        # Windows 上用户取消返回 0；非 0 说明 PowerShell 本身出错，不能再
+        # 当作用户取消静默吞掉，否则界面上就是"点了没反应"。
+        if os.name == 'nt':
+            detail = (out.stderr or '').strip()
+            return {'ok': False, 'error': detail or '目录选择器异常退出（%d）' % out.returncode}
         return {'ok': False, 'cancelled': True}
     path = (out.stdout or '').strip()
     if not path:
