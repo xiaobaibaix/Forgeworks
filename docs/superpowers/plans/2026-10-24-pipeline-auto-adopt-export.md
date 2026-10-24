@@ -3104,12 +3104,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 ## 验收记录
 
-- 日期：2026-10-24
-- Python：运行 122 项，119 项通过，3 项失败（既有 Windows 路径/分隔符/平台断言，与本分支无关，未改代码）
+- 日期：2026-10-24（最终复测：2026-10-25，含最终评审修复提交）
+- Python：运行 123 项，3 项失败、2 项跳过（既有 Windows 路径/分隔符/平台断言，与本分支无关，未改代码）
   - `test_fw_pipeline.PipelineGraphTest.test_manifest_source_dir_wins_over_kind_fallback`
   - `test_ue_pipeline.UEPipelineTest.test_import_plan_uses_project_content_path_and_meter_scale`
   - `test_bridge_providers.CcSwitchImportTest.test_import_writes_key_endpoint_and_model`（POSIX 文件模式 0o600 断言在 Windows 上得到 0o666）
-- Smoke：95 项通过，0 失败（`summary.total == 95`、`summary.fail == 0`、`runtimeErrors == 0`）
+- Smoke：98 项通过，0 失败（`summary.total == 98`、`summary.fail == 0`、`runtimeErrors == 0`）
 - 60 秒 SLA：机器图标 未执行（待人工验收） / 物品图标 未执行（待人工验收） / 元素图标 未执行（待人工验收） / 机器模型 未执行（待人工验收） / 物品模型 未执行（待人工验收）
 - 备注：本环境未启动 Bridge、未接入真实 Ark/Tripo Provider 与 UE，60 秒 SLA 及依赖实机链路的项目均未验证；上述 3 项 Python 失败为既有环境断言。
 
