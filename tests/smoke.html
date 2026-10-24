@@ -903,71 +903,201 @@
       cv.remove();
       done();
     }
-    try{
-      v = createViewer3D(cv, S.machines[0]);
-      v._advance(0.2);
-      out.checks.push({
-        name: '查看器 AI API',
-        ok: typeof v.whenModelReady === 'function' &&
-            typeof v.getAIModelInfo === 'function' &&
-            typeof v.setAIModelTransform === 'function' &&
-            typeof v.computeDefaultAIModelTransform === 'function' &&
-            typeof v.toThumbnail === 'function',
-        detail: ''
-      });
-      v.toGLB(function(buf, err, meta){
-        if(err) return report(false, 'ERROR: ' + err.message);
-        if(!buf) return report(false, '返回空');
-        // 解析 GLB 容器，验证是否 UE 可直接导入
-        var bytes = (buf.byteLength !== undefined) ? buf.byteLength : buf.length;
-        var dv = new DataView(buf);
-        var magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
-        if(magic !== 'glTF') return report(false, '不是 GLB（magic=' + magic + '）');
-        var ver = dv.getUint32(4, true);
-        if(ver !== 2) return report(false, 'glTF 版本不是 2: ' + ver);
-        var jsonLen = dv.getUint32(12, true);
-        var jsonStr = new TextDecoder('utf-8').decode(new Uint8Array(buf, 20, jsonLen));
-        var j = JSON.parse(jsonStr);
 
-        var problems = [];
-        // 1) 必须是单网格（多网格会在 UE 里变成一堆独立资产）
-        if(!j.meshes || j.meshes.length !== 1) problems.push('网格数=' + (j.meshes||[]).length + '（应为 1）');
-        // 2) primitive 数应等于材质数（一材质一槽）
-        var prims = j.meshes[0].primitives.length;
-        var mats = (j.materials||[]).length;
-        if(prims !== mats) problems.push('primitive(' + prims + ') ≠ 材质(' + mats + ')');
-        // 3) 材质要有名字，方便 UE 里识别
-        (j.materials||[]).forEach(function(mm, i){
-          if(!mm.name || mm.name.indexOf('M_') !== 0) problems.push('材质 ' + i + ' 缺名字');
+    /* AI 模式端到端：桩掉管线 URL 与 fetch，验证 GLB 替换程序化几何并烘焙导出 */
+    function runAICheck(next){
+      var aiCanvas = document.createElement('canvas');
+      aiCanvas.width = 200; aiCanvas.height = 160;
+      aiCanvas.getBoundingClientRect = function(){ return {width:200, height:160}; };
+      document.body.appendChild(aiCanvas);
+      var aiViewer = null, aiSettled = false;
+      var savedFetch = window.fetch;
+      var hadPipeline = Object.prototype.hasOwnProperty.call(window, 'pipelineOutputURLFor');
+      var savedPipeline = hadPipeline ? window.pipelineOutputURLFor : null;
+      function restore(){
+        window.fetch = savedFetch;
+        if(hadPipeline) window.pipelineOutputURLFor = savedPipeline;
+        else { try{ delete window.pipelineOutputURLFor; }catch(e){ window.pipelineOutputURLFor = undefined; } }
+        if(aiCanvas.parentNode) aiCanvas.parentNode.removeChild(aiCanvas);
+      }
+      function aiReport(ok, detail){
+        if(aiSettled) return;
+        aiSettled = true;
+        out.checks.push({ name: '查看器 AI GLB 替换与烘焙导出', ok: !!ok, detail: detail || '' });
+        try{ if(aiViewer) aiViewer.dispose(); }catch(e){}
+        restore();
+        next();
+      }
+      // 加载途中关闭查看器：异步续体不得再挂模型或改弹窗
+      function runDisposedCheck(mainDetail, buf){
+        var c2 = document.createElement('canvas');
+        c2.width = 200; c2.height = 160;
+        c2.getBoundingClientRect = function(){ return {width:200, height:160}; };
+        document.body.appendChild(c2);
+        var disposedSettled = false;
+        function done(ok, detail){
+          if(disposedSettled) return;
+          disposedSettled = true;
+          out.checks.push({ name: '查看器 AI 加载中关闭', ok: !!ok, detail: detail || '' });
+          if(c2.parentNode) c2.parentNode.removeChild(c2);
+          aiReport(true, mainDetail);
+        }
+        try{
+          window.fetch = function(){
+            return Promise.resolve({
+              ok: true, status: 200,
+              arrayBuffer: function(){
+                return new Promise(function(resolve){ setTimeout(function(){ resolve(buf); }, 50); });
+              },
+            });
+          };
+          var vd = createViewer3D(c2, {
+            id: 'AI_SMOKE_CLOSED', name: 'AI 关闭测试', cat: '冶炼', footprint: '2×2', tier: 1,
+            model: { source:'ai', file:'ai-smoke.glb', provider:'meshy', taskId:'task-smoke' },
+          });
+          vd.dispose();   // 仍在 fetch/parse 途中
+          vd.whenModelReady().then(function(r){
+            done(r && r.ok === false && r.procedural === true,
+              r ? ('ok=' + r.ok + ' / ' + r.error) : '无结果');
+          }, function(e){ done(false, 'EXCEPTION: ' + e.message); });
+          setTimeout(function(){ done(false, '超时（3s）'); }, 3000);
+        }catch(e){ done(false, 'EXCEPTION: ' + e.message); }
+      }
+      try{
+        // 造一个最小 GLB（12 面 / 1 材质）供 AI 加载路径使用
+        var src = new THREE.Scene();
+        src.add(new THREE.Mesh(new THREE.BoxGeometry(2, 1, 3),
+          new THREE.MeshStandardMaterial({ color: 0x8899aa })));
+        fwBakeGLBScene(src, { scale:{x:1,y:1,z:1} }, { name: 'SRC' }, function(buf, err){
+          if(err) return aiReport(false, '造 GLB 失败：' + err.message);
+          var aiMachine = {
+            id: 'AI_SMOKE', name: 'AI 烟雾测试', cat: '冶炼', footprint: '2×2', tier: 1,
+            model: { source:'ai', file:'ai-smoke.glb', provider:'meshy', taskId:'task-smoke' },
+          };
+          window.pipelineOutputURLFor = function(){ return 'data:model/gltf-binary;base64,AA=='; };
+          window.fetch = function(){
+            return Promise.resolve({
+              ok: true, status: 200,
+              arrayBuffer: function(){ return Promise.resolve(buf); },
+            });
+          };
+          aiViewer = createViewer3D(aiCanvas, aiMachine);
+          // 加载途中导出必须被拒绝，不能静默烘焙程序化几何
+          var early = { called:false, hasBuffer:false, error:null };
+          aiViewer.toGLB(function(buffer, error){
+            early.called = true; early.hasBuffer = !!buffer; early.error = error || null;
+          });
+          if(!early.called || early.hasBuffer || !early.error)
+            return aiReport(false, '加载中的导出未被阻止：' + JSON.stringify(early));
+          aiViewer.whenModelReady().then(function(ready){
+            if(!ready.ok) return aiReport(false, '加载失败：' + ready.error);
+            if(ready.procedural) return aiReport(false, 'AI 模式仍在使用程序化几何');
+            var info = aiViewer.getAIModelInfo() || {};
+            if(info.provider !== 'meshy' || info.taskId !== 'task-smoke' || info.file !== 'ai-smoke.glb')
+              return aiReport(false, 'AI 信息不完整：' + JSON.stringify(info));
+            var parts = aiViewer.getParts();
+            if(!Array.isArray(parts) || parts.length !== 0)
+              return aiReport(false, 'AI 模式仍有程序化部件：' + (parts && parts.length));
+            if(!aiViewer.getAIModelTransform()) return aiReport(false, '缺少 AI 整体变换');
+            aiViewer.toGLB(function(buffer, error, meta){
+              if(error) return aiReport(false, 'AI 导出失败：' + error.message);
+              if(!buffer) return aiReport(false, 'AI 导出返回空');
+              var dv = new DataView(buffer);
+              var magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+              if(magic !== 'glTF') return aiReport(false, '不是 GLB（magic=' + magic + '）');
+              var jsonLen = dv.getUint32(12, true);
+              var j = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buffer, 20, jsonLen)));
+              // 根节点由 glTF scene 指向（烘焙时 holder 是场景根，不一定在 nodes[0]）
+              var rootIdx = j.scenes && j.scenes[0] && j.scenes[0].nodes && j.scenes[0].nodes[0];
+              var rootNode = (rootIdx != null && j.nodes) ? j.nodes[rootIdx] : null;
+              var fw = rootNode && rootNode.extras && rootNode.extras.forgeworks;
+              if(!rootNode || rootNode.name !== 'AI_SMOKE' || !fw || fw.source !== 'pipeline-ai')
+                return aiReport(false, 'AI GLB 根节点/extras 错误：' + JSON.stringify({
+                  name: rootNode && rootNode.name, extras: rootNode && rootNode.extras }));
+              if(!meta || !meta.triangles || !meta.materials)
+                return aiReport(false, 'AI 导出统计缺失：' + JSON.stringify(meta));
+              runDisposedCheck((buffer.byteLength !== undefined ? buffer.byteLength : buffer.length) +
+                ' 字节 / ' + meta.triangles + ' 面 / ' + meta.materials + ' 材质 / source=' + fw.source, buf);
+            });
+          }, function(e){
+            aiReport(false, 'EXCEPTION: ' + e.message);
+          });
+          setTimeout(function(){ aiReport(false, '超时（5s）'); }, 5000);
         });
-        // 4) 节点要带机器 ID
-        var nm = j.nodes && j.nodes[0] && j.nodes[0].name;
-        if(!nm) problems.push('节点无名字');
-        // 5) extras 要带资产方面，UE 侧才能读到 UV/LOD/碰撞/图层
-        var fwExtra = j.nodes && j.nodes[0] && j.nodes[0].extras && j.nodes[0].extras.forgeworks;
-        if(!fwExtra) problems.push('缺 forgeworks extras');
-        else ['uv','lod','collision','layers'].forEach(function(key){
-          if(!fwExtra[key]) problems.push('extras 缺 ' + key);
-        });
-        // 5) 包围盒：底部贴地 + 不超出占地
-        var mn = [Infinity,Infinity,Infinity], mx = [-Infinity,-Infinity,-Infinity];
-        j.meshes[0].primitives.forEach(function(p){
-          var a = j.accessors[p.attributes.POSITION];
-          for(var k=0;k<3;k++){ mn[k]=Math.min(mn[k],a.min[k]); mx[k]=Math.max(mx[k],a.max[k]); }
-        });
-        if(Math.abs(mn[1]) > 0.02) problems.push('未贴地: minY=' + mn[1].toFixed(3));
-        var fp = parseFootprint(S.machines[0].footprint);
-        if(mx[0]-mn[0] > fp[0] + 0.02) problems.push('X 超出占地: ' + (mx[0]-mn[0]).toFixed(2) + ' > ' + fp[0]);
-        if(mx[2]-mn[2] > fp[1] + 0.02) problems.push('Z 超出占地: ' + (mx[2]-mn[2]).toFixed(2) + ' > ' + fp[1]);
-
-        if(problems.length) return report(false, problems.join('; '));
-        report(true, bytes + ' 字节 / 1 网格 / ' + mats + ' 材质槽 / ' +
-               (mx[0]-mn[0]).toFixed(2) + '×' + (mx[2]-mn[2]).toFixed(2) + 'm');
-      });
-      setTimeout(function(){ report(false, '超时（5s）'); }, 5000);
-    }catch(e){
-      report(false, 'EXCEPTION: ' + e.message);
+      }catch(e){
+        aiReport(false, 'EXCEPTION: ' + e.message);
+      }
     }
+
+    function runProcedural(){
+      try{
+        v = createViewer3D(cv, S.machines[0]);
+        v._advance(0.2);
+        out.checks.push({
+          name: '查看器 AI API',
+          ok: typeof v.whenModelReady === 'function' &&
+              typeof v.getAIModelInfo === 'function' &&
+              typeof v.setAIModelTransform === 'function' &&
+              typeof v.computeDefaultAIModelTransform === 'function' &&
+              typeof v.toThumbnail === 'function',
+          detail: ''
+        });
+        v.toGLB(function(buf, err, meta){
+          if(err) return report(false, 'ERROR: ' + err.message);
+          if(!buf) return report(false, '返回空');
+          // 解析 GLB 容器，验证是否 UE 可直接导入
+          var bytes = (buf.byteLength !== undefined) ? buf.byteLength : buf.length;
+          var dv = new DataView(buf);
+          var magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+          if(magic !== 'glTF') return report(false, '不是 GLB（magic=' + magic + '）');
+          var ver = dv.getUint32(4, true);
+          if(ver !== 2) return report(false, 'glTF 版本不是 2: ' + ver);
+          var jsonLen = dv.getUint32(12, true);
+          var jsonStr = new TextDecoder('utf-8').decode(new Uint8Array(buf, 20, jsonLen));
+          var j = JSON.parse(jsonStr);
+
+          var problems = [];
+          // 1) 必须是单网格（多网格会在 UE 里变成一堆独立资产）
+          if(!j.meshes || j.meshes.length !== 1) problems.push('网格数=' + (j.meshes||[]).length + '（应为 1）');
+          // 2) primitive 数应等于材质数（一材质一槽）
+          var prims = j.meshes[0].primitives.length;
+          var mats = (j.materials||[]).length;
+          if(prims !== mats) problems.push('primitive(' + prims + ') ≠ 材质(' + mats + ')');
+          // 3) 材质要有名字，方便 UE 里识别
+          (j.materials||[]).forEach(function(mm, i){
+            if(!mm.name || mm.name.indexOf('M_') !== 0) problems.push('材质 ' + i + ' 缺名字');
+          });
+          // 4) 节点要带机器 ID
+          var nm = j.nodes && j.nodes[0] && j.nodes[0].name;
+          if(!nm) problems.push('节点无名字');
+          // 5) extras 要带资产方面，UE 侧才能读到 UV/LOD/碰撞/图层
+          var fwExtra = j.nodes && j.nodes[0] && j.nodes[0].extras && j.nodes[0].extras.forgeworks;
+          if(!fwExtra) problems.push('缺 forgeworks extras');
+          else ['uv','lod','collision','layers'].forEach(function(key){
+            if(!fwExtra[key]) problems.push('extras 缺 ' + key);
+          });
+          // 5) 包围盒：底部贴地 + 不超出占地
+          var mn = [Infinity,Infinity,Infinity], mx = [-Infinity,-Infinity,-Infinity];
+          j.meshes[0].primitives.forEach(function(p){
+            var a = j.accessors[p.attributes.POSITION];
+            for(var k=0;k<3;k++){ mn[k]=Math.min(mn[k],a.min[k]); mx[k]=Math.max(mx[k],a.max[k]); }
+          });
+          if(Math.abs(mn[1]) > 0.02) problems.push('未贴地: minY=' + mn[1].toFixed(3));
+          var fp = parseFootprint(S.machines[0].footprint);
+          if(mx[0]-mn[0] > fp[0] + 0.02) problems.push('X 超出占地: ' + (mx[0]-mn[0]).toFixed(2) + ' > ' + fp[0]);
+          if(mx[2]-mn[2] > fp[1] + 0.02) problems.push('Z 超出占地: ' + (mx[2]-mn[2]).toFixed(2) + ' > ' + fp[1]);
+
+          if(problems.length) return report(false, problems.join('; '));
+          report(true, bytes + ' 字节 / 1 网格 / ' + mats + ' 材质槽 / ' +
+                 (mx[0]-mn[0]).toFixed(2) + '×' + (mx[2]-mn[2]).toFixed(2) + 'm');
+        });
+        setTimeout(function(){ report(false, '超时（5s）'); }, 5000);
+      }catch(e){
+        report(false, 'EXCEPTION: ' + e.message);
+      }
+    }
+
+    runAICheck(runProcedural);
   }
 
   window.addEventListener('load', function(){

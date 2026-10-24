@@ -723,6 +723,22 @@ function createViewer3D(canvas, machine){
   const aiReady = new Promise(function(resolve){ aiReadyResolve = resolve; });
   if(!aiRequested) aiReadyResolve({ok:true, procedural:true});
 
+  function disposeGLBScene(root){
+    if(!root) return;
+    root.traverse(function(node){
+      if(!node.isMesh) return;
+      if(node.geometry) node.geometry.dispose();
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      mats.forEach(function(mat){
+        if(!mat) return;
+        ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'].forEach(function(key){
+          if(mat[key] && mat[key].dispose) mat[key].dispose();
+        });
+        mat.dispose();
+      });
+    });
+  }
+
   const meshes = [];
   let appliedLod = -1;
 
@@ -1155,6 +1171,12 @@ function createViewer3D(canvas, machine){
     }).then(function(buffer){
       return fwLoadGLBScene(buffer);
     }).then(function(loadedScene){
+      if(state.disposed){
+        // 查看器在加载途中被关闭：不往已销毁的场景挂模型，也不留资源
+        disposeGLBScene(loadedScene);
+        aiReadyResolve({ok:false, error:'查看器已关闭', procedural:true});
+        return;
+      }
       aiScene = loadedScene;
       aiHolder = new THREE.Group();
       aiHolder.name = machine.id + '_AI';
@@ -1179,7 +1201,7 @@ function createViewer3D(canvas, machine){
     }).catch(function(error){
       aiError = error && error.message ? error.message : String(error);
       aiActive = false;
-      applyLayers();
+      if(!state.disposed) applyLayers();
       aiReadyResolve({ok:false, error:aiError, procedural:true});
     });
   }
@@ -1307,20 +1329,7 @@ function createViewer3D(canvas, machine){
       if(emberPoints){ emberPoints.geometry.dispose(); emberPoints.material.dispose(); }
       if(smokePoints){ smokePoints.geometry.dispose(); smokePoints.material.dispose(); }
       if(aiHolder && aiHolder.parent) aiHolder.parent.remove(aiHolder);
-      if(aiScene){
-        aiScene.traverse(function(node){
-          if(!node.isMesh) return;
-          if(node.geometry) node.geometry.dispose();
-          const mats = Array.isArray(node.material) ? node.material : [node.material];
-          mats.forEach(function(mat){
-            if(!mat) return;
-            ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'].forEach(function(key){
-              if(mat[key] && mat[key].dispose) mat[key].dispose();
-            });
-            mat.dispose();
-          });
-        });
-      }
+      disposeGLBScene(aiScene);
       renderer.dispose();
     },
     setAutoRotate: function(v){
@@ -1407,6 +1416,12 @@ function createViewer3D(canvas, machine){
       const MergeUtils = THREE.BufferGeometryUtils;
       if(!MergeUtils || !MergeUtils.mergeBufferGeometries){
         onDone(null, new Error('BufferGeometryUtils 未加载，无法合并网格'));
+        return;
+      }
+
+      // AI 模型尚未就绪时不能静默回退到程序化几何：宁可报错让调用方等待
+      if(aiRequested && !aiActive && !aiError){
+        onDone(null, new Error('AI 模型仍在加载，请稍后再导出'));
         return;
       }
 
@@ -1724,7 +1739,15 @@ function open3DViewer(machineId){
     if(preset && preset.parentElement) preset.parentElement.style.display = 'none';
     document.getElementById('v3Parts').textContent = '变换模型';
     document.getElementById('v3Gen').textContent = '重新生成模型';
+    // 加载期间禁用导出，避免把程序化几何当成 AI 资产导出去
+    const glbBtn = document.getElementById('v3Glb');
+    const shotBtn = document.getElementById('v3Shot');
+    if(glbBtn) glbBtn.disabled = true;
+    if(shotBtn) shotBtn.disabled = true;
     V.whenModelReady().then(function(result){
+      if(_activeViewer !== V) return;   // 查看器已关闭或被新弹窗替代
+      if(glbBtn) glbBtn.disabled = false;
+      if(shotBtn) shotBtn.disabled = false;
       if(!result.ok){
         status.textContent = 'AI 模型加载失败：' + result.error + '（显示程序化几何）';
         return;
