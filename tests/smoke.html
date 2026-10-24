@@ -928,6 +928,27 @@
       if(html.indexOf('<svg') !== 0) throw new Error('未回退');
       return 'ok';
     });
+    check('模型哈希随变换变化', function(){
+      var a = itemModelHash({model:{file:'a.glb',taskId:'t',
+        transform:{position:{x:0,y:0,z:0},rotation:{x:0,y:0,z:0},scale:{x:1,y:1,z:1}}}});
+      var b = itemModelHash({model:{file:'a.glb',taskId:'t',
+        transform:{position:{x:1,y:0,z:0},rotation:{x:0,y:0,z:0},scale:{x:1,y:1,z:1}}}});
+      if(a === b) throw new Error('变换未参与哈希');
+      return 'ok';
+    });
+    check('机器内容哈希覆盖图标与模型', function(){
+      var m = JSON.parse(JSON.stringify(S.machines[0]));
+      delete m.icon; delete m.iconSource; delete m.model;
+      var base = machineContentHash(m);
+      m.icon = 'data:image/png;base64,AA';
+      m.iconSource = 'generated';
+      var withIcon = machineContentHash(m);
+      m.model = {source:'ai', file:'M1.glb', taskId:'t', autoFit:true,
+        transform:normalizeModelTransform(null)};
+      var withModel = machineContentHash(m);
+      if(!(base !== withIcon && withIcon !== withModel)) throw new Error('哈希未覆盖');
+      return 'ok';
+    });
   }
 
   function runAsync(done){

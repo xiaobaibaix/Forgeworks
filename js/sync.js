@@ -357,7 +357,10 @@ function machineUEState(m){
   const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[m.id];
   if(!rec) return { state:'none', rec:null };
   const meta = rec.meta || {};
-  const stale = !hasAssetFile(rec, 'icon')
+  const aiStale = m.model && m.model.source === 'ai'
+    ? (!hasAssetFile(rec, 'mesh') || meta.modelHash !== machineModelHash(m))
+    : false;
+  const stale = !hasAssetFile(rec, 'icon') || aiStale
              || (meta.contentHash && meta.contentHash !== machineContentHash(m))
              || (meta.styleHash   && meta.styleHash   !== machineStyleHash(m));
   return { state: stale ? 'stale' : 'exported', rec };
@@ -367,7 +370,8 @@ function machineUEState(m){
 function itemIconHash(it){
   return syncDataHash({
     id: it.id, name: it.name, type: it.visual || it.type, color: it.color || '',
-    customIcon: (it.icon || '').trim(), style: styleCacheTag(),
+    customIcon: (it.icon || '').trim(), iconSource: it.iconSource || '',
+    style: styleCacheTag(),
   });
 }
 
@@ -375,7 +379,11 @@ function itemUEState(it){
   const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[it.id];
   if(!rec) return { state:'none', rec:null };
   const meta = rec.meta || {};
-  const stale = meta.iconHash && meta.iconHash !== itemIconHash(it);
+  const aiStale = it.model && it.model.source === 'ai'
+    ? (!hasAssetFile(rec, 'mesh') || meta.modelHash !== itemModelHash(it))
+    : false;
+  const stale = !hasAssetFile(rec, 'icon') || aiStale
+             || (meta.iconHash && meta.iconHash !== itemIconHash(it));
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
@@ -505,11 +513,29 @@ function syncDataHash(obj){
   return hashStr(JSON.stringify(obj)).toString(16);
 }
 
-/** 机器数据的 contentHash：影响几何/语义的字段 */
+/** 模型身份 + 整体变换的 hash；没有模型时返回“空模型”的稳定值 */
+function assetModelHash(model){
+  if(!model) return syncDataHash(null);
+  return syncDataHash({
+    source: model.source || '',
+    file: model.file || '',
+    taskId: model.taskId || '',
+    transform: typeof fwNormalizeTransform === 'function'
+      ? fwNormalizeTransform(model.transform) : (model.transform || null),
+    autoFit: model.autoFit !== false,
+  });
+}
+function machineModelHash(m){ return assetModelHash(m.model); }
+function itemModelHash(it){ return assetModelHash(it.model); }
+
+/** 机器数据的 contentHash：影响几何/语义/图标/模型的字段 */
 function machineContentHash(m){
   return syncDataHash({
     id: m.id, name: m.name, cat: m.cat, footprint: m.footprint,
     tier: m.tier, power: m.power,
+    icon: (m.icon || '').trim(),
+    iconSource: m.iconSource || '',
+    model: machineModelHash(m),
   });
 }
 
@@ -547,7 +573,10 @@ function machineSyncState(m){
   const saved = rec.meta || {};
   const ch = machineContentHash(m);
   const sh = machineStyleHash(m);
-  const stale = !hasAssetFile(rec, 'icon')
+  const aiStale = m.model && m.model.source === 'ai'
+    ? (!hasAssetFile(rec, 'mesh') || saved.modelHash !== machineModelHash(m))
+    : false;
+  const stale = !hasAssetFile(rec, 'icon') || aiStale
              || (saved.contentHash && saved.contentHash !== ch)
              || (saved.styleHash   && saved.styleHash   !== sh);
   return { state: stale ? 'stale' : 'exported', rec };
@@ -561,7 +590,11 @@ function itemSyncState(it){
   const diskState = rec.state || 'exported';
   if(diskState !== 'exported') return { state: diskState, rec };
   const saved = rec.meta || {};
-  const stale = saved.iconHash && saved.iconHash !== itemIconHash(it);
+  const aiStale = it.model && it.model.source === 'ai'
+    ? (!hasAssetFile(rec, 'mesh') || saved.modelHash !== itemModelHash(it))
+    : false;
+  const stale = !hasAssetFile(rec, 'icon') || aiStale
+             || (saved.iconHash && saved.iconHash !== itemIconHash(it));
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
@@ -574,7 +607,8 @@ function elementSyncState(el){
   const diskState = rec.state || 'exported';
   if(diskState !== 'exported') return { state: diskState, rec };
   const saved = rec.meta || {};
-  const stale = saved.iconHash && saved.iconHash !== elementIconHash(el);
+  const stale = !hasAssetFile(rec, 'icon')
+             || (saved.iconHash && saved.iconHash !== elementIconHash(el));
   return { state: stale ? 'stale' : 'exported', rec };
 }
 
@@ -637,26 +671,34 @@ async function syncExportMachine(id, opt){
   if(!m) return { ok:false, error:'机器不存在: ' + id };
   if(!haveThree()) return { ok:false, error:'three.js 未加载' };
 
-  // 1. 离屏生成 GLB（复用 3D 预览的完整管线，含风格材质与合并）
-  //    贴图必须先解码完成，GLTFExporter 只会把已加载的 texture.image 写进 GLB。
+  // 1. 离屏生成 GLB；AI 模型先等加载完成，再取缩略图与烘焙结果
   if(typeof fwTexturesReady === 'function') await fwTexturesReady();
   const cv = document.createElement('canvas');
   cv.width = 64; cv.height = 64;
-  let V = null;
-  let glbBuf = null, glbErr = null, meta = null;
+  const isAI = !!(m.model && m.model.source === 'ai');
+  let V = null, glbBuf = null, glbErr = null, meta = null;
+  let aiThumb256 = '', aiThumb512 = '';
   try{
     V = createViewer3D(cv, m);
+    if(isAI){
+      const ready = await V.whenModelReady();
+      if(!ready.ok) throw new Error('AI 模型加载失败: ' + ready.error);
+      aiThumb256 = V.toThumbnail(256);
+      aiThumb512 = V.toThumbnail(512);
+    }
     await new Promise(function(resolve){
       V.toGLB(function(result, err, mt){
         glbBuf = result; glbErr = err; meta = mt; resolve();
       });
     });
+  }catch(e){
+    glbErr = e;
   }finally{
     if(V && V.dispose) V.dispose();
   }
   if(glbErr || !glbBuf) return { ok:false, error:'GLB 生成失败: ' + (glbErr && glbErr.message) };
 
-  // 2. 质量门禁（sync-design §5 风险 R14：三角面超预算）
+  // 2. 质量门禁
   const st = getStyle();
   const budget = parseInt((st.spec.machine.match(/(\d+)\s*~\s*(\d+)/) || [])[2], 10) || 900;
   const gate = {
@@ -668,11 +710,28 @@ async function syncExportMachine(id, opt){
     materials: meta.materials,
   };
 
-  // 3. 等轴测预览（SVG 留档）+ 同一视角的 256×256 PNG 图标（UE 可直接消费）
+  // 3. 图标：上传优先；AI 模型用 256 缩略图；程序化几何用等轴测
   const previewSvg = isoPreview(m, 0, 132);
-  let iconB64;
+  const previewSvgFile = {
+    path: m.id + '_preview.svg',
+    b64: btoa(unescape(encodeURIComponent(previewSvg))),
+  };
+  let iconB64, previewFile;
   try{
-    iconB64 = await machineIconB64(m, 256);
+    if(m.icon && m.iconSource !== 'generated'){
+      iconB64 = await imagePngB64(m.icon, 256, '上传图标 ' + m.id);
+      previewFile = previewSvgFile;
+    }else if(isAI){
+      if(!aiThumb256 || !aiThumb512) throw new Error('AI 缩略图不可用');
+      iconB64 = aiThumb256.slice(aiThumb256.indexOf(',') + 1);
+      previewFile = {
+        path: m.id + '_preview.png',
+        b64: aiThumb512.slice(aiThumb512.indexOf(',') + 1),
+      };
+    }else{
+      iconB64 = await machineIconB64(m, 256);
+      previewFile = previewSvgFile;
+    }
   }catch(e){
     return { ok:false, error:'机器图标生成失败: ' + e.message };
   }
@@ -683,7 +742,7 @@ async function syncExportMachine(id, opt){
     id: m.id,
     files: {
       mesh:    { path: m.id + '.glb', b64: bufToB64(glbBuf) },
-      preview: { path: m.id + '_preview.svg', b64: btoa(unescape(encodeURIComponent(previewSvg))) },
+      preview: previewFile,
       icon:    { path: m.id + '_icon.png', b64: iconB64 },
     },
     meta: {
@@ -696,6 +755,14 @@ async function syncExportMachine(id, opt){
       textures: typeof FW_TEX !== 'undefined' ? Object.keys(FW_TEX.items) : [],
       contentHash: machineContentHash(m),
       styleHash: machineStyleHash(m),
+      modelHash: machineModelHash(m),
+      iconSource: m.iconSource || '',
+      model: isAI ? {
+        source: 'ai', provider: m.model.provider || '', file: m.model.file || '',
+        taskId: m.model.taskId || '', triangles: gate.triangles,
+        transform: fwNormalizeTransform(m.model.transform),
+        autoFit: m.model.autoFit !== false,
+      } : null,
     },
   };
   const r = await syncApi('export/asset', body);
@@ -753,34 +820,76 @@ function machineIconB64(m, size){
                      size || 256, '机器图标 ' + m.id);
 }
 
-/** 导出单个物品图标到 Bridge（→ _Source/物品/图标/<中文名>/<ID>.png）。 */
+/** 导出单个物品（图标 + 可选 AI 模型）到 Bridge（→ _Source/物品/图标/<中文名>/）。 */
 async function syncExportItem(id){
   if(!SYNC.online) return { ok:false, error:'Bridge 不在线（先启动 tools/bridge.py）' };
   const it = (S.items || []).find(function(item){ return item.id === id; });
   if(!it) return { ok:false, error:'物品不存在: ' + id };
-  let b64;
-  try{
-    b64 = await iconPngB64(it, 256);
-  }catch(e){
-    return { ok:false, error:'图标生成失败: ' + e.message };
+
+  const rec = SYNC.manifest && SYNC.manifest.assets && SYNC.manifest.assets[it.id];
+  const skipIcon = it.iconSource === 'generated' && hasAssetFile(rec, 'icon');
+  const files = {};
+  if(!skipIcon){
+    try{
+      files.icon = { path: it.id + '.png', b64: await iconPngB64(it, 256) };
+    }catch(e){
+      return { ok:false, error:'图标生成失败: ' + e.message };
+    }
   }
+
+  let modelMeta = null;
+  if(it.model && it.model.source === 'ai'){
+    try{
+      const url = pipelineOutputURLFor(it.id, 'item', it.model.file);
+      const response = await fetch(url);
+      if(!response.ok) throw new Error('HTTP ' + response.status);
+      const scene = await fwLoadGLBScene(await response.arrayBuffer());
+      const transform = (it.model.autoFit === false && it.model.transform)
+        ? fwNormalizeTransform(it.model.transform)
+        : fwComputeFitTransform(scene, 'item', '');
+      const baked = await new Promise(function(resolve, reject){
+        fwBakeGLBScene(scene, transform, {
+          name: it.id,
+          forgeworks: { generator:'Forgeworks', source:'pipeline-ai',
+                        id:it.id, name:it.name, kind:'item' },
+        }, function(result, error){
+          if(error) reject(error); else resolve(result);
+        });
+      });
+      files.mesh = { path: it.id + '.glb', b64: bufToB64(baked) };
+      modelMeta = {
+        source:'ai', provider: it.model.provider || '', file: it.model.file || '',
+        taskId: it.model.taskId || '', triangles: fwCountTriangles(scene),
+        transform: fwNormalizeTransform(transform),
+        autoFit: it.model.autoFit !== false,
+      };
+    }catch(e){
+      return { ok:false, error:'AI 模型导出失败: ' + e.message };
+    }
+  }
+
   const st = getStyle();
   const body = {
     kind: 'item',
     id: it.id,
-    files: { icon: { path: it.id + '.png', b64: b64 } },
+    files: files,
     meta: {
       name: it.name, type: it.type, visual: it.visual || null,
       tier: it.tier, color: it.color || '',
       customIcon: !!(it.icon && it.icon.trim()),
+      iconSource: it.iconSource || '',
       size: 256,
       style: { presetId: st.id, name: st.name },
       iconHash: itemIconHash(it),
+      modelHash: itemModelHash(it),
+      model: modelMeta,
     },
   };
   const r = await syncApi('export/asset', body);
   if(r && r.ok){
-    syncLog('导出图标 ' + it.id + '：' + ((r.files && r.files.icon) ? r.files.icon[0] : ''), 'ok');
+    const iconName = r.files && r.files.icon ? r.files.icon[0] : '';
+    syncLog('导出 ' + it.id + '：' + (iconName || '仅更新元数据') +
+            (r.files && r.files.mesh ? ' + ' + r.files.mesh[0] : ''), 'ok');
     await syncLoadManifest();
   }
   return { ok: !!(r && r.ok), response: r };
@@ -802,20 +911,30 @@ async function syncExportElement(id){
   if(!SYNC.online) return { ok:false, error:'Bridge 不在线（先启动 tools/bridge.py）' };
   const el = (S.elements || []).find(function(x){ return x.id === id; });
   if(!el) return { ok:false, error:'元素不存在: ' + id };
-  let b64;
-  try{
-    b64 = await imagePngB64(elementIconURL(el), 256, '元素图标 ' + el.id);
-  }catch(e){
-    return { ok:false, error:'图标生成失败: ' + e.message };
+
+  const rec = SYNC.manifest && SYNC.manifest.assets && SYNC.manifest.assets[el.id];
+  const skipIcon = el.iconSource === 'generated' && hasAssetFile(rec, 'icon');
+  const files = {};
+  if(!skipIcon){
+    try{
+      files.icon = {
+        path: el.id + '.png',
+        b64: await imagePngB64(elementIconURL(el), 256, '元素图标 ' + el.id),
+      };
+    }catch(e){
+      return { ok:false, error:'图标生成失败: ' + e.message };
+    }
   }
+
   const st = getStyle();
   const body = {
     kind: 'element',
     id: el.id,
-    files: { icon: { path: el.id + '.png', b64: b64 } },
+    files: files,
     meta: {
       name: el.name, symbol: el.symbol || '', tier: el.tier, color: el.color || '',
       customIcon: !!(el.icon && el.icon.trim()),
+      iconSource: el.iconSource || '',
       size: 256,
       style: { presetId: st.id, name: st.name },
       iconHash: elementIconHash(el),
@@ -823,7 +942,8 @@ async function syncExportElement(id){
   };
   const r = await syncApi('export/asset', body);
   if(r && r.ok){
-    syncLog('导出元素图标 ' + el.id + '：' + ((r.files && r.files.icon) ? r.files.icon[0] : ''), 'ok');
+    syncLog('导出元素 ' + el.id + '：' +
+            ((r.files && r.files.icon) ? r.files.icon[0] : '仅更新元数据'), 'ok');
     await syncLoadManifest();
   }
   return { ok: !!(r && r.ok), response: r };
