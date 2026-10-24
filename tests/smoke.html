@@ -971,6 +971,29 @@
       if(typeof pipelineAdoptTask !== 'function') throw new Error('未加载');
       return 'ok';
     });
+    check('管线卡片为成功任务提供应用按钮', function(){
+      var prev = PIPELINE.assetId;
+      PIPELINE.assetId = S.machines[0].id;
+      try{
+        var node = {id:'n1', type:'textToImage', x:0, y:0, params:{},
+          result:{providerTask:{state:'success', taskId:'t1',
+                  output:{imagePath:'a.png'}}}};
+        var html = pipelineNodeCard(node);
+        if(html.indexOf('data-apply="n1"') < 0) throw new Error('未提供应用按钮');
+        return 'ok';
+      }finally{ PIPELINE.assetId = prev; }
+    });
+    check('导出节点展示 manifest 结果', function(){
+      var node = {id:'export', type:'export', x:0, y:0, params:{},
+        result:{state:'done', output:{sourceDir:'_Source/机器/M1'}}};
+      var html = pipelineNodeCard(node);
+      if(html.indexOf('_Source/机器/M1') < 0) throw new Error('未展示导出目录');
+      return 'ok';
+    });
+    check('管线可跳转到资产编辑器', function(){
+      if(typeof pipelineOpenAsset !== 'function') throw new Error('未定义');
+      return 'ok';
+    });
   }
 
   function runAsync(done){

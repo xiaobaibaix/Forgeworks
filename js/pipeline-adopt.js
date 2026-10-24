@@ -409,5 +409,6 @@
     return next;
   }
 
+  window.pipelineFindAsset = pipelineFindAsset;
   window.pipelineAdoptTask = pipelineAdoptTask;
 })();

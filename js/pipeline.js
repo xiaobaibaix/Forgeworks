@@ -247,6 +247,15 @@ function pipelineReturn(){
   else if(target.modal === 'editor') openEditor(target.coll || 'items', target.assetId);
 }
 
+function pipelineOpenAsset(assetId, kind){
+  const coll = kind === 'machine' ? 'machines' : (kind === 'item' ? 'items' : 'elements');
+  const targetView = kind === 'machine' ? 'machines' : 'assets';
+  cur = targetView;
+  render();
+  syncHash(targetView);
+  openEditor(coll, assetId);
+}
+
 async function pipelineCreateTemplate(template){
   if(pipelineBridgeReady()){
     try{
@@ -914,6 +923,16 @@ function pipelineWireCard(card){
   card.querySelectorAll('[data-remote]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineSubmitRemote(button.dataset.remote);});
   card.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
   card.querySelectorAll('[data-preview-model]').forEach(button=>button.onclick=event=>{event.stopPropagation();openPipelineModelPreview(button.dataset.previewModel);});
+  card.querySelectorAll('[data-apply]').forEach(button=>button.onclick=event=>{
+    event.stopPropagation();
+    const node=PIPELINE.graph.nodes.find(item=>item.id===button.dataset.apply);
+    const task=node&&node.result&&node.result.providerTask;
+    if(task) pipelineAdoptTask(PIPELINE.assetId,PIPELINE.kind,node.id,node.type,task,true);
+  });
+  card.querySelectorAll('[data-open-asset]').forEach(button=>button.onclick=event=>{
+    event.stopPropagation();
+    pipelineOpenAsset(PIPELINE.assetId,PIPELINE.kind);
+  });
   card.querySelectorAll('[data-node-model]').forEach(figure=>figure.onclick=event=>{event.stopPropagation();openPipelineModelPreview(figure.dataset.nodeModel);});
   card.querySelectorAll('[data-delete-node]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRemoveNode(button.dataset.deleteNode);});
   card.querySelectorAll('[data-param]').forEach(input=>input.onchange=()=>{
@@ -1243,6 +1262,20 @@ function pipelineNodeCard(node){
   const busy = pipelineNodeBusy(node);
   const selected = PIPELINE.selected === node.id;
   const task = node.result && node.result.providerTask;
+  const currentAsset = pipelineFindAsset(PIPELINE.kind, PIPELINE.assetId);
+  const applySlot = node.type === 'textToImage' ? 'image'
+    : (node.type === 'imageTo3D' && PIPELINE.kind !== 'element' ? 'model' : '');
+  const generated = (currentAsset && currentAsset.generated) || {};
+  const applied = !!(applySlot && task && task.taskId
+    && generated[applySlot] && generated[applySlot].taskId === task.taskId);
+  const applyStatus = applySlot ? (PIPELINE.applyStatus[PIPELINE.assetId] || '') : '';
+  const applyError = applySlot ? (PIPELINE.applyErrors[PIPELINE.assetId] || '') : '';
+  const exportOutput = node.type === 'export' && node.result && node.result.state === 'done'
+    && node.result.output && node.result.output.sourceDir ? node.result.output : null;
+  const appliedDate = applied && generated[applySlot] && generated[applySlot].at
+    ? new Date(generated[applySlot].at) : null;
+  const appliedWhen = appliedDate && Number.isFinite(appliedDate.getTime())
+    ? appliedDate.toLocaleString('zh-CN') : '';
   const progress = task && task.progress;
   const params = node.type === 'prompt'
     ? `<textarea data-param="text" rows="3" placeholder="输入模型描述词">${pipelineEscape(node.params.text || '')}</textarea>`
@@ -1283,7 +1316,12 @@ function pipelineNodeCard(node){
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(pipelineStateLabel(state, progress))}</span></header>
     <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button></div>${outputLink}${historyHTML}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applySlot && task && task.state === 'success' ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : '应用结果'}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
+    ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir || '')}</small>` : ''}
+    ${applied
+      ? `<small class="pipeline-stage">已应用到 ${pipelineEscape((currentAsset && currentAsset.name) || '资产')}${appliedWhen ? ' · ' + pipelineEscape(appliedWhen) : ''}</small>`
+      : (applyStatus ? `<small class="pipeline-stage">${pipelineEscape(applyStatus)}</small>` : '')}
+    ${applyError ? `<small class="pipeline-error">${pipelineEscape(applyError)}</small>` : ''}
     ${error?`<small class="pipeline-error">${pipelineEscape(error)}</small>`:''}
   </article>`;
 }
