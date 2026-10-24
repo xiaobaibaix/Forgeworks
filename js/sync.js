@@ -671,6 +671,8 @@ async function syncExportMachine(id, opt){
   if(!m) return { ok:false, error:'机器不存在: ' + id };
   if(!haveThree()) return { ok:false, error:'three.js 未加载' };
 
+  const rec = SYNC.manifest && SYNC.manifest.assets && SYNC.manifest.assets[m.id];
+
   // 1. 离屏生成 GLB；AI 模型先等加载完成，再取缩略图与烘焙结果
   if(typeof fwTexturesReady === 'function') await fwTexturesReady();
   const cv = document.createElement('canvas');
@@ -709,8 +711,9 @@ async function syncExportMachine(id, opt){
     sizeCm: meta.sizeCm,
     materials: meta.materials,
   };
+  if(gate.triangles <= 0) return { ok:false, error:'GLB 不含三角面' };
 
-  // 3. 图标：上传优先；AI 模型用 256 缩略图；程序化几何用等轴测
+  // 3. 图标：上传优先；AI 模型用 256 缩略图；生成图用存储图；程序化几何用等轴测
   const previewSvg = isoPreview(m, 0, 132);
   const previewSvgFile = {
     path: m.id + '_preview.svg',
@@ -720,7 +723,10 @@ async function syncExportMachine(id, opt){
   try{
     if(m.icon && m.iconSource !== 'generated'){
       iconB64 = await imagePngB64(m.icon, 256, '上传图标 ' + m.id);
-      previewFile = previewSvgFile;
+      previewFile = (isAI && aiThumb512)
+        ? { path: m.id + '_preview.png',
+            b64: aiThumb512.slice(aiThumb512.indexOf(',') + 1) }
+        : previewSvgFile;
     }else if(isAI){
       if(!aiThumb256 || !aiThumb512) throw new Error('AI 缩略图不可用');
       iconB64 = aiThumb256.slice(aiThumb256.indexOf(',') + 1);
@@ -728,6 +734,9 @@ async function syncExportMachine(id, opt){
         path: m.id + '_preview.png',
         b64: aiThumb512.slice(aiThumb512.indexOf(',') + 1),
       };
+    }else if(m.iconSource === 'generated' && m.icon){
+      if(!hasAssetFile(rec, 'icon')) iconB64 = await imagePngB64(m.icon, 256, '生成图标 ' + m.id);
+      previewFile = previewSvgFile;
     }else{
       iconB64 = await machineIconB64(m, 256);
       previewFile = previewSvgFile;
@@ -737,14 +746,15 @@ async function syncExportMachine(id, opt){
   }
 
   // 4. POST 给 Bridge
+  const files = {
+    mesh: { path: m.id + '.glb', b64: bufToB64(glbBuf) },
+    preview: previewFile,
+  };
+  if(iconB64) files.icon = { path: m.id + '_icon.png', b64: iconB64 };
   const body = {
     kind: 'machine',
     id: m.id,
-    files: {
-      mesh:    { path: m.id + '.glb', b64: bufToB64(glbBuf) },
-      preview: previewFile,
-      icon:    { path: m.id + '_icon.png', b64: iconB64 },
-    },
+    files: files,
     meta: {
       name: m.name, category: m.cat, footprint: m.footprint, tier: m.tier,
       triangles: gate.triangles, triangleBudget: budget,
@@ -827,7 +837,8 @@ async function syncExportItem(id){
   if(!it) return { ok:false, error:'物品不存在: ' + id };
 
   const rec = SYNC.manifest && SYNC.manifest.assets && SYNC.manifest.assets[it.id];
-  const skipIcon = it.iconSource === 'generated' && hasAssetFile(rec, 'icon');
+  const skipIcon = it.iconSource === 'generated' && hasAssetFile(rec, 'icon')
+    && rec.meta && rec.meta.iconHash === itemIconHash(it);
   const files = {};
   if(!skipIcon){
     try{
@@ -844,6 +855,8 @@ async function syncExportItem(id){
       const response = await fetch(url);
       if(!response.ok) throw new Error('HTTP ' + response.status);
       const scene = await fwLoadGLBScene(await response.arrayBuffer());
+      const triangles = fwCountTriangles(scene);
+      if(triangles <= 0) throw new Error('AI 模型不含三角面');
       const transform = (it.model.autoFit === false && it.model.transform)
         ? fwNormalizeTransform(it.model.transform)
         : fwComputeFitTransform(scene, 'item', '');
@@ -859,7 +872,7 @@ async function syncExportItem(id){
       files.mesh = { path: it.id + '.glb', b64: bufToB64(baked) };
       modelMeta = {
         source:'ai', provider: it.model.provider || '', file: it.model.file || '',
-        taskId: it.model.taskId || '', triangles: fwCountTriangles(scene),
+        taskId: it.model.taskId || '', triangles: triangles,
         transform: fwNormalizeTransform(transform),
         autoFit: it.model.autoFit !== false,
       };
@@ -913,7 +926,8 @@ async function syncExportElement(id){
   if(!el) return { ok:false, error:'元素不存在: ' + id };
 
   const rec = SYNC.manifest && SYNC.manifest.assets && SYNC.manifest.assets[el.id];
-  const skipIcon = el.iconSource === 'generated' && hasAssetFile(rec, 'icon');
+  const skipIcon = el.iconSource === 'generated' && hasAssetFile(rec, 'icon')
+    && rec.meta && rec.meta.iconHash === elementIconHash(el);
   const files = {};
   if(!skipIcon){
     try{

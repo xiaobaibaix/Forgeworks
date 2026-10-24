@@ -928,12 +928,15 @@
       if(html.indexOf('<svg') !== 0) throw new Error('未回退');
       return 'ok';
     });
-    check('模型哈希随变换变化', function(){
-      var a = itemModelHash({model:{file:'a.glb',taskId:'t',
-        transform:{position:{x:0,y:0,z:0},rotation:{x:0,y:0,z:0},scale:{x:1,y:1,z:1}}}});
-      var b = itemModelHash({model:{file:'a.glb',taskId:'t',
-        transform:{position:{x:1,y:0,z:0},rotation:{x:0,y:0,z:0},scale:{x:1,y:1,z:1}}}});
-      if(a === b) throw new Error('变换未参与哈希');
+    check('模型哈希随变换、文件与自动适配变化', function(){
+      function hashOf(file, x, autoFit){
+        return itemModelHash({model:{file:file,taskId:'t',autoFit:autoFit,
+          transform:{position:{x:x,y:0,z:0},rotation:{x:0,y:0,z:0},scale:{x:1,y:1,z:1}}}});
+      }
+      var a = hashOf('a.glb', 0, true);
+      if(a === hashOf('a.glb', 1, true)) throw new Error('变换未参与哈希');
+      if(a === hashOf('b.glb', 0, true)) throw new Error('文件未参与哈希');
+      if(a === hashOf('a.glb', 0, false)) throw new Error('autoFit 未参与哈希');
       return 'ok';
     });
     check('机器内容哈希覆盖图标与模型', function(){
@@ -947,6 +950,14 @@
         transform:normalizeModelTransform(null)};
       var withModel = machineContentHash(m);
       if(!(base !== withIcon && withIcon !== withModel)) throw new Error('哈希未覆盖');
+      return 'ok';
+    });
+    check('物品图标哈希覆盖来源', function(){
+      var gen = {id:'I1', name:'测试物品', type:'material', color:'#c8c8c0',
+                 icon:'', iconSource:'generated'};
+      var up = {id:'I1', name:'测试物品', type:'material', color:'#c8c8c0',
+                icon:'', iconSource:'upload'};
+      if(itemIconHash(gen) === itemIconHash(up)) throw new Error('iconSource 未参与哈希');
       return 'ok';
     });
   }
