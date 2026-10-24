@@ -886,6 +886,20 @@
         throw new Error('默认值错误');
       return 'ok';
     });
+    check('恢复程序化几何 · 清理模型与模型图标', function(){
+      var m = {model:{source:'ai'}, icon:'x', iconSource:'generated',
+               generated:{model:{at:'2026-10-24T00:00:00Z'}, image:{at:'2026-10-23T00:00:00Z'}}};
+      var changed = restoreProceduralGeometry(m);
+      return changed && m.model === undefined && m.icon === '' && m.iconSource === '' &&
+             m.generated.model === undefined && m.generated.image === undefined
+               ? 'ok' : '未清理';
+    });
+    check('恢复程序化几何 · 保留更新的概念图', function(){
+      var m = {model:{source:'ai'}, icon:'x', iconSource:'generated',
+               generated:{model:{at:'2026-10-22T00:00:00Z'}, image:{at:'2026-10-24T00:00:00Z'}}};
+      restoreProceduralGeometry(m);
+      return m.icon === 'x' && m.iconSource === 'generated' ? 'ok' : '误删概念图';
+    });
   }
 
   function runAsync(done){
