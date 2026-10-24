@@ -103,10 +103,13 @@
     key.position.copy(center).add(new THREE.Vector3(radius, radius * 1.6, radius));
     renderScene.add(key);
 
-    renderer.render(renderScene, camera);
-    const url = canvas.toDataURL('image/png');
-    renderer.dispose();
-    return url;
+    try{
+      renderer.render(renderScene, camera);
+      return canvas.toDataURL('image/png');
+    }finally{
+      renderer.dispose();
+      if(renderer.forceContextLoss) renderer.forceContextLoss();
+    }
   }
 
   /** 把整体变换与元数据烘焙进单文件 GLB；克隆避免影响实时场景 */

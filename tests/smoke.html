@@ -850,29 +850,41 @@
     });
     /* ---- 独立 GLB 工具 ---- */
     check('GLB 工具已加载', function(){
-      return typeof fwLoadGLBScene === 'function' &&
-             typeof fwBakeGLBScene === 'function' &&
-             typeof fwRenderGLBThumbnail === 'function' ? 'ok' : false;
+      if(typeof fwLoadGLBScene !== 'function' ||
+         typeof fwBakeGLBScene !== 'function' ||
+         typeof fwRenderGLBThumbnail !== 'function') throw new Error('未加载');
+      return 'ok';
     });
     check('GLB 适配变换 · 机器占地', function(){
-      if(typeof fwComputeFitTransform !== 'function') return false;
-      var mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 4));
+      if(typeof fwComputeFitTransform !== 'function') throw new Error('未加载');
+      // 偏心几何：若居中公式符号写反，变换后的包围盒中心会偏离原点
+      var geo = new THREE.BoxGeometry(2, 1, 4);
+      geo.translate(0.7, 0, 0.3);
+      var mesh = new THREE.Mesh(geo);
       var t = fwComputeFitTransform(mesh, 'machine', '4×2');
       if(Math.abs(t.scale.x - 0.5) > 1e-6) throw new Error('缩放=' + t.scale.x);
       if(Math.abs(t.position.y - 0.25) > 1e-6) throw new Error('未贴地 y=' + t.position.y);
-      return Math.abs(t.position.x) < 1e-6 && Math.abs(t.position.z) < 1e-6 ? 'ok' : false;
+      var holder = new THREE.Group();
+      holder.add(mesh);
+      fwApplyGLBTransform(holder, t);
+      var center = new THREE.Box3().setFromObject(holder).getCenter(new THREE.Vector3());
+      if(Math.abs(center.x) > 1e-6 || Math.abs(center.z) > 1e-6)
+        throw new Error('未居中 ' + center.x.toFixed(3) + ',' + center.z.toFixed(3));
+      return 'ok';
     });
     check('GLB 适配变换 · 物品等比', function(){
-      if(typeof fwComputeFitTransform !== 'function') return false;
+      if(typeof fwComputeFitTransform !== 'function') throw new Error('未加载');
       var mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 4));
       var t = fwComputeFitTransform(mesh, 'item', '');
       if(Math.abs(t.scale.x - 0.25) > 1e-6) throw new Error('缩放=' + t.scale.x);
-      return Math.abs(t.position.y - 0.125) < 1e-6 ? 'ok' : false;
+      if(Math.abs(t.position.y - 0.125) > 1e-6) throw new Error('未贴地 y=' + t.position.y);
+      return 'ok';
     });
     check('GLB 变换归一化', function(){
       var t = fwNormalizeTransform({position:{x:'2'}, scale:{z:3}});
-      return t.position.x === 2 && t.position.y === 0 && t.scale.x === 1 && t.scale.z === 3
-        ? 'ok' : false;
+      if(t.position.x !== 2 || t.position.y !== 0 || t.scale.x !== 1 || t.scale.z !== 3)
+        throw new Error('默认值错误');
+      return 'ok';
     });
   }
 
