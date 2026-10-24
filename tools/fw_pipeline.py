@@ -123,6 +123,18 @@ def _manifest_source_dir(forgeworks_root, asset_id):
     return joined
 
 
+def _manifest_asset(forgeworks_root, asset_id, kind):
+    try:
+        with open(os.path.join(forgeworks_root, '_Sync', 'manifest.json'), encoding='utf-8') as stream:
+            manifest = json.load(stream)
+    except (OSError, ValueError):
+        return {}
+    record = (manifest.get('assets') or {}).get(asset_id)
+    if not isinstance(record, dict) or record.get('kind') != kind:
+        return {}
+    return record
+
+
 def pipeline_root(forgeworks_root, asset_id, kind='machine'):
     """存档落在资产自己的文件夹：_Source/<中文分类>/<名称>/pipeline/"""
     asset_id = _valid_asset_id(asset_id)
@@ -272,12 +284,28 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             else:
                 node.setdefault('result', {})['state'] = 'blocked'
                 node['result']['error'] = '上游图片任务尚未成功，图像输出不可用'
+        elif node['type'] == 'export':
+            result = node.setdefault('result', {})
+            record = _manifest_asset(forgeworks_root, asset_id, kind)
+            files = record.get('files') if isinstance(record.get('files'), dict) else {}
+            required = ('mesh', 'icon') if kind == 'machine' else ('icon',)
+            missing = [role for role in required if not files.get(role)]
+            if record and not missing:
+                result['state'] = 'done'
+                result['output'] = {
+                    'sourceDir': record.get('sourceDir'),
+                    'files': {
+                        role: [item.get('path') for item in files[role] if isinstance(item, dict)]
+                        for role in required
+                    },
+                    'exportedAt': record.get('exportedAt'),
+                }
+            else:
+                result['state'] = 'blocked'
+                result['error'] = '尚未导出到项目；请先完成生成与同步导出'
         else:
             node.setdefault('result', {})['state'] = 'blocked'
             node['result']['error'] = '该处理器尚未实现；为避免产生虚假结果，此节点不标记为完成'
-        if node['type'] == 'export':
-            node['result']['state'] = 'blocked'
-            node['result']['error'] = '导出需通过同步导出流程并满足 validate 门禁'
         outputs[node_id] = node.get('result', {}).get('output')
     graph['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     root = pipeline_root(forgeworks_root, asset_id, kind)

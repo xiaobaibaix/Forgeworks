@@ -126,5 +126,86 @@ class PipelineGraphTest(unittest.TestCase):
                 fw_pipeline.pipeline_root(directory, 'M1', 'bogus')
 
 
+def _write_manifest(root, assets):
+    sync = Path(root) / '_Sync'
+    sync.mkdir(parents=True, exist_ok=True)
+    (sync / 'manifest.json').write_text(
+        json.dumps({'schemaVersion': 1, 'assets': assets}, ensure_ascii=False),
+        encoding='utf-8')
+
+
+def _export_graph(asset_id):
+    return {
+        'schemaVersion': 1,
+        'assetId': asset_id,
+        'revision': 0,
+        'nodes': [{'id': 'export', 'type': 'export', 'x': 0, 'y': 0, 'params': {}}],
+        'edges': [],
+    }
+
+
+class PipelineExportNodeTest(unittest.TestCase):
+    def test_machine_export_done_when_mesh_and_icon_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _write_manifest(directory, {'M1': {
+                'kind': 'machine', 'sourceDir': '_Source/机器/钻机',
+                'files': {
+                    'mesh': [{'path': 'M1.glb'}],
+                    'icon': [{'path': 'M1_icon.png'}],
+                },
+                'exportedAt': '2026-10-24T00:00:00Z',
+            }})
+            fw_pipeline.save_graph(directory, 'M1', _export_graph('M1'), kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            node = next(n for n in result['graph']['nodes'] if n['type'] == 'export')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['sourceDir'], '_Source/机器/钻机')
+            self.assertEqual(node['result']['output']['files']['mesh'], ['M1.glb'])
+            self.assertEqual(node['result']['output']['exportedAt'], '2026-10-24T00:00:00Z')
+
+    def test_machine_export_blocked_without_icon(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _write_manifest(directory, {'M1': {
+                'kind': 'machine',
+                'files': {'mesh': [{'path': 'M1.glb'}]},
+            }})
+            fw_pipeline.save_graph(directory, 'M1', _export_graph('M1'), kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            node = next(n for n in result['graph']['nodes'] if n['type'] == 'export')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertIn('尚未导出到项目', node['result']['error'])
+
+    def test_item_export_done_with_icon_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _write_manifest(directory, {'I1': {
+                'kind': 'item',
+                'files': {'icon': [{'path': 'I1.png'}]},
+                'exportedAt': '2026-10-24T00:00:00Z',
+            }})
+            fw_pipeline.save_graph(directory, 'I1', _export_graph('I1'), kind='item')
+            result = fw_pipeline.execute_local(directory, 'I1', kind='item')
+            node = next(n for n in result['graph']['nodes'] if n['type'] == 'export')
+            self.assertEqual(node['result']['state'], 'done')
+
+    def test_element_export_done_with_icon(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _write_manifest(directory, {'Fe': {
+                'kind': 'element',
+                'files': {'icon': [{'path': 'Fe.png'}]},
+                'exportedAt': '2026-10-24T00:00:00Z',
+            }})
+            fw_pipeline.save_graph(directory, 'Fe', _export_graph('Fe'), kind='element')
+            result = fw_pipeline.execute_local(directory, 'Fe', kind='element')
+            node = next(n for n in result['graph']['nodes'] if n['type'] == 'export')
+            self.assertEqual(node['result']['state'], 'done')
+
+    def test_export_blocked_without_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fw_pipeline.save_graph(directory, 'M1', _export_graph('M1'), kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            node = next(n for n in result['graph']['nodes'] if n['type'] == 'export')
+            self.assertEqual(node['result']['state'], 'blocked')
+
+
 if __name__ == '__main__':
     unittest.main()
