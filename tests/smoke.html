@@ -929,6 +929,12 @@
       if(html.indexOf('<svg') !== 0) throw new Error('未回退');
       return 'ok';
     });
+    check('机器图标属性转义', function(){
+      var html = machineIconHTML({id:'m', icon:'x" onerror="alert(1)'});
+      if(html.indexOf('onerror="alert(1)"') >= 0) throw new Error('图标属性未转义');
+      if(html.indexOf('&quot;') < 0) throw new Error('缺少转义实体');
+      return 'ok';
+    });
     check('模型哈希随变换、文件与自动适配变化', function(){
       function hashOf(file, x, autoFit){
         return itemModelHash({model:{file:file,taskId:'t',autoFit:autoFit,

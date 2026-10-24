@@ -106,9 +106,16 @@
 
   async function persistAsset(){
     if(typeof saveLocalState === 'function') saveLocalState();
-    if(typeof syncSaveProjectNow === 'function'){
-      try{ await syncSaveProjectNow(); }catch(_){ /* 项目文件稍后由同步重试 */ }
+    if(typeof syncSaveProjectNow !== 'function') return '';
+    try{
+      const saved = await syncSaveProjectNow();
+      if(saved && saved.ok === false && !saved.skipped){
+        return '项目内容保存失败，资产仅保存在浏览器本地';
+      }
+    }catch(_){
+      return '项目内容保存失败，资产仅保存在浏览器本地';
     }
+    return '';
   }
 
   async function exportAsset(asset, kind, files){
@@ -137,7 +144,10 @@
       if(result && result.ok) return result;
       const errors = result && Array.isArray(result.errors) ? result.errors : [];
       const first = errors.length
-        ? (typeof errors[0] === 'string' ? errors[0] : JSON.stringify(errors[0])) : '';
+        ? (typeof errors[0] === 'string'
+            ? errors[0]
+            : (errors[0] && errors[0].error) || JSON.stringify(errors[0]))
+        : '';
       return {ok:false, error: first || (result && result.error) || '发布失败'};
     }catch(error){
       return {ok:false, error: error && error.message ? error.message : String(error)};
@@ -169,15 +179,17 @@
     asset.generated.image = {
       taskId: task.taskId || '', nodeId: nodeId, at: at, file: name, from: 'image',
     };
-    await persistAsset();
+    const saveWarning = await persistAsset();
     const exported = await exportAsset(asset, kind, {
       icon: {path: iconPath(kind, asset.id), b64: imageB64(icon256)},
     });
     if(!exported.ok) return Object.assign({}, exported, {applied:true});
     // 机器已有模型但没有图标（缩略图失败）时，明确这是概念图补的图标
-    return machineHasModel
+    const result = machineHasModel
       ? {ok:true, note:'已用概念图补充机器图标（模型未提供图标）'}
       : {ok:true};
+    if(saveWarning) result.warning = saveWarning;
+    return result;
   }
 
   async function adoptModel(asset, kind, task, file, nodeId){
@@ -214,7 +226,7 @@
     try{
       thumb128 = fwRenderGLBThumbnail(scene, transform, 128);
       thumb256 = fwRenderGLBThumbnail(scene, transform, 256);
-      thumb512 = fwRenderGLBThumbnail(scene, transform, 512);
+      if(kind === 'machine') thumb512 = fwRenderGLBThumbnail(scene, transform, 512);
     }catch(error){
       thumbError = error.message || String(error);
       thumb128 = ''; thumb256 = ''; thumb512 = '';   // 部分失败时宁可都不写，避免空图标
@@ -249,7 +261,7 @@
       iconChanged = true;
     }
 
-    await persistAsset();
+    const saveWarning = await persistAsset();
     const files = {mesh: {path: asset.id + '.glb', b64: bufToB64(baked)}};
     if(iconChanged){
       files.icon = {path: iconPath(kind, asset.id), b64: imageB64(thumb256)};
@@ -260,7 +272,8 @@
     const exported = await exportAsset(asset, kind, files);
     if(!exported.ok) return Object.assign({}, exported, {applied:true});
     const result = {ok:true, triangles: asset.model.triangles};
-    if(thumbError) result.warning = '模型已应用，但缩略图生成失败：' + thumbError;
+    result.warning = [thumbError ? '模型已应用，但缩略图生成失败：' + thumbError : '', saveWarning]
+      .filter(Boolean).join('；') || undefined;
     return result;
   }
 
@@ -331,14 +344,15 @@
     if(nodeType !== 'textToImage' && nodeType !== 'imageTo3D'){
       return Promise.resolve({ok:true, skipped:true});
     }
+    // 元素只支持图标：先于就绪检查跳过，避免误报“Bridge 未连接”
+    const slot = nodeType === 'textToImage' ? 'image' : 'model';
+    if(slot === 'model' && kind === 'element') return Promise.resolve({ok:true, skipped:true});
     if(typeof pipelineBridgeReady !== 'function' || !pipelineBridgeReady()){
       return Promise.resolve(reportApplyFailure(assetId, 'Bridge 未连接', nodeId));
     }
     if(typeof syncProjectReady !== 'function' || !syncProjectReady()){
       return Promise.resolve(reportApplyFailure(assetId, '未打开 Forgeworks 项目', nodeId));
     }
-    const slot = nodeType === 'textToImage' ? 'image' : 'model';
-    if(slot === 'model' && kind === 'element') return Promise.resolve({ok:true, skipped:true});
     const output = task.output || {};
     const file = slot === 'image' ? output.imagePath : output.modelPath;
     if(!file) return Promise.resolve(reportApplyFailure(assetId, '任务没有输出文件', nodeId));

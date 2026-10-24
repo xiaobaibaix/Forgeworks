@@ -1,11 +1,16 @@
 /* Forgeworks · js/views/machines.js */
 /* ---------- 机器 ---------- */
 
+function machineIconEscape(value){
+  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function machineIconHTML(m, size){
   if(!m) return '';
   const px = size || 40;
   if(m && m.icon && m.icon.trim()){
-    return `<img src="${m.icon}" width="${px}" height="${px}" style="border-radius:6px;object-fit:contain;background:var(--panel-2)" alt="">`;
+    return `<img src="${machineIconEscape(m.icon)}" width="${px}" height="${px}" style="border-radius:6px;object-fit:contain;background:var(--panel-2)" alt="">`;
   }
   return isoPreview(m, 0, px);
 }
