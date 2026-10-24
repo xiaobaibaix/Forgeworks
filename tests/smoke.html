@@ -906,6 +906,15 @@
     try{
       v = createViewer3D(cv, S.machines[0]);
       v._advance(0.2);
+      out.checks.push({
+        name: '查看器 AI API',
+        ok: typeof v.whenModelReady === 'function' &&
+            typeof v.getAIModelInfo === 'function' &&
+            typeof v.setAIModelTransform === 'function' &&
+            typeof v.computeDefaultAIModelTransform === 'function' &&
+            typeof v.toThumbnail === 'function',
+        detail: ''
+      });
       v.toGLB(function(buf, err, meta){
         if(err) return report(false, 'ERROR: ' + err.message);
         if(!buf) return report(false, '返回空');

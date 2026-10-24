@@ -714,6 +714,15 @@ function createViewer3D(canvas, machine){
   /* ---------- 部件网格 ---------- */
   const group = new THREE.Group();
   scene.add(group);
+
+  /* ---------- AI 模型（管线 GLB 替换程序化几何） ---------- */
+  const aiRequested = !!(machine.model && machine.model.source === 'ai' && machine.model.file);
+  let aiActive = false, aiHolder = null, aiScene = null, aiTransform = null;
+  let aiInfo = null, aiError = null;
+  let aiReadyResolve = null;
+  const aiReady = new Promise(function(resolve){ aiReadyResolve = resolve; });
+  if(!aiRequested) aiReadyResolve({ok:true, procedural:true});
+
   const meshes = [];
   let appliedLod = -1;
 
@@ -833,6 +842,7 @@ function createViewer3D(canvas, machine){
   /** 把当前图层状态落到材质/可见性上（只改显示，不改 baseMaterial） */
   function applyLayers(){
     const layers = state.layers;
+    if(group) group.visible = !aiActive;
     const clay = !!layers.clay;
     const uvChecker = !!layers.uv && typeof fwUvCheckerTexture === 'function' ? fwUvCheckerTexture() : null;
     for(let i=0;i<meshes.length;i++){
@@ -882,8 +892,8 @@ function createViewer3D(canvas, machine){
     }
     applyLod();
     applyCollision();
-    if(emberPoints) emberPoints.visible = !!layers.particles;
-    if(smokePoints) smokePoints.visible = !!layers.particles;
+    if(emberPoints) emberPoints.visible = !aiActive && !!layers.particles;
+    if(smokePoints) smokePoints.visible = !aiActive && !!layers.particles;
     state.needsRender = true;
   }
 
@@ -1128,6 +1138,53 @@ function createViewer3D(canvas, machine){
   }
   resize();
 
+  function loadAIModel(){
+    if(!aiRequested) return;
+    // pipelineOutputURLFor 由管线模块在运行期提供；缺失时回退程序化几何而不是中断查看器
+    if(typeof pipelineOutputURLFor !== 'function'){
+      aiError = 'pipelineOutputURLFor 未加载';
+      aiActive = false;
+      applyLayers();
+      aiReadyResolve({ok:false, error:aiError, procedural:true});
+      return;
+    }
+    const url = pipelineOutputURLFor(machine.id, 'machine', machine.model.file);
+    fetch(url).then(function(response){
+      if(!response.ok) throw new Error('模型文件不可用（HTTP ' + response.status + '）');
+      return response.arrayBuffer();
+    }).then(function(buffer){
+      return fwLoadGLBScene(buffer);
+    }).then(function(loadedScene){
+      aiScene = loadedScene;
+      aiHolder = new THREE.Group();
+      aiHolder.name = machine.id + '_AI';
+      aiHolder.add(loadedScene);
+      const saved = machine.model.autoFit === false ? machine.model.transform : null;
+      aiTransform = saved ? fwNormalizeTransform(saved)
+        : fwComputeFitTransform(loadedScene, 'machine', machine.footprint);
+      fwApplyGLBTransform(aiHolder, aiTransform);
+      aiInfo = {
+        provider: machine.model.provider || '',
+        taskId: machine.model.taskId || '',
+        file: machine.model.file || '',
+        triangles: fwCountTriangles(loadedScene),
+        materials: fwCountMaterials(loadedScene),
+      };
+      aiActive = true;
+      scene.add(aiHolder);          // 不能挂在 group 下：group 在 AI 模式下会被隐藏
+      applyLayers();
+      placeCamera(HOME.yaw, HOME.pitch, HOME.dist);
+      if(controls){ controls.target.copy(target); controls.update(); }
+      aiReadyResolve({ok:true, procedural:false});
+    }).catch(function(error){
+      aiError = error && error.message ? error.message : String(error);
+      aiActive = false;
+      applyLayers();
+      aiReadyResolve({ok:false, error:aiError, procedural:true});
+    });
+  }
+  loadAIModel();
+
   /* ---------- 主循环 ---------- */
   const clock = new THREE.Clock();
   let rafId = 0;
@@ -1211,6 +1268,28 @@ function createViewer3D(canvas, machine){
   }
 
   return {
+    whenModelReady: function(){ return aiReady; },
+    getAIModelInfo: function(){ return aiInfo ? Object.assign({}, aiInfo) : null; },
+    getAIModelError: function(){ return aiError; },
+    getAIModelTransform: function(){
+      return aiTransform ? JSON.parse(JSON.stringify(aiTransform)) : null;
+    },
+    setAIModelTransform: function(transform){
+      if(!aiHolder) return false;
+      aiTransform = fwNormalizeTransform(transform);
+      fwApplyGLBTransform(aiHolder, aiTransform);
+      state.needsRender = true;
+      return true;
+    },
+    computeDefaultAIModelTransform: function(){
+      if(!aiScene) return null;
+      aiTransform = fwComputeFitTransform(aiScene, 'machine', machine.footprint);
+      return JSON.parse(JSON.stringify(aiTransform));
+    },
+    toThumbnail: function(size){
+      if(!aiActive || !aiScene || !aiTransform) return '';
+      return fwRenderGLBThumbnail(aiScene, aiTransform, size || 256);
+    },
     dispose: function(){
       state.disposed = true;
       cancelAnimationFrame(rafId);
@@ -1227,6 +1306,21 @@ function createViewer3D(canvas, machine){
       collisionGeo.dispose(); collisionMat.dispose();
       if(emberPoints){ emberPoints.geometry.dispose(); emberPoints.material.dispose(); }
       if(smokePoints){ smokePoints.geometry.dispose(); smokePoints.material.dispose(); }
+      if(aiHolder && aiHolder.parent) aiHolder.parent.remove(aiHolder);
+      if(aiScene){
+        aiScene.traverse(function(node){
+          if(!node.isMesh) return;
+          if(node.geometry) node.geometry.dispose();
+          const mats = Array.isArray(node.material) ? node.material : [node.material];
+          mats.forEach(function(mat){
+            if(!mat) return;
+            ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'].forEach(function(key){
+              if(mat[key] && mat[key].dispose) mat[key].dispose();
+            });
+            mat.dispose();
+          });
+        });
+      }
       renderer.dispose();
     },
     setAutoRotate: function(v){
@@ -1272,6 +1366,7 @@ function createViewer3D(canvas, machine){
     setPreset: applyPreset,
     getPreset: function(){ return state.preset; },
     getParts: function(){
+      if(aiActive) return [];
       return meshes.map(function(entry){
         return {id:entry.id, role:entry.role, kind:entry.part.kind, visible:entry.mesh.visible};
       });
@@ -1312,6 +1407,36 @@ function createViewer3D(canvas, machine){
       const MergeUtils = THREE.BufferGeometryUtils;
       if(!MergeUtils || !MergeUtils.mergeBufferGeometries){
         onDone(null, new Error('BufferGeometryUtils 未加载，无法合并网格'));
+        return;
+      }
+
+      if(aiActive && aiHolder && aiScene){
+        const size = new THREE.Box3().setFromObject(aiHolder).getSize(new THREE.Vector3());
+        fwBakeGLBScene(aiScene, aiTransform, {
+          name: machine.id,
+          forgeworks: {
+            generator: 'Forgeworks',
+            source: 'pipeline-ai',
+            id: machine.id,
+            name: machine.name,
+            category: machine.cat,
+            footprint: machine.footprint,
+            tier: machine.tier,
+            provider: (machine.model && machine.model.provider) || '',
+            taskId: (machine.model && machine.model.taskId) || '',
+            unit: 'meter (1 unit = 1 grid)',
+            pivot: 'bottom-center',
+          },
+        }, function(result, error){
+          if(error){ onDone(null, error); return; }
+          onDone(result, null, {
+            materials: aiInfo ? aiInfo.materials : fwCountMaterials(aiScene),
+            vertices: 0,
+            triangles: aiInfo ? aiInfo.triangles : fwCountTriangles(aiScene),
+            sizeM: [ +size.x.toFixed(3), +size.y.toFixed(3), +size.z.toFixed(3) ],
+            sizeCm: [ Math.round(size.x*100), Math.round(size.y*100), Math.round(size.z*100) ],
+          });
+        });
         return;
       }
 
@@ -1515,6 +1640,9 @@ function open3DViewer(machineId){
         '<div style="position:absolute;left:12px;top:10px;font-size:11px;color:#5f5e5a;' +
              'background:rgba(255,255,255,.85);padding:4px 9px;border-radius:6px;pointer-events:none">' +
           '拖动旋转 · 滚轮缩放 · 双击复位</div>' +
+        '<div id="v3AiStatus" style="display:none;position:absolute;right:12px;top:10px;font-size:11px;' +
+             'color:#5f5e5a;background:rgba(255,255,255,.9);padding:4px 9px;border-radius:6px;' +
+             'max-width:320px">加载 AI 模型…</div>' +
         '<div class="v3-layers" id="v3Layers">' +
           '<div class="v3-layers-head">资产图层<span id="v3LayerSummary"></span></div>' +
           '<label><input type="checkbox" data-layer="clay"> 白模（去材质）</label>' +
@@ -1554,7 +1682,7 @@ function open3DViewer(machineId){
           '<button class="sm primary" id="v3Glb">导出 GLB</button>' +
         '</div>' +
         '<div class="v3-aspects" id="v3Aspects"></div>' +
-        '<div style="font-size:11.5px;color:var(--text-2);line-height:1.7">' +
+        '<div id="v3Info" style="font-size:11.5px;color:var(--text-2);line-height:1.7">' +
           '<span class="pill">' + m.cat + '</span> <span class="pill">' + m.footprint + '</span> ' +
           tierTag(m.tier) +
           '<span style="margin-left:6px">由圆柱/圆锥/球体/圆环/管道/棱柱组合而成，' +
@@ -1586,6 +1714,30 @@ function open3DViewer(machineId){
     return;
   }
   _activeViewer = V;
+
+  if(m.model && m.model.source === 'ai'){
+    const status = document.getElementById('v3AiStatus');
+    status.style.display = 'block';
+    status.textContent = '加载 AI 模型…';
+    document.getElementById('v3Layers').style.display = 'none';
+    const preset = document.getElementById('v3Preset');
+    if(preset && preset.parentElement) preset.parentElement.style.display = 'none';
+    document.getElementById('v3Parts').textContent = '变换模型';
+    document.getElementById('v3Gen').textContent = '重新生成模型';
+    V.whenModelReady().then(function(result){
+      if(!result.ok){
+        status.textContent = 'AI 模型加载失败：' + result.error + '（显示程序化几何）';
+        return;
+      }
+      const info = V.getAIModelInfo() || {};
+      status.textContent = 'AI 模型 · ' + (info.provider || 'provider') +
+        (info.triangles ? ' · ' + info.triangles + ' 面' : '') +
+        (info.materials ? ' · ' + info.materials + ' 材质' : '');
+      document.getElementById('v3Aspects').innerHTML = '';
+      document.getElementById('v3Info').textContent =
+        'AI 生成模型；在“变换模型”中调整整体位置、旋转与缩放。导出的 GLB 已烘焙该变换。';
+    });
+  }
 
   function renderLayerSummary(){
     document.getElementById('v3LayerSummary').textContent =
