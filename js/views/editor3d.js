@@ -35,7 +35,7 @@ function open3DEditor(machineId){
     <div class="content" style="padding:0"><div style="display:grid;grid-template-columns:minmax(280px,1fr) 300px;min-height:520px">
       <canvas id="e3dCanvas" style="width:100%;height:520px;background:#f2f0ec"></canvas>
       <aside style="padding:12px;border-left:1px solid var(--border);overflow:auto">
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><button id="e3dUndo">撤销</button><button id="e3dRedo">重做</button><button id="e3dReset">${wantsAI ? '适配占地' : '复位部件'}</button><button id="e3dInitial" style="display:none">重置变换</button><button id="e3dSnap">吸附：开</button></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button id="e3dUndo">撤销</button><button id="e3dRedo">重做</button><button id="e3dReset">${wantsAI ? '适配占地' : '复位部件'}</button><button id="e3dInitial" style="display:none">重置变换</button><button id="e3dSnap">吸附：开</button>${machine.model ? '<button id="e3dRestore">恢复程序化几何</button>' : ''}</div>
         <div id="e3dParts" style="max-height:150px;overflow:auto;margin:10px 0"></div>
         <div id="e3dFields"><span class="hint">加载模型…</span></div>
       </aside>
@@ -56,9 +56,8 @@ function open3DEditor(machineId){
   let aiMode = false;
   const aiUndo = [], aiRedo = [];
   // 打开编辑器时的已应用变换；“重置变换”回到这里（区别于“适配占地”的重新计算）
-  const initialModel = wantsAI
-    ? {transform: clone(machine.model.transform), autoFit: machine.model.autoFit !== false}
-    : null;
+  // 在 whenModelReady 之后取 viewer 实际应用的变换（autoFit 机器加载时会重新计算，不能读存储值）
+  let initialModel = null;
 
   function readAIInputs(){
     const read = key=>{
@@ -96,6 +95,10 @@ function open3DEditor(machineId){
 
   function initAIMode(){
     aiMode = true;
+    const applied = viewer.getAIModelTransform();
+    initialModel = applied
+      ? {transform: fwNormalizeTransform(applied), autoFit: machine.model.autoFit !== false}
+      : null;
     document.getElementById('e3dParts').innerHTML = '<span class="hint">AI 模型不支持单部件编辑。</span>';
     document.getElementById('e3dSnap').style.display = 'none';
     document.getElementById('e3dReset').textContent = '适配占地';
@@ -111,25 +114,32 @@ function open3DEditor(machineId){
       viewer.redraw(); renderAIFields(); saveState();
       toast('已重置为应用时的变换');
     };
-    document.getElementById('e3dReset').insertAdjacentHTML('afterend', '<button id="e3dRestore">恢复程序化几何</button>');
-    document.getElementById('e3dRestore').onclick = ()=>{
+    renderAIFields();
+  }
+
+  function initPartsMode(aiFallback){
+    aiMode = false;
+    document.getElementById('e3dSnap').style.display = '';
+    document.getElementById('e3dInitial').style.display = 'none';
+    if(aiFallback){
+      const title = modal.querySelector('header h3');
+      if(title) title.textContent = machine.name + ' · 部件编辑';
+      document.getElementById('e3dReset').textContent = '复位部件';
+    }
+    renderParts();
+    renderFields();
+  }
+
+  // 只要机器仍带模型就允许丢弃它（包括加载失败、无法进入 AI 模式的坏模型）
+  const restoreButton = document.getElementById('e3dRestore');
+  if(restoreButton){
+    restoreButton.onclick = ()=>{
       if(!confirm('删除 AI 模型并恢复程序化几何？若图标来自该模型，会回退为自动图标。')) return;
       if(!restoreProceduralGeometry(machine)) return;
       saveState();
       close();
       toast('已恢复程序化几何，需重新导出');
     };
-    renderAIFields();
-  }
-
-  function initPartsMode(){
-    aiMode = false;
-    document.getElementById('e3dSnap').style.display = '';
-    document.getElementById('e3dInitial').style.display = 'none';
-    const restore = document.getElementById('e3dRestore');
-    if(restore) restore.remove();
-    renderParts();
-    renderFields();
   }
   const saveSnapshot = stack=>{
     stack.push(clone(partState()));
@@ -233,8 +243,9 @@ function open3DEditor(machineId){
   };
   if(wantsAI){
     viewer.whenModelReady().then(function(result){
+      if(_partEditor !== viewer) return;   // 编辑器已关闭或被新编辑器替代
       if(result.ok){ initAIMode(); return; }
-      initPartsMode();
+      initPartsMode(true);
       toast('AI 模型加载失败：' + result.error);
     });
   }else{
