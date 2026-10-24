@@ -590,9 +590,12 @@ function itemSyncState(it){
   const diskState = rec.state || 'exported';
   if(diskState !== 'exported') return { state: diskState, rec };
   const saved = rec.meta || {};
-  const aiStale = it.model && it.model.source === 'ai'
-    ? (!hasAssetFile(rec, 'mesh') || saved.modelHash !== itemModelHash(it))
-    : false;
+  const currentModelHash = itemModelHash(it);
+  const modelRemoved = saved.model === null && !it.model;
+  const aiStale = modelRemoved
+    || (saved.modelHash !== undefined && saved.modelHash !== null
+        ? saved.modelHash !== currentModelHash
+        : !!(it.model && it.model.source === 'ai' && !hasAssetFile(rec, 'mesh')));
   const stale = !hasAssetFile(rec, 'icon') || aiStale
              || (saved.iconHash && saved.iconHash !== itemIconHash(it));
   return { state: stale ? 'stale' : 'exported', rec };
@@ -849,6 +852,7 @@ async function syncExportItem(id){
   }
 
   let modelMeta = null;
+  let modelWarning = '';
   if(it.model && it.model.source === 'ai'){
     try{
       const url = pipelineOutputURLFor(it.id, 'item', it.model.file);
@@ -877,35 +881,41 @@ async function syncExportItem(id){
         autoFit: it.model.autoFit !== false,
       };
     }catch(e){
-      return { ok:false, error:'AI 模型导出失败: ' + e.message };
+      modelWarning = 'AI 模型导出失败: ' + (e && e.message ? e.message : String(e));
     }
   }
 
   const st = getStyle();
+  const meta = {
+    name: it.name, type: it.type, visual: it.visual || null,
+    tier: it.tier, color: it.color || '',
+    customIcon: !!(it.icon && it.icon.trim()),
+    iconSource: it.iconSource || '',
+    size: 256,
+    style: { presetId: st.id, name: st.name },
+    iconHash: itemIconHash(it),
+    modelHash: itemModelHash(it),
+    model: modelMeta,
+  };
+  // 网格导出失败：保留旧 model/modelHash，避免把旧网格误标为当前模型
+  if(modelWarning){ delete meta.model; delete meta.modelHash; }
+
   const body = {
     kind: 'item',
     id: it.id,
     files: files,
-    meta: {
-      name: it.name, type: it.type, visual: it.visual || null,
-      tier: it.tier, color: it.color || '',
-      customIcon: !!(it.icon && it.icon.trim()),
-      iconSource: it.iconSource || '',
-      size: 256,
-      style: { presetId: st.id, name: st.name },
-      iconHash: itemIconHash(it),
-      modelHash: itemModelHash(it),
-      model: modelMeta,
-    },
+    meta: meta,
   };
   const r = await syncApi('export/asset', body);
   if(r && r.ok){
     const iconName = r.files && r.files.icon ? r.files.icon[0] : '';
     syncLog('导出 ' + it.id + '：' + (iconName || '仅更新元数据') +
-            (r.files && r.files.mesh ? ' + ' + r.files.mesh[0] : ''), 'ok');
+            (r.files && r.files.mesh ? ' + ' + r.files.mesh[0] : '') +
+            (modelWarning ? '（' + modelWarning + '）' : ''),
+            modelWarning ? 'warn' : 'ok');
     await syncLoadManifest();
   }
-  return { ok: !!(r && r.ok), response: r };
+  return { ok: !!(r && r.ok), warning: modelWarning || undefined, response: r };
 }
 
 /** 批量导出物品图标（照顺序跑，避免同时解码过多图片） */

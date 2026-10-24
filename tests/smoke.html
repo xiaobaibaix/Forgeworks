@@ -961,6 +961,18 @@
       if(itemIconHash(gen) === itemIconHash(up)) throw new Error('iconSource 未参与哈希');
       return 'ok';
     });
+    check('物品移除模型后同步状态为 stale', function(){
+      var prevManifest = SYNC.manifest;
+      try{
+        SYNC.manifest = {assets:{X:{state:'exported',
+          files:{icon:[{path:'X.png'}]},
+          meta:{model:null, modelHash:'old'}}}};
+        var it = {id:'X', name:'测试物品', type:'material'};
+        var st = itemSyncState(it);
+        if(st.state !== 'stale') throw new Error('移除模型未标记 stale: ' + st.state);
+        return 'ok';
+      }finally{ SYNC.manifest = prevManifest; }
+    });
     check('管线输出 URL 仅使用文件名', function(){
       var url = pipelineOutputURLFor('M1', 'machine', 'C:\\tmp\\..\\M1.glb');
       if(url !== '/api/pipeline/output/M1/M1.glb?kind=machine')
