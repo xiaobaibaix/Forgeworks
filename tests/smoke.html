@@ -904,6 +904,30 @@
       if(m.icon !== 'x' || m.iconSource !== 'generated') throw new Error('误删概念图');
       return 'ok';
     });
+    check('图标资源区支持来源文案', function(){
+      var html = iconResourceHTML({
+        hasCustom:true,
+        showGenerate:true,
+        customLabel:'当前使用<strong>AI 生成图标</strong>',
+        generateLabel:'AI 生成 →'
+      });
+      if(html.indexOf('AI 生成图标') < 0) throw new Error('自定义来源文案未生效');
+      if(html.indexOf('AI 生成 →') < 0) throw new Error('生成按钮文案未生效');
+      return 'ok';
+    });
+    check('机器图标优先使用资产图标', function(){
+      var html = machineIconHTML({id:'M1', icon:'data:image/png;base64,AA'}, 40);
+      if(html.indexOf('<img') !== 0) throw new Error('未使用图标');
+      if(html.indexOf('data:image/png') < 0) throw new Error('图标数据缺失');
+      return 'ok';
+    });
+    check('机器无图标回退等轴测', function(){
+      var m = JSON.parse(JSON.stringify(S.machines[0]));
+      m.icon = '';
+      var html = machineIconHTML(m, 40);
+      if(html.indexOf('<svg') !== 0) throw new Error('未回退');
+      return 'ok';
+    });
   }
 
   function runAsync(done){

@@ -71,7 +71,11 @@ function renderAssets(){
         ${tierTag(it.tier)}
         <span class="tag" style="background:${ms.bg};color:${ms.fg}">${ms.t}</span>
       </div>
-      ${hasCustom?`<div style="font-size:9.5px;color:var(--blue);margin-top:4px">自定义图标</div>`:''}
+      ${it.iconSource === 'generated'
+        ? '<div style="font-size:9.5px;color:var(--accent);margin-top:4px">AI 生成图标</div>'
+        : (hasCustom ? '<div style="font-size:9.5px;color:var(--blue);margin-top:4px">自定义图标</div>' : '')}
+      ${it.model && it.model.source === 'ai'
+        ? '<div style="font-size:9.5px;color:var(--accent);margin-top:2px">AI 模型</div>' : ''}
       ${hasMesh?`<div style="font-size:9.5px;color:var(--accent);margin-top:2px">已绑模型</div>`:''}
       <button class="sm" data-genicon="${it.id}"
         style="margin-top:6px;font-size:10px;padding:3px 8px">生成图标 →</button>
@@ -104,7 +108,7 @@ function renderAssets(){
                   white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${el.id}</div>
       <div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap">
         ${tierTag(el.tier)}
-        <span class="tag">${hasCustom?'自定义':'自动生成'}</span>
+        <span class="tag">${el.iconSource === 'generated' ? 'AI 生成' : (hasCustom ? '自定义' : '自动生成')}</span>
       </div>
     </div>`;
   });

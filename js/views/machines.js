@@ -1,6 +1,14 @@
 /* Forgeworks · js/views/machines.js */
 /* ---------- 机器 ---------- */
 
+function machineIconHTML(m, size){
+  const px = size || 40;
+  if(m && m.icon && m.icon.trim()){
+    return `<img src="${m.icon}" width="${px}" height="${px}" style="border-radius:6px;object-fit:contain;background:var(--panel-2)" alt="">`;
+  }
+  return isoPreview(m, 0, px);
+}
+
 /**
  * 机器列表。
  *
@@ -15,9 +23,10 @@ function renderMachines(){
   const showSync = SYNC.online && SYNC.status && SYNC.status.project;
 
   const cols = [
-    {t:'图标',w:'54px',f:r=>isoPreview(r, 0, 40)},
+    {t:'图标',w:'54px',f:r=>machineIconHTML(r, 40)},
     {t:'ID',w:'150px',f:r=>`<code>${r.id}</code>`},
-    {t:'名称',w:'130px',f:r=>r.name},
+    {t:'名称',w:'130px',f:r=>r.name + (r.model && r.model.source === 'ai'
+      ? ' <span class="tag" style="background:#e7f4ec;color:#1f7a4d">AI</span>' : '')},
     {t:'分类',w:'80px',f:r=>`<span class="pill">${r.cat}</span>`},
     {t:'等级',w:'72px',f:r=>tierTag(r.tier)},
     {t:'占地',w:'66px',f:r=>`<code>${r.footprint}</code>`},
@@ -42,7 +51,7 @@ function renderMachines(){
     {t:'说明',f:r=>`<span style="color:var(--text-2)">${r.desc||''}</span>`},
     {t:'操作',w:'96px',f:r=>
       `<button class="sm" data-m3d="${r.id}" title="查看 3D 预览">3D</button>
-       <button class="sm" data-medit3d="${r.id}" title="编辑 3D 部件">部件</button>
+       <button class="sm" data-medit3d="${r.id}" title="${r.model && r.model.source === 'ai' ? '调整 AI 模型整体变换' : '编辑 3D 部件'}">${r.model && r.model.source === 'ai' ? '变换' : '部件'}</button>
        <button class="sm" data-medit="${r.id}" title="编辑参数">编辑</button>`},
   );
 

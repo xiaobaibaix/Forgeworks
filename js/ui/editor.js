@@ -53,6 +53,9 @@ function editorConfirmLeave(dirty){
 function iconResourceHTML(opt){
   opt = opt || {};
   const hasCustom = !!opt.hasCustom;
+  const sourceLabel = opt.customLabel || (hasCustom
+    ? '当前使用<strong>自定义图标</strong>'
+    : '当前使用<strong>自动生成图标</strong>');
   return `<div style="border-top:1px solid var(--border);margin:16px 0 12px;padding-top:14px">
     <div style="font-size:12px;font-weight:500;margin-bottom:10px">图标</div>
     <div style="display:flex;gap:14px;align-items:flex-start">
@@ -63,7 +66,7 @@ function iconResourceHTML(opt){
       </div>
       <div style="flex:1">
         <div id="iconHint" style="font-size:11px;color:var(--text-3);margin-bottom:8px">
-          ${hasCustom?'当前使用<strong>自定义图标</strong>':'当前使用<strong>自动生成图标</strong>'}
+          ${sourceLabel}
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <label class="sm" style="display:inline-block;padding:6px 12px;border:1px solid var(--border-2);
@@ -71,7 +74,7 @@ function iconResourceHTML(opt){
             上传图标<input type="file" id="iconFile" accept="image/*" style="display:none">
           </label>
           <button class="sm" id="iconClear" ${hasCustom?'':'disabled'}>恢复自动生成</button>
-          ${opt.showGenerate?'<button class="sm" id="iconGen">生成图标 →</button>':''}
+          ${opt.showGenerate?`<button class="sm" id="iconGen">${opt.generateLabel || '生成图标 →'}</button>`:''}
         </div>
         <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
           上传或拖入的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
@@ -148,7 +151,14 @@ function renderEditorForm(coll, d, isNew){
       F('name','名称', d?.name||'') + F('symbol','符号', d?.symbol||'') +
       F('color','颜色（hex）', d?.color||'#888780') +
       SEL('tier','等级', String(d?.tier??0), [0,1,2,3].map(t=>({v:String(t),t:'T'+t}))) +
-      iconResourceHTML({ previewHTML: d?elementIconHTML(d,52):'', hasCustom, showGenerate:!isNew });
+      iconResourceHTML({
+        previewHTML: d?elementIconHTML(d,52):'',
+        hasCustom,
+        showGenerate: !isNew,
+        customLabel: d && d.iconSource === 'generated'
+          ? '当前使用<strong>AI 生成图标</strong>' : undefined,
+        generateLabel: 'AI 生成 →',
+      });
 
     const makeTmp = ()=>({
       id:document.getElementById('f_id').value,
@@ -194,9 +204,29 @@ function renderEditorForm(coll, d, isNew){
         ['raw','concentrate','ingot','part','material','module','mega','byproduct','fluid'].map(t=>({v:t,t:typeLabel(t)}))) +
       F('value','价值', d?.value??1,'number') + F('color','颜色', d?.color||'#888780') +
       F('desc','说明', d?.desc||'') +
-      iconResourceHTML({ previewHTML: d?iconHTML(d,52):'', hasCustom, showGenerate:!isNew }) +
+      iconResourceHTML({
+        previewHTML: d?iconHTML(d,52):'',
+        hasCustom,
+        showGenerate: !isNew,
+        customLabel: d && d.iconSource === 'generated'
+          ? '当前使用<strong>AI 生成图标</strong>' : undefined,
+        generateLabel: 'AI 生成 →',
+      }) +
       `<div style="border-top:1px solid var(--border);margin:14px 0 12px;padding-top:14px">
         <div style="font-size:12px;font-weight:500;margin-bottom:10px">模型</div>
+        ${(d && d.model && d.model.source === 'ai')
+          ? `<div style="font-size:11px;background:var(--panel-2);padding:10px;border-radius:7px;margin-bottom:10px">
+               <div><strong>AI 模型</strong> · ${d.model.provider||'provider'} · ${d.model.triangles||0} 面</div>
+               <div style="font-family:var(--mono);font-size:10.5px;margin-top:4px">${d.model.file||''}</div>
+               <div style="font-size:10.5px;color:var(--text-3);margin-top:2px">任务 ${d.model.taskId||'—'} · ${d.model.generatedAt||''}</div>
+               <div style="font-size:10.5px;color:var(--text-3);margin-top:4px">自动导出优先使用 AI 模型</div>
+               <div style="margin-top:8px"><button class="sm" id="iModelRemove">移除 AI 模型</button></div>
+             </div>`
+          : `<div style="font-size:11px;color:var(--text-3);margin-bottom:8px">
+               ${d && d.mesh ? '程序化网格路径已填写' : '尚未生成 3D 模型'}
+             </div>
+             <div style="margin-bottom:10px">${isNew ? '' : '<button class="sm" id="iModelGen">生成模型 →</button>'}</div>
+             <div style="font-size:10.5px;color:var(--text-3);margin-bottom:8px">AI 模型优先用于自动导出</div>`}
         <div class="row">
           <div class="field"><label>模型状态</label>
             <select id="f_modelStatus">${Object.entries(MODEL_LABELS).map(([k,v])=>
@@ -232,6 +262,26 @@ function renderEditorForm(coll, d, isNew){
         pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor'});
       },
     });
+    const iModelGen = document.getElementById('iModelGen');
+    if(iModelGen) iModelGen.onclick = ()=>{
+      if(!d) return;
+      const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+      if(!editorConfirmLeave(dirty)) return;
+      const fromView = cur;
+      closeModal();
+      pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor', coll: 'items'});
+    };
+    const iModelRemove = document.getElementById('iModelRemove');
+    if(iModelRemove) iModelRemove.onclick = ()=>{
+      const item = S.items.find(x=>x.id===d.id);
+      if(!item) return;
+      if(!confirm('移除 AI 模型？图标不会被删除。')) return;
+      delete item.model;
+      if(item.generated) delete item.generated.model;
+      saveState(); clearIconCache();
+      renderEditorForm('items', item, false);
+      toast('已移除 AI 模型');
+    };
     // 类型/颜色变化时刷新自动图标预览
     const refreshAuto = ()=>{
       const prev = document.getElementById('iconPrev');
@@ -246,12 +296,84 @@ function renderEditorForm(coll, d, isNew){
     document.getElementById('f_color').oninput = refreshAuto;
   }
   else if(coll==='machines'){
+    const hasCustom = !!(d && d.icon && d.icon.trim());
+    const aiModel = !!(d && d.model && d.model.source === 'ai');
+    const iconLabel = d && d.iconSource === 'generated'
+      ? '当前使用<strong>AI 生成图标</strong>'
+      : null;
+    const modelBlock = aiModel
+      ? `<div style="font-size:11px;background:var(--panel-2);padding:10px;border-radius:7px">
+           <div><strong>AI 模型</strong> · ${d.model.provider||'provider'} · ${d.model.triangles||0} 面</div>
+           <div style="font-family:var(--mono);font-size:10.5px;margin-top:4px">${d.model.file||''}</div>
+           <div style="font-size:10.5px;color:var(--text-3);margin-top:2px">任务 ${d.model.taskId||'—'} · ${d.model.generatedAt||''}</div>
+           <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+             <button class="sm" id="mModelEdit">变换模型 →</button>
+             <button class="sm" id="mModelRemove">移除 AI 模型</button>
+           </div>
+         </div>`
+      : `<div style="font-size:11px;color:var(--text-3)">当前为程序化几何</div>
+         <div style="margin-top:8px">${isNew ? '' : '<button class="sm" id="mModelGen">生成模型 →</button>'}</div>`;
     b.innerHTML = F('id','ID', d?.id||'','text','required') + F('name','名称', d?.name||'') +
       SEL('cat','分类', d?.cat||'加工',
         ['采集','分离','冶炼','合金','化工','加工','组装','回收'].map(c=>({v:c,t:c}))) +
       SEL('tier','等级', String(d?.tier??0), [0,1,2,3,4].map(t=>({v:String(t),t:'T'+t}))) +
       F('footprint','占地（如 3×3）', d?.footprint||'2×2') +
-      F('power','耗电 kW', d?.power??100,'number') + F('desc','说明', d?.desc||'');
+      F('power','耗电 kW', d?.power??100,'number') + F('desc','说明', d?.desc||'') +
+      iconResourceHTML({
+        previewHTML: d ? machineIconHTML(d, 52) : '',
+        hasCustom,
+        showGenerate: !isNew,
+        customLabel: iconLabel || undefined,
+        generateLabel: 'AI 生成 →',
+      }) +
+      `<div style="border-top:1px solid var(--border);margin:14px 0 12px;padding-top:14px">
+        <div style="font-size:12px;font-weight:500;margin-bottom:10px">模型</div>
+        ${modelBlock}
+      </div>`;
+
+    const watchedFields = ['id','name','cat','tier','footprint','power','desc'];
+    const initialForm = editorFormSnapshot(watchedFields);
+    const makeTmp = ()=>({
+      id:document.getElementById('f_id').value,
+      name:document.getElementById('f_name').value,
+      cat:document.getElementById('f_cat').value,
+      tier:document.getElementById('f_tier').value,
+      footprint:document.getElementById('f_footprint').value,
+    });
+    const openPipeline = ()=>{
+      if(!d) return;
+      const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+      if(!editorConfirmLeave(dirty)) return;
+      const fromView = cur;
+      closeModal();
+      pipelineEnter(d.id, {view: fromView, assetId: d.id, modal: 'editor', coll: 'machines'});
+    };
+    bindIconResource({
+      makeTmp,
+      renderAuto: tmp=>isoPreview(tmp, 0, 52),
+      onGenerate: openPipeline,
+    });
+    const mModelGen = document.getElementById('mModelGen');
+    if(mModelGen) mModelGen.onclick = openPipeline;
+    const mModelEdit = document.getElementById('mModelEdit');
+    if(mModelEdit) mModelEdit.onclick = ()=>{
+      const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+      if(!editorConfirmLeave(dirty)) return;
+      const id = d.id;
+      closeModal();
+      open3DEditor(id);
+    };
+    const mModelRemove = document.getElementById('mModelRemove');
+    if(mModelRemove) mModelRemove.onclick = ()=>{
+      const machine = S.machines.find(x=>x.id===d.id);
+      if(!machine) return;
+      if(!confirm('移除 AI 模型并恢复程序化几何？图标不会被删除。')) return;
+      delete machine.model;
+      if(machine.generated) delete machine.generated.model;
+      saveState(); clearIconCache();
+      renderEditorForm('machines', machine, false);
+      toast('已移除 AI 模型');
+    };
   }
   else if(coll==='recipes'){
     const ioRows=(list,prefix)=> (list||[]).map((o,i)=>`
