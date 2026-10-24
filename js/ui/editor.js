@@ -216,9 +216,9 @@ function renderEditorForm(coll, d, isNew){
         <div style="font-size:12px;font-weight:500;margin-bottom:10px">模型</div>
         ${(d && d.model && d.model.source === 'ai')
           ? `<div style="font-size:11px;background:var(--panel-2);padding:10px;border-radius:7px;margin-bottom:10px">
-               <div><strong>AI 模型</strong> · ${d.model.provider||'provider'} · ${d.model.triangles||0} 面</div>
-               <div style="font-family:var(--mono);font-size:10.5px;margin-top:4px">${d.model.file||''}</div>
-               <div style="font-size:10.5px;color:var(--text-3);margin-top:2px">任务 ${d.model.taskId||'—'} · ${d.model.generatedAt||''}</div>
+               <div><strong>AI 模型</strong> · ${editor3dEscape(d.model.provider||'provider')} · ${d.model.triangles||0} 面</div>
+               <div style="font-family:var(--mono);font-size:10.5px;margin-top:4px">${editor3dEscape(d.model.file||'')}</div>
+               <div style="font-size:10.5px;color:var(--text-3);margin-top:2px">任务 ${editor3dEscape(d.model.taskId||'—')} · ${editor3dEscape(d.model.generatedAt||'')}</div>
                <div style="font-size:10.5px;color:var(--text-3);margin-top:4px">自动导出优先使用 AI 模型</div>
                <div style="margin-top:8px"><button class="sm" id="iModelRemove">移除 AI 模型</button></div>
              </div>`
@@ -275,7 +275,10 @@ function renderEditorForm(coll, d, isNew){
     if(iModelRemove) iModelRemove.onclick = ()=>{
       const item = S.items.find(x=>x.id===d.id);
       if(!item) return;
-      if(!confirm('移除 AI 模型？图标不会被删除。')) return;
+      const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+      if(!confirm(dirty
+        ? '移除 AI 模型会丢弃当前未保存的修改，继续？'
+        : '移除 AI 模型？图标不会被删除。')) return;
       delete item.model;
       if(item.generated) delete item.generated.model;
       saveState(); clearIconCache();
@@ -303,9 +306,9 @@ function renderEditorForm(coll, d, isNew){
       : null;
     const modelBlock = aiModel
       ? `<div style="font-size:11px;background:var(--panel-2);padding:10px;border-radius:7px">
-           <div><strong>AI 模型</strong> · ${d.model.provider||'provider'} · ${d.model.triangles||0} 面</div>
-           <div style="font-family:var(--mono);font-size:10.5px;margin-top:4px">${d.model.file||''}</div>
-           <div style="font-size:10.5px;color:var(--text-3);margin-top:2px">任务 ${d.model.taskId||'—'} · ${d.model.generatedAt||''}</div>
+           <div><strong>AI 模型</strong> · ${editor3dEscape(d.model.provider||'provider')} · ${d.model.triangles||0} 面</div>
+           <div style="font-family:var(--mono);font-size:10.5px;margin-top:4px">${editor3dEscape(d.model.file||'')}</div>
+           <div style="font-size:10.5px;color:var(--text-3);margin-top:2px">任务 ${editor3dEscape(d.model.taskId||'—')} · ${editor3dEscape(d.model.generatedAt||'')}</div>
            <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
              <button class="sm" id="mModelEdit">变换模型 →</button>
              <button class="sm" id="mModelRemove">移除 AI 模型</button>
@@ -358,7 +361,7 @@ function renderEditorForm(coll, d, isNew){
     const mModelEdit = document.getElementById('mModelEdit');
     if(mModelEdit) mModelEdit.onclick = ()=>{
       const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
-      if(!editorConfirmLeave(dirty)) return;
+      if(dirty && !confirm('进入 3D 编辑器？当前未保存的修改会丢失。')) return;
       const id = d.id;
       closeModal();
       open3DEditor(id);
@@ -367,7 +370,10 @@ function renderEditorForm(coll, d, isNew){
     if(mModelRemove) mModelRemove.onclick = ()=>{
       const machine = S.machines.find(x=>x.id===d.id);
       if(!machine) return;
-      if(!confirm('移除 AI 模型并恢复程序化几何？图标不会被删除。')) return;
+      const dirty = editorFormSnapshot(watchedFields) !== initialForm || editorIconDirty();
+      if(!confirm(dirty
+        ? '移除 AI 模型会丢弃当前未保存的修改，继续？'
+        : '移除 AI 模型并恢复程序化几何？图标不会被删除。')) return;
       delete machine.model;
       if(machine.generated) delete machine.generated.model;
       saveState(); clearIconCache();

@@ -2,6 +2,7 @@
 /* ---------- 机器 ---------- */
 
 function machineIconHTML(m, size){
+  if(!m) return '';
   const px = size || 40;
   if(m && m.icon && m.icon.trim()){
     return `<img src="${m.icon}" width="${px}" height="${px}" style="border-radius:6px;object-fit:contain;background:var(--panel-2)" alt="">`;
