@@ -9,7 +9,10 @@ function restoreProceduralGeometry(machine){
     ? Date.parse(generated.model.at || generated.model.generatedAt || '') || 0 : 0;
   const imageAt = generated.image
     ? Date.parse(generated.image.at || generated.image.generatedAt || '') || 0 : 0;
-  if(machine.iconSource === 'generated' && modelAt >= imageAt){
+  // 新记录用 from 显式记录图标来源；旧记录没有 from 时沿用时间戳判定
+  const imageFrom = generated.image && generated.image.from;
+  const modelOwnsIcon = imageFrom ? imageFrom === 'model' : modelAt >= imageAt;
+  if(machine.iconSource === 'generated' && modelOwnsIcon){
     machine.icon = '';
     machine.iconSource = '';
     if(generated.image) delete generated.image;   // 该图标记录属于模型，不能留作幂等依据

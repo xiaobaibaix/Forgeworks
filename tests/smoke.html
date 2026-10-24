@@ -1182,7 +1182,27 @@
       }
     }
 
-    runAICheck(runProcedural);
+    function runAdoptCheck(next){
+      var settled = false;
+      function done(ok, detail){
+        if(settled) return;
+        settled = true;
+        out.checks.push({ name: '管线落地入口提前跳过', ok: !!ok, detail: detail || '' });
+        next();
+      }
+      try{
+        var pending = pipelineAdoptTask('M1','machine','n1','export',{state:'success'});
+        if(!pending || typeof pending.then !== 'function') return done(false, '未返回 Promise');
+        pending.then(function(r){
+          if(!r || r.ok !== true || r.skipped !== true)
+            return done(false, '结果异常: ' + JSON.stringify(r));
+          done(true, 'ok');
+        }, function(e){ done(false, 'EXCEPTION: ' + e.message); });
+        setTimeout(function(){ done(false, '超时（2s）'); }, 2000);
+      }catch(e){ done(false, 'EXCEPTION: ' + e.message); }
+    }
+
+    runAICheck(function(){ runAdoptCheck(runProcedural); });
   }
 
   window.addEventListener('load', function(){
