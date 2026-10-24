@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261023z2">
-<link rel="stylesheet" href="../css/layout.css?v=20261023z2">
-<link rel="stylesheet" href="../css/components.css?v=20261023z2">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261023z2">
+<link rel="stylesheet" href="../css/theme.css?v=20261024a1">
+<link rel="stylesheet" href="../css/layout.css?v=20261024a1">
+<link rel="stylesheet" href="../css/components.css?v=20261024a1">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261024a1">
 </head>
 <body>
 <div class="app">
@@ -51,65 +51,66 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261023z2"></script>
-<script src="../js/core/color.js?v=20261023z2"></script>
-<script src="../js/data/styles.js?v=20261023z2"></script>
-<script src="../js/data/seed.js?v=20261023z2"></script>
-<script src="../js/data/prompts.js?v=20261023z2"></script>
+<script src="../js/core/config.js?v=20261024a1"></script>
+<script src="../js/core/color.js?v=20261024a1"></script>
+<script src="../js/data/styles.js?v=20261024a1"></script>
+<script src="../js/data/seed.js?v=20261024a1"></script>
+<script src="../js/data/prompts.js?v=20261024a1"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261023z2"></script>
-<script src="../js/core/lookup.js?v=20261023z2"></script>
-<script src="../js/core/style.js?v=20261023z2"></script>
+<script src="../js/core/state.js?v=20261024a1"></script>
+<script src="../js/core/lookup.js?v=20261024a1"></script>
+<script src="../js/core/style.js?v=20261024a1"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261023z2"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261023z2"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261023z2"></script>
-<script src="../js/vendor/GLTFLoader.js?v=20261023z2"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261023z2"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261023z2"></script>
+<script src="../js/vendor/three.min.js?v=20261024a1"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261024a1"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261024a1"></script>
+<script src="../js/vendor/GLTFLoader.js?v=20261024a1"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261024a1"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261024a1"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261023z2"></script>
-<script src="../js/engines/material-textures.js?v=20261023z2"></script>
-<script src="../js/engines/asset-layers.js?v=20261023z2"></script>
-<script src="../js/engines/viewer3d.js?v=20261023z2"></script>
-<script src="../js/views/editor3d.js?v=20261023z2"></script>
-<script src="../js/engines/validate.js?v=20261023z2"></script>
-<script src="../js/engines/solver.js?v=20261023z2"></script>
-<script src="../js/engines/balance.js?v=20261023z2"></script>
-<script src="../js/engines/csv.js?v=20261023z2"></script>
-<script src="../js/core/io.js?v=20261023z2"></script>
-<script src="../js/sync.js?v=20261023z2"></script>
-<script src="../js/pipeline.js?v=20261023z2"></script>
-<script src="../js/pipeline-templates.js?v=20261023z2"></script>
+<script src="../js/engines/icons.js?v=20261024a1"></script>
+<script src="../js/engines/material-textures.js?v=20261024a1"></script>
+<script src="../js/engines/asset-layers.js?v=20261024a1"></script>
+<script src="../js/engines/glb.js?v=20261024a1"></script>
+<script src="../js/engines/viewer3d.js?v=20261024a1"></script>
+<script src="../js/views/editor3d.js?v=20261024a1"></script>
+<script src="../js/engines/validate.js?v=20261024a1"></script>
+<script src="../js/engines/solver.js?v=20261024a1"></script>
+<script src="../js/engines/balance.js?v=20261024a1"></script>
+<script src="../js/engines/csv.js?v=20261024a1"></script>
+<script src="../js/core/io.js?v=20261024a1"></script>
+<script src="../js/sync.js?v=20261024a1"></script>
+<script src="../js/pipeline.js?v=20261024a1"></script>
+<script src="../js/pipeline-templates.js?v=20261024a1"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261023z2"></script>
-<script src="../js/ui/router.js?v=20261023z2"></script>
-<script src="../js/ui/editor.js?v=20261023z2"></script>
-<script src="../js/ui/providers.js?v=20261023z2"></script>
+<script src="../js/ui/table.js?v=20261024a1"></script>
+<script src="../js/ui/router.js?v=20261024a1"></script>
+<script src="../js/ui/editor.js?v=20261024a1"></script>
+<script src="../js/ui/providers.js?v=20261024a1"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261023z2"></script>
-<script src="../js/views/elements.js?v=20261023z2"></script>
-<script src="../js/views/items.js?v=20261023z2"></script>
-<script src="../js/views/machines.js?v=20261023z2"></script>
-<script src="../js/views/recipes.js?v=20261023z2"></script>
-<script src="../js/views/techs.js?v=20261023z2"></script>
-<script src="../js/views/assets.js?v=20261023z2"></script>
-<script src="../js/views/validate.js?v=20261023z2"></script>
-<script src="../js/views/balance.js?v=20261023z2"></script>
-<script src="../js/views/solve.js?v=20261023z2"></script>
-<script src="../js/views/graph.js?v=20261023z2"></script>
-<script src="../js/views/sync.js?v=20261023z2"></script>
-<script src="../js/views/project.js?v=20261023z2"></script>
-<script src="../js/views/pipeline.js?v=20261023z2"></script>
-<script src="../js/views/export.js?v=20261023z2"></script>
+<script src="../js/views/style.js?v=20261024a1"></script>
+<script src="../js/views/elements.js?v=20261024a1"></script>
+<script src="../js/views/items.js?v=20261024a1"></script>
+<script src="../js/views/machines.js?v=20261024a1"></script>
+<script src="../js/views/recipes.js?v=20261024a1"></script>
+<script src="../js/views/techs.js?v=20261024a1"></script>
+<script src="../js/views/assets.js?v=20261024a1"></script>
+<script src="../js/views/validate.js?v=20261024a1"></script>
+<script src="../js/views/balance.js?v=20261024a1"></script>
+<script src="../js/views/solve.js?v=20261024a1"></script>
+<script src="../js/views/graph.js?v=20261024a1"></script>
+<script src="../js/views/sync.js?v=20261024a1"></script>
+<script src="../js/views/project.js?v=20261024a1"></script>
+<script src="../js/views/pipeline.js?v=20261024a1"></script>
+<script src="../js/views/export.js?v=20261024a1"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261023z2"></script>
+<script src="../js/main.js?v=20261024a1"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -846,6 +847,32 @@
           else localStorage.setItem(LS_KEY, oldLocal);
         }catch(e){}
       }
+    });
+    /* ---- 独立 GLB 工具 ---- */
+    check('GLB 工具已加载', function(){
+      return typeof fwLoadGLBScene === 'function' &&
+             typeof fwBakeGLBScene === 'function' &&
+             typeof fwRenderGLBThumbnail === 'function' ? 'ok' : false;
+    });
+    check('GLB 适配变换 · 机器占地', function(){
+      if(typeof fwComputeFitTransform !== 'function') return false;
+      var mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 4));
+      var t = fwComputeFitTransform(mesh, 'machine', '4×2');
+      if(Math.abs(t.scale.x - 0.5) > 1e-6) throw new Error('缩放=' + t.scale.x);
+      if(Math.abs(t.position.y - 0.25) > 1e-6) throw new Error('未贴地 y=' + t.position.y);
+      return Math.abs(t.position.x) < 1e-6 && Math.abs(t.position.z) < 1e-6 ? 'ok' : false;
+    });
+    check('GLB 适配变换 · 物品等比', function(){
+      if(typeof fwComputeFitTransform !== 'function') return false;
+      var mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 4));
+      var t = fwComputeFitTransform(mesh, 'item', '');
+      if(Math.abs(t.scale.x - 0.25) > 1e-6) throw new Error('缩放=' + t.scale.x);
+      return Math.abs(t.position.y - 0.125) < 1e-6 ? 'ok' : false;
+    });
+    check('GLB 变换归一化', function(){
+      var t = fwNormalizeTransform({position:{x:'2'}, scale:{z:3}});
+      return t.position.x === 2 && t.position.y === 0 && t.scale.x === 1 && t.scale.z === 3
+        ? 'ok' : false;
     });
   }
 
