@@ -1358,14 +1358,20 @@ def export_asset(kind, asset_id, files, meta):
         mf = load_manifest() or {'schemaVersion': 1, 'assets': {}}
         mf.setdefault('project', {}).setdefault('root', project_root())
         rec = mf['assets'].setdefault(asset_id, {})
+        previous_files = rec.get('files') if isinstance(rec.get('files'), dict) else {}
+        merged_files = dict(previous_files)
+        merged_files.update(written)
+        previous_meta = rec.get('meta') if isinstance(rec.get('meta'), dict) else {}
+        merged_meta = dict(previous_meta)
+        merged_meta.update(meta_data)
         rec.update({
             'kind': kind,
             'state': 'exported',
             'sourceDir': rel_dir,
-            'files': written,
+            'files': merged_files,
             'exportedAt': now_iso(),
             'exportedBy': 'bridge-%s' % BRIDGE_VERSION,
-            'meta': meta_data,
+            'meta': merged_meta,
         })
         save_manifest(mf)
     if blender_state == 'queued':

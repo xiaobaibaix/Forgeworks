@@ -270,5 +270,82 @@ class BridgeProjectTest(unittest.TestCase):
         self.assertFalse((fw_root / '_Source' / '元素' / '氙').exists())
 
 
+class BridgeExportMergeTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.temp.name)
+        self.old_state = dict(bridge._state)
+        self.old_state_file = bridge.STATE_FILE
+        bridge.STATE_FILE = str(self.workspace / 'bridge-state.json')
+        bridge._state.clear()
+        bridge._state['recentProjects'] = []
+        created = bridge.create_project(str(self.workspace), '导出合并')
+        self.root = Path(created['fwDir'])
+        self.old_find_blender = bridge.find_blender
+        self.old_queue = bridge._queue_blender_check
+        self.old_push = bridge.push_event
+        self.queued = []
+        bridge.find_blender = lambda: '/fake/blender'
+        bridge._queue_blender_check = lambda *args: self.queued.append(args)
+        bridge.push_event = lambda kind, data=None: None
+
+    def tearDown(self):
+        bridge.find_blender = self.old_find_blender
+        bridge._queue_blender_check = self.old_queue
+        bridge.push_event = self.old_push
+        bridge._state.clear()
+        bridge._state.update(self.old_state)
+        bridge.STATE_FILE = self.old_state_file
+        self.temp.cleanup()
+
+    @staticmethod
+    def _file(path, payload=b'x'):
+        return {'path': path, 'b64': base64.b64encode(payload).decode('ascii')}
+
+    def test_icon_then_mesh_keeps_both_roles_and_meta(self):
+        first = bridge.export_asset(
+            'machine', 'M1',
+            {'icon': self._file('M1_icon.png', b'\x89PNG\r\n\x1a\n')},
+            {'name': '钻机', 'iconHash': 'i1', 'iconSource': 'generated'})
+        self.assertTrue(first['ok'], first)
+        second = bridge.export_asset(
+            'machine', 'M1',
+            {'mesh': self._file('M1.glb', b'glTF')},
+            {'name': '钻机', 'modelHash': 'm1'})
+        self.assertTrue(second['ok'], second)
+        record = bridge.load_manifest()['assets']['M1']
+        self.assertEqual(sorted(record['files']), ['icon', 'mesh'])
+        self.assertEqual(record['meta']['iconHash'], 'i1')
+        self.assertEqual(record['meta']['iconSource'], 'generated')
+        self.assertEqual(record['meta']['modelHash'], 'm1')
+        self.assertEqual(len(self.queued), 1)
+
+    def test_mesh_then_icon_preserves_mesh(self):
+        self.assertTrue(bridge.export_asset(
+            'machine', 'M1', {'mesh': self._file('M1.glb', b'glTF')}, {'name': '钻机'})['ok'])
+        self.assertTrue(bridge.export_asset(
+            'machine', 'M1', {'icon': self._file('M1_icon.png', b'\x89PNG\r\n\x1a\n')},
+            {'name': '钻机', 'iconHash': 'i2'})['ok'])
+        record = bridge.load_manifest()['assets']['M1']
+        self.assertEqual(sorted(record['files']), ['icon', 'mesh'])
+        self.assertEqual(record['files']['mesh'][0]['path'], 'M1.glb')
+
+    def test_same_role_replaces_old_entry(self):
+        self.assertTrue(bridge.export_asset(
+            'machine', 'M1', {'icon': self._file('M1_icon.png', b'old')}, {'name': '钻机'})['ok'])
+        self.assertTrue(bridge.export_asset(
+            'machine', 'M1', {'icon': self._file('M1_icon.png', b'new')}, {'name': '钻机'})['ok'])
+        record = bridge.load_manifest()['assets']['M1']
+        self.assertEqual(len(record['files']['icon']), 1)
+        with open(self.root / record['sourceDir'] / 'M1_icon.png', 'rb') as stream:
+            self.assertEqual(stream.read(), b'new')
+
+    def test_icon_only_machine_does_not_queue_blender(self):
+        self.assertTrue(bridge.export_asset(
+            'machine', 'M1', {'icon': self._file('M1_icon.png', b'\x89PNG\r\n\x1a\n')},
+            {'name': '钻机'})['ok'])
+        self.assertEqual(self.queued, [])
+
+
 if __name__ == '__main__':
     unittest.main()
