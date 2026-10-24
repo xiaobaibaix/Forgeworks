@@ -796,20 +796,56 @@
       var merged = mergeEditorRecord(
         {id:'M1', name:'旧', ui3d:{parts:{a:{}}}, model:{source:'ai'}, generated:{model:{taskId:'t'}}},
         {id:'M1', name:'新', icon:'', iconSource:''});
-      if(merged.name !== '新') return '新值未覆盖';
-      if(!merged.ui3d || !merged.ui3d.parts.a) return 'ui3d 丢失';
-      if(!merged.model || merged.model.source !== 'ai') return 'model 丢失';
-      if(!merged.generated || merged.generated.model.taskId !== 't') return 'generated 丢失';
+      if(merged.name !== '新') throw new Error('新值未覆盖');
+      if(!merged.ui3d || !merged.ui3d.parts.a) throw new Error('ui3d 丢失');
+      if(!merged.model || merged.model.source !== 'ai') throw new Error('model 丢失');
+      if(!merged.generated || merged.generated.model.taskId !== 't') throw new Error('generated 丢失');
       return 'ok';
     });
     check('编辑器图标来源标记', function(){
       var host = document.createElement('div');
       host.innerHTML = '<div id="iconPrev" data-pending="data:image/png;base64,AA"></div>';
       document.body.appendChild(host);
-      var value = editorIconValue('machines', 'NOT_EXIST');
-      host.remove();
-      return value.icon === 'data:image/png;base64,AA' && value.iconSource === 'upload'
-        ? 'ok' : '来源标记错误';
+      try{
+        var value = editorIconValue('machines', 'NOT_EXIST');
+        if(value.icon !== 'data:image/png;base64,AA' || value.iconSource !== 'upload')
+          throw new Error('来源标记错误 icon=' + value.icon + ' source=' + value.iconSource);
+        return 'ok';
+      } finally { host.remove(); }
+    });
+    check('编辑器保存走真实提交路径', function(){
+      var oldItems = S.items.slice();
+      var oldCur = cur, oldModal = modalState;
+      var oldLocal = null;
+      try{ oldLocal = localStorage.getItem(LS_KEY); }catch(e){}
+      var icon = 'data:image/png;base64,OLD';
+      try{
+        S.items.push({id:'SMOKE_MERGE', name:'旧', tier:0, type:'raw', value:1,
+          color:'#888780', desc:'', icon:icon, iconSource:'upload',
+          mesh:'', mat:'', modelStatus:'primitive',
+          ui3d:{parts:{a:{}}}, model:{source:'ai'}, generated:{model:{taskId:'t'}}});
+        openEditor('items', 'SMOKE_MERGE');
+        document.getElementById('f_name').value = '新';
+        commitEditor();
+        var saved = S.items.find(function(x){ return x.id === 'SMOKE_MERGE'; });
+        if(!saved) throw new Error('记录丢失');
+        if(saved.name !== '新') throw new Error('新值未写入');
+        if(!saved.ui3d || !saved.ui3d.parts.a) throw new Error('ui3d 丢失');
+        if(!saved.model || saved.model.source !== 'ai') throw new Error('model 丢失');
+        if(!saved.generated || saved.generated.model.taskId !== 't') throw new Error('generated 丢失');
+        if(saved.icon !== icon || saved.iconSource !== 'upload')
+          throw new Error('上传图标被覆盖 icon=' + saved.icon + ' source=' + saved.iconSource);
+        return 'ok';
+      } finally {
+        S.items = oldItems;
+        modalState = oldModal;
+        cur = oldCur;
+        document.getElementById('mask').classList.add('hide');
+        try{
+          if(oldLocal === null) localStorage.removeItem(LS_KEY);
+          else localStorage.setItem(LS_KEY, oldLocal);
+        }catch(e){}
+      }
     });
   }
 
