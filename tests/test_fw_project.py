@@ -47,14 +47,17 @@ def _write_machine(root, asset_id='M1', mesh=True, icon=True):
     return manifest
 
 
-def _write_item(root, asset_id='I1', icon=True):
+def _write_item(root, asset_id='I1', icon=True, mesh=False):
     manifest_file = root / '_Sync' / 'manifest.json'
     manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
     meta = {'name': '铁矿石', 'type': 'raw', 'iconHash': 'h1'}
+    files = {'icon': [{'path': asset_id + '.png', 'sha1': 'icon-sha1', 'size': 8}]}
+    if mesh:
+        files['mesh'] = [{'path': asset_id + '.glb', 'sha1': 'mesh-sha1', 'size': 4}]
     manifest['assets'][asset_id] = {
         'kind': 'item',
         'state': 'exported',
-        'files': {'icon': [{'path': asset_id + '.png', 'sha1': 'icon-sha1', 'size': 8}]},
+        'files': files,
         'meta': meta,
     }
     source_dir = fw_project.asset_source_dir(root, 'item', asset_id, meta, manifest)
@@ -63,6 +66,8 @@ def _write_item(root, asset_id='I1', icon=True):
     base.mkdir(parents=True, exist_ok=True)
     if icon:
         (base / (asset_id + '.png')).write_bytes(b'\x89PNG\r\n\x1a\n')
+    if mesh:
+        (base / (asset_id + '.glb')).write_bytes(b'glTF')
     (base / 'prompt.txt').write_text('铁矿石描述词', encoding='utf-8')
     manifest_file.write_text(json.dumps(manifest), encoding='utf-8')
     return manifest
@@ -390,6 +395,35 @@ class PublishToUETest(unittest.TestCase):
             result = fw_project.publish_to_ue(fw, ue, ['I2'])
             self.assertFalse(result['ok'])
             self.assertEqual(result['errors'][0]['id'], 'I2')
+
+    def test_publish_item_with_mesh_copies_both_roles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fw = Path(fw_project.create_project(directory, 'FW')['root'])
+            _write_item(fw, 'I1', mesh=True)
+            ue = workspace / 'UE'
+            ue.mkdir()
+
+            result = fw_project.publish_to_ue(fw, ue, ['I1'])
+            self.assertTrue(result['ok'], result)
+            exported = ue / 'Forgeworks' / '_Source' / '物品' / '图标' / '铁矿石'
+            self.assertTrue((exported / 'I1.png').is_file())
+            self.assertTrue((exported / 'I1.glb').is_file())
+            manifest = json.loads(
+                (ue / 'Forgeworks' / '_Sync' / 'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(sorted(manifest['assets']['I1']['files']), ['icon', 'mesh'])
+
+    def test_publish_item_with_mesh_but_no_icon_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fw = Path(fw_project.create_project(directory, 'FW')['root'])
+            _write_item(fw, 'I3', icon=False, mesh=True)
+            ue = workspace / 'UE'
+            ue.mkdir()
+
+            result = fw_project.publish_to_ue(fw, ue, ['I3'])
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['errors'][0]['id'], 'I3')
 
 
 if __name__ == '__main__':
