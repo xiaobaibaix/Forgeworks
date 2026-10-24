@@ -13,13 +13,59 @@ function normalizeAssets(target){
   ['elements','items','machines','recipes','techs'].forEach(k=>{
     if(!Array.isArray(target[k])) target[k]=[];   // MCP 可能只写入部分集合
   });
-  (target.items||[]).forEach(it=>{
-    if(typeof it.icon !== 'string') it.icon = '';                    // '' = 使用自动生成图标
-    if(typeof it.mesh !== 'string') it.mesh = '';                    // UE 静态网格路径
-    if(typeof it.mat !== 'string') it.mat = '';                      // 材质路径
-    if(typeof it.visual !== 'string') it.visual = '';                // 图标形态覆盖
-    if(!it.modelStatus) it.modelStatus = defaultModelStatus(it.visual || it.type);
+  (target.elements||[]).forEach(el=>{
+    if(typeof el.icon !== 'string') el.icon = '';
+    if(typeof el.iconSource !== 'string') el.iconSource = '';
+    if(!el.generated || typeof el.generated !== 'object') el.generated = {};
+    delete el.model;                                                  // 元素不生成 3D 模型
   });
+  (target.items||[]).forEach(it=>{
+    if(typeof it.icon !== 'string') it.icon = '';
+    if(typeof it.mesh !== 'string') it.mesh = '';
+    if(typeof it.mat !== 'string') it.mat = '';
+    if(typeof it.visual !== 'string') it.visual = '';
+    if(!it.modelStatus) it.modelStatus = defaultModelStatus(it.visual || it.type);
+    if(typeof it.iconSource !== 'string') it.iconSource = '';
+    if(!it.generated || typeof it.generated !== 'object') it.generated = {};
+    it.model = normalizeAIModel(it.model);
+  });
+  (target.machines||[]).forEach(m=>{
+    if(typeof m.icon !== 'string') m.icon = '';
+    if(typeof m.iconSource !== 'string') m.iconSource = '';
+    if(!m.generated || typeof m.generated !== 'object') m.generated = {};
+    m.model = normalizeAIModel(m.model);
+  });
+}
+
+/** 只保留 AI 模型；旧数据或程序化模型返回 null */
+function normalizeAIModel(model){
+  if(!model || model.source !== 'ai') return null;
+  return {
+    source: 'ai',
+    provider: typeof model.provider === 'string' ? model.provider : '',
+    file: typeof model.file === 'string' ? model.file : '',
+    taskId: typeof model.taskId === 'string' ? model.taskId : '',
+    nodeId: typeof model.nodeId === 'string' ? model.nodeId : '',
+    generatedAt: typeof model.generatedAt === 'string' ? model.generatedAt : '',
+    triangles: Number.isFinite(Number(model.triangles)) ? Number(model.triangles) : 0,
+    autoFit: model.autoFit !== false,
+    transform: normalizeModelTransform(model.transform),
+  };
+}
+
+/** 整体变换补全；ratio 轴缺省为 1，位移/旋转缺省为 0 */
+function normalizeModelTransform(transform){
+  const t = transform || {};
+  const axis = (value, fallback)=>{
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const p = t.position || {}, r = t.rotation || {}, s = t.scale || {};
+  return {
+    position: {x:axis(p.x,0), y:axis(p.y,0), z:axis(p.z,0)},
+    rotation: {x:axis(r.x,0), y:axis(r.y,0), z:axis(r.z,0)},
+    scale:    {x:axis(s.x,1), y:axis(s.y,1), z:axis(s.z,1)},
+  };
 }
 // 按类型推断默认模型需求
 function defaultModelStatus(type){
