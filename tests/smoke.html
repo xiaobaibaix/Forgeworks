@@ -979,6 +979,18 @@
         return 'ok';
       }finally{ SYNC.manifest = prevManifest; }
     });
+    check('物品移除模型后 UE 状态为 stale', function(){
+      var prevManifest = SYNC.ueManifest;
+      try{
+        SYNC.ueManifest = {assets:{X:{
+          files:{icon:[{path:'X.png'}]},
+          meta:{model:null, modelHash:'old'}}}};
+        var it = {id:'X', name:'测试物品', type:'material'};
+        var st = itemUEState(it);
+        if(st.state !== 'stale') throw new Error('UE 侧移除模型未标记 stale: ' + st.state);
+        return 'ok';
+      }finally{ SYNC.ueManifest = prevManifest; }
+    });
     check('管线输出 URL 仅使用文件名', function(){
       var url = pipelineOutputURLFor('M1', 'machine', 'C:\\tmp\\..\\M1.glb');
       if(url !== '/api/pipeline/output/M1/M1.glb?kind=machine')

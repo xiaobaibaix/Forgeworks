@@ -379,9 +379,12 @@ function itemUEState(it){
   const rec = SYNC.ueManifest && SYNC.ueManifest.assets && SYNC.ueManifest.assets[it.id];
   if(!rec) return { state:'none', rec:null };
   const meta = rec.meta || {};
-  const aiStale = it.model && it.model.source === 'ai'
-    ? (!hasAssetFile(rec, 'mesh') || meta.modelHash !== itemModelHash(it))
-    : false;
+  const currentModelHash = itemModelHash(it);
+  const modelRemoved = meta.model === null && !it.model;
+  const aiStale = modelRemoved
+    || (meta.modelHash !== undefined && meta.modelHash !== null
+        ? meta.modelHash !== currentModelHash
+        : !!(it.model && it.model.source === 'ai' && !hasAssetFile(rec, 'mesh')));
   const stale = !hasAssetFile(rec, 'icon') || aiStale
              || (meta.iconHash && meta.iconHash !== itemIconHash(it));
   return { state: stale ? 'stale' : 'exported', rec };
