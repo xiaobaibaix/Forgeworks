@@ -967,27 +967,39 @@
       if(itemIconHash(gen) === itemIconHash(up)) throw new Error('iconSource 未参与哈希');
       return 'ok';
     });
-    check('物品移除模型后同步状态为 stale', function(){
+    check('物品模型同步状态区分移除与无模型', function(){
       var prevManifest = SYNC.manifest;
       try{
-        SYNC.manifest = {assets:{X:{state:'exported',
-          files:{icon:[{path:'X.png'}]},
-          meta:{model:null, modelHash:'old'}}}};
         var it = {id:'X', name:'测试物品', type:'material'};
-        var st = itemSyncState(it);
-        if(st.state !== 'stale') throw new Error('移除模型未标记 stale: ' + st.state);
+        function state(meta){
+          SYNC.manifest = {assets:{X:{state:'exported',
+            files:{icon:[{path:'X.png'}]}, meta:meta}}};
+          return itemSyncState(it).state;
+        }
+        var normal = state({model:null, modelHash:itemModelHash(it)});
+        if(normal !== 'exported') throw new Error('普通无模型物品被误标: ' + normal);
+        var removed = state({model:null, modelHash:'old-model-hash'});
+        if(removed !== 'stale') throw new Error('显式移除未标记 stale: ' + removed);
+        var legacy = state({model:{source:'ai'}});
+        if(legacy !== 'stale') throw new Error('旧 manifest 移除未标记 stale: ' + legacy);
         return 'ok';
       }finally{ SYNC.manifest = prevManifest; }
     });
-    check('物品移除模型后 UE 状态为 stale', function(){
+    check('物品模型 UE 状态区分移除与无模型', function(){
       var prevManifest = SYNC.ueManifest;
       try{
-        SYNC.ueManifest = {assets:{X:{
-          files:{icon:[{path:'X.png'}]},
-          meta:{model:null, modelHash:'old'}}}};
         var it = {id:'X', name:'测试物品', type:'material'};
-        var st = itemUEState(it);
-        if(st.state !== 'stale') throw new Error('UE 侧移除模型未标记 stale: ' + st.state);
+        function state(meta){
+          SYNC.ueManifest = {assets:{X:{
+            files:{icon:[{path:'X.png'}]}, meta:meta}}};
+          return itemUEState(it).state;
+        }
+        var normal = state({model:null, modelHash:itemModelHash(it)});
+        if(normal !== 'exported') throw new Error('UE 侧普通无模型物品被误标: ' + normal);
+        var removed = state({model:null, modelHash:'old-model-hash'});
+        if(removed !== 'stale') throw new Error('UE 侧显式移除未标记 stale: ' + removed);
+        var legacy = state({model:{source:'ai'}});
+        if(legacy !== 'stale') throw new Error('UE 侧旧 manifest 移除未标记 stale: ' + legacy);
         return 'ok';
       }finally{ SYNC.ueManifest = prevManifest; }
     });
