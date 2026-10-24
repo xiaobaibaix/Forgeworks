@@ -564,6 +564,11 @@ def _publish_asset(fw_root, export_source, asset_id, record, bridge_version):
         raise ValueError('资产 ID 非法')
     kind = record.get('kind')
     roles = UE_EXPORT_ROLES.get(kind)
+    meta = record.get('meta') or {}
+    # 物品模型被显式移除（meta.model is None）后停止发布旧 mesh；
+    # 不带 model 键的旧记录/手工网格保持原行为。文件本身不删除。
+    if kind == 'item' and 'model' in meta and meta.get('model') is None:
+        roles = ('icon',)
     if not roles:
         raise ValueError('不支持导出到 UE 的资产类型: %s' % kind)
     source_dir = _safe_relative(record.get('sourceDir'))

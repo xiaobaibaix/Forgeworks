@@ -413,6 +413,26 @@ class PublishToUETest(unittest.TestCase):
                 (ue / 'Forgeworks' / '_Sync' / 'manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(sorted(manifest['assets']['I1']['files']), ['icon', 'mesh'])
 
+    def test_publish_item_with_removed_model_skips_mesh_role(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            fw = Path(fw_project.create_project(directory, 'FW')['root'])
+            manifest = _write_item(fw, 'I4', mesh=True)
+            manifest['assets']['I4']['meta']['model'] = None
+            (fw / '_Sync' / 'manifest.json').write_text(
+                json.dumps(manifest), encoding='utf-8')
+            ue = workspace / 'UE'
+            ue.mkdir()
+
+            result = fw_project.publish_to_ue(fw, ue, ['I4'])
+            self.assertTrue(result['ok'], result)
+            exported = ue / 'Forgeworks' / '_Source' / '物品' / '图标' / '铁矿石'
+            self.assertTrue((exported / 'I4.png').is_file())
+            self.assertFalse((exported / 'I4.glb').exists())
+            ue_manifest = json.loads(
+                (ue / 'Forgeworks' / '_Sync' / 'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(list(ue_manifest['assets']['I4']['files']), ['icon'])
+
     def test_publish_item_with_mesh_but_no_icon_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
