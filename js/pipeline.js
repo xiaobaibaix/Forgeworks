@@ -1,4 +1,4 @@
-const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}, applyQueue:{}, applyStatus:{}, applyErrors:{}};
+const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}, applyQueue:{}, applyStatus:{}, applyErrors:{}, applyNodes:{}};
 const PIPELINE_STORE_PREFIX = 'fw.pipeline.';
 const PIPELINE_LAST_ASSET_KEY = 'fw.pipeline.lastAsset';
 
@@ -1268,8 +1268,12 @@ function pipelineNodeCard(node){
   const generated = (currentAsset && currentAsset.generated) || {};
   const applied = !!(applySlot && task && task.taskId
     && generated[applySlot] && generated[applySlot].taskId === task.taskId);
-  const applyStatus = applySlot ? (PIPELINE.applyStatus[PIPELINE.assetId] || '') : '';
-  const applyError = applySlot ? (PIPELINE.applyErrors[PIPELINE.assetId] || '') : '';
+  const applyOwner = (PIPELINE.applyNodes || {})[PIPELINE.assetId] || '';
+  const applyMine = !applyOwner || applyOwner === node.id;
+  const applyStatus = applySlot && applyMine ? (PIPELINE.applyStatus[PIPELINE.assetId] || '') : '';
+  const applyError = applySlot && applyMine ? (PIPELINE.applyErrors[PIPELINE.assetId] || '') : '';
+  const applyReady = !!(applySlot && task && task.state === 'success' && task.output
+    && (applySlot === 'image' ? task.output.imagePath : task.output.modelPath));
   const exportOutput = node.type === 'export' && node.result && node.result.state === 'done'
     && node.result.output && node.result.output.sourceDir ? node.result.output : null;
   const appliedDate = applied && generated[applySlot] && generated[applySlot].at
@@ -1316,12 +1320,12 @@ function pipelineNodeCard(node){
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(pipelineStateLabel(state, progress))}</span></header>
     <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applySlot && task && task.state === 'success' ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : '应用结果'}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
-    ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir || '')}</small>` : ''}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : '应用结果'}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
+    ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir)}</small>` : ''}
     ${applied
       ? `<small class="pipeline-stage">已应用到 ${pipelineEscape((currentAsset && currentAsset.name) || '资产')}${appliedWhen ? ' · ' + pipelineEscape(appliedWhen) : ''}</small>`
       : (applyStatus ? `<small class="pipeline-stage">${pipelineEscape(applyStatus)}</small>` : '')}
-    ${applyError ? `<small class="pipeline-error">${pipelineEscape(applyError)}</small>` : ''}
+    ${applyError ? `<small class="${applyStatus === '已跳过' ? 'pipeline-stage' : 'pipeline-error'}">${pipelineEscape(applyError)}</small>` : ''}
     ${error?`<small class="pipeline-error">${pipelineEscape(error)}</small>`:''}
   </article>`;
 }

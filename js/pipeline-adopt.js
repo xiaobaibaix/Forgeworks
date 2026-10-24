@@ -310,9 +310,10 @@
   }
 
   /** 早期失败不经队列；仍要写状态、留日志并提示，否则用户只看到“生成完成”。 */
-  function reportApplyFailure(assetId, message){
+  function reportApplyFailure(assetId, message, nodeId){
     PIPELINE.applyStatus[assetId] = '应用失败';
     PIPELINE.applyErrors[assetId] = message;
+    PIPELINE.applyNodes[assetId] = nodeId;
     if(typeof syncLog === 'function') syncLog('自动应用失败：' + message, 'warn');
     toast('应用失败：' + message);
     if(cur === 'pipeline' && PIPELINE.assetId === assetId) renderPipelineView();
@@ -325,24 +326,24 @@
    */
   function pipelineAdoptTask(assetId, kind, nodeId, nodeType, task, force){
     if(!task || task.state !== 'success'){
-      return Promise.resolve(reportApplyFailure(assetId, '任务尚未成功'));
+      return Promise.resolve(reportApplyFailure(assetId, '任务尚未成功', nodeId));
     }
     if(nodeType !== 'textToImage' && nodeType !== 'imageTo3D'){
       return Promise.resolve({ok:true, skipped:true});
     }
     if(typeof pipelineBridgeReady !== 'function' || !pipelineBridgeReady()){
-      return Promise.resolve(reportApplyFailure(assetId, 'Bridge 未连接'));
+      return Promise.resolve(reportApplyFailure(assetId, 'Bridge 未连接', nodeId));
     }
     if(typeof syncProjectReady !== 'function' || !syncProjectReady()){
-      return Promise.resolve(reportApplyFailure(assetId, '未打开 Forgeworks 项目'));
+      return Promise.resolve(reportApplyFailure(assetId, '未打开 Forgeworks 项目', nodeId));
     }
     const slot = nodeType === 'textToImage' ? 'image' : 'model';
     if(slot === 'model' && kind === 'element') return Promise.resolve({ok:true, skipped:true});
     const output = task.output || {};
     const file = slot === 'image' ? output.imagePath : output.modelPath;
-    if(!file) return Promise.resolve(reportApplyFailure(assetId, '任务没有输出文件'));
+    if(!file) return Promise.resolve(reportApplyFailure(assetId, '任务没有输出文件', nodeId));
     const asset = pipelineFindAsset(kind, assetId);
-    if(!asset) return Promise.resolve(reportApplyFailure(assetId, '资产已删除: ' + assetId));
+    if(!asset) return Promise.resolve(reportApplyFailure(assetId, '资产已删除: ' + assetId, nodeId));
     const done = asset.generated && asset.generated[slot];
     if(!force && done && done.taskId && done.taskId === task.taskId){
       return Promise.resolve({ok:true, skipped:true});
@@ -352,6 +353,7 @@
     const previous = PIPELINE.applyQueue[key] || Promise.resolve();
     PIPELINE.applyStatus[assetId] = '应用中…';
     PIPELINE.applyErrors[assetId] = '';
+    PIPELINE.applyNodes[assetId] = nodeId;
     if(cur === 'pipeline' && PIPELINE.assetId === assetId) renderPipelineView();
 
     const next = previous.then(function(){
@@ -366,6 +368,7 @@
       if(!result.ok){
         PIPELINE.applyStatus[assetId] = result.applied ? '导出失败' : '应用失败';
         PIPELINE.applyErrors[assetId] = result.error || '未知错误';
+        PIPELINE.applyNodes[assetId] = nodeId;
         if(typeof syncLog === 'function') syncLog('自动应用失败：' + PIPELINE.applyErrors[assetId], 'warn');
         toast((result.applied ? '已应用到资产，但导出失败：' : '应用失败：') + PIPELINE.applyErrors[assetId]);
         if(cur === 'pipeline' && PIPELINE.assetId === assetId) renderPipelineView();
@@ -375,12 +378,14 @@
       if(result.duplicate){
         PIPELINE.applyStatus[assetId] = '已应用';
         PIPELINE.applyErrors[assetId] = '';
+        PIPELINE.applyNodes[assetId] = nodeId;
         if(cur === 'pipeline' && PIPELINE.assetId === assetId) renderPipelineView();
         return result;
       }
       if(result.skipped){
         PIPELINE.applyStatus[assetId] = '已跳过';
         PIPELINE.applyErrors[assetId] = result.note || '';
+        PIPELINE.applyNodes[assetId] = nodeId;
         if(result.note) toast(result.note);
         if(cur === 'pipeline' && PIPELINE.assetId === assetId) renderPipelineView();
         else render();
@@ -388,6 +393,7 @@
       }
       PIPELINE.applyStatus[assetId] = '已应用';
       PIPELINE.applyErrors[assetId] = result.warning || '';
+      PIPELINE.applyNodes[assetId] = nodeId;
       const what = slot === 'image' ? 'AI 图标' : 'AI 模型';
       toast(result.note || result.warning || ('已应用' + what + '：' + asset.name));
       if(cur === 'pipeline' && PIPELINE.assetId === assetId) refreshExportNode(assetId, kind);
@@ -396,6 +402,7 @@
     }, function(error){
       PIPELINE.applyStatus[assetId] = '应用失败';
       PIPELINE.applyErrors[assetId] = error.message || String(error);
+      PIPELINE.applyNodes[assetId] = nodeId;
       if(typeof syncLog === 'function') syncLog('自动应用失败：' + PIPELINE.applyErrors[assetId], 'warn');
       toast('应用失败：' + PIPELINE.applyErrors[assetId]);
       if(cur === 'pipeline' && PIPELINE.assetId === assetId) renderPipelineView();

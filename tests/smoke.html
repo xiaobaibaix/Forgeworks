@@ -972,16 +972,25 @@
       return 'ok';
     });
     check('管线卡片为成功任务提供应用按钮', function(){
-      var prev = PIPELINE.assetId;
+      var prev = PIPELINE.assetId, prevNodes = PIPELINE.applyNodes;
       PIPELINE.assetId = S.machines[0].id;
+      PIPELINE.applyNodes = {};
       try{
-        var node = {id:'n1', type:'textToImage', x:0, y:0, params:{},
+        var box = document.createElement('div');
+        box.innerHTML = pipelineNodeCard({id:'n1', type:'textToImage', x:0, y:0, params:{},
           result:{providerTask:{state:'success', taskId:'t1',
-                  output:{imagePath:'a.png'}}}};
-        var html = pipelineNodeCard(node);
-        if(html.indexOf('data-apply="n1"') < 0) throw new Error('未提供应用按钮');
+                  output:{imagePath:'a.png'}}}});
+        if(!box.querySelector('.pipeline-node-actions [data-apply="n1"]')) throw new Error('应用按钮未在操作区内');
+        var failed = document.createElement('div');
+        failed.innerHTML = pipelineNodeCard({id:'n2', type:'textToImage', x:0, y:0, params:{},
+          result:{providerTask:{state:'failed', taskId:'t2', output:{}}}});
+        if(failed.querySelector('[data-apply]')) throw new Error('失败任务出现应用按钮');
+        var noOutput = document.createElement('div');
+        noOutput.innerHTML = pipelineNodeCard({id:'n3', type:'textToImage', x:0, y:0, params:{},
+          result:{providerTask:{state:'success', taskId:'t3', output:{}}}});
+        if(noOutput.querySelector('[data-apply]')) throw new Error('无输出任务出现应用按钮');
         return 'ok';
-      }finally{ PIPELINE.assetId = prev; }
+      }finally{ PIPELINE.assetId = prev; PIPELINE.applyNodes = prevNodes; }
     });
     check('导出节点展示 manifest 结果', function(){
       var node = {id:'export', type:'export', x:0, y:0, params:{},
@@ -990,9 +999,57 @@
       if(html.indexOf('_Source/机器/M1') < 0) throw new Error('未展示导出目录');
       return 'ok';
     });
+    check('跳过提示按普通状态渲染', function(){
+      var assetId = S.machines[0].id;
+      var prevId = PIPELINE.assetId, prevNodes = PIPELINE.applyNodes;
+      var prevStatus = PIPELINE.applyStatus, prevErrors = PIPELINE.applyErrors;
+      try{
+        PIPELINE.assetId = assetId;
+        PIPELINE.applyNodes = {}; PIPELINE.applyStatus = {}; PIPELINE.applyErrors = {};
+        PIPELINE.applyNodes[assetId] = 'n4';
+        PIPELINE.applyStatus[assetId] = '已跳过';
+        PIPELINE.applyErrors[assetId] = '已保留自定义图标，未用概念图覆盖';
+        var html = pipelineNodeCard({id:'n4', type:'textToImage', x:0, y:0, params:{},
+          result:{providerTask:{state:'success', taskId:'t4', output:{imagePath:'a.png'}}}});
+        if(html.indexOf('未用概念图覆盖') < 0) throw new Error('未展示跳过提示');
+        var box = document.createElement('div');
+        box.innerHTML = html;
+        var hit = Array.prototype.some.call(box.querySelectorAll('.pipeline-error'), function(el){
+          return el.textContent.indexOf('未用概念图覆盖') >= 0;
+        });
+        if(hit) throw new Error('跳过提示被渲染为错误');
+        return 'ok';
+      }finally{
+        PIPELINE.assetId = prevId; PIPELINE.applyNodes = prevNodes;
+        PIPELINE.applyStatus = prevStatus; PIPELINE.applyErrors = prevErrors;
+      }
+    });
     check('管线可跳转到资产编辑器', function(){
-      if(typeof pipelineOpenAsset !== 'function') throw new Error('未定义');
-      return 'ok';
+      var prevCur = cur;
+      var prevRender = render, prevHash = syncHash, prevOpen = openEditor;
+      var calls = [];
+      try{
+        render = function(){ calls.push('render'); };
+        syncHash = function(v){ calls.push('hash:' + v); };
+        openEditor = function(coll, id){ calls.push('open:' + coll + ':' + id); };
+        pipelineOpenAsset('M1', 'machine');
+        if(cur !== 'machines') throw new Error('machine 视图错误: ' + cur);
+        if(calls.indexOf('hash:machines') < 0) throw new Error('machine hash 未同步');
+        if(calls.indexOf('open:machines:M1') < 0) throw new Error('machine 编辑器参数错误');
+        calls.length = 0;
+        pipelineOpenAsset('I1', 'item');
+        if(cur !== 'assets') throw new Error('item 视图错误: ' + cur);
+        if(calls.indexOf('hash:assets') < 0) throw new Error('item hash 未同步');
+        if(calls.indexOf('open:items:I1') < 0) throw new Error('item 编辑器参数错误');
+        calls.length = 0;
+        pipelineOpenAsset('E1', 'element');
+        if(cur !== 'assets') throw new Error('element 视图错误: ' + cur);
+        if(calls.indexOf('hash:assets') < 0) throw new Error('element hash 未同步');
+        if(calls.indexOf('open:elements:E1') < 0) throw new Error('element 编辑器参数错误');
+        return 'ok';
+      }finally{
+        render = prevRender; syncHash = prevHash; openEditor = prevOpen; cur = prevCur;
+      }
     });
   }
 
