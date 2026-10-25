@@ -25,3 +25,6 @@ tools/bridge_config.json
 # 本地工具产物（Codegraph 索引、Playwright 快照与日志）
 .codegraph/
 .playwright-mcp/
+
+# Claude Code 本地 worktree 检出（git 内部状态，不入库）
+.claude/worktrees/
