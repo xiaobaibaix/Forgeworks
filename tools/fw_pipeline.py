@@ -335,6 +335,39 @@ def _contract_path_of(*nodes):
     return None
 
 
+def _contract_chain_path(graph, by_id, node_id):
+    seen = set()
+    while node_id and node_id not in seen:
+        seen.add(node_id)
+        path = _contract_path_of(by_id.get(node_id))
+        if path:
+            return path
+        edge = next((edge for edge in graph['edges']
+                     if edge.get('to') == node_id and edge.get('in') == 'contract'), None)
+        node_id = edge.get('from') if edge else None
+    return None
+
+
+def _apply_assemble_params(contract_path, params):
+    fit = params.get('fit')
+    overlap = params.get('overlap')
+    if fit is None and overlap is None:
+        return
+    with open(contract_path, encoding='utf-8') as stream:
+        contract = json.load(stream)
+    changed = False
+    for part in contract.get('parts') or []:
+        if fit in ('contain', 'height') and part.get('fit') != fit:
+            part['fit'] = fit
+            changed = True
+        if isinstance(overlap, (int, float)) and part.get('overlap') != overlap:
+            part['overlap'] = float(overlap)
+            changed = True
+    if changed:
+        with open(contract_path, 'w', encoding='utf-8') as stream:
+            json.dump(contract, stream, ensure_ascii=False, indent=2)
+
+
 def _parts_skeleton(node):
     result = (node or {}).get('result') or {}
     existing = result.get('parts')
@@ -498,8 +531,7 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
         elif node['type'] == 'assemble':
             result = node.setdefault('result', {})
             try:
-                upstream = _contract_source(graph, by_id, node_id)
-                contract_path = _contract_path_of(upstream)
+                contract_path = _contract_chain_path(graph, by_id, node_id)
                 if not contract_path:
                     raise ValueError('装配节点没有分件契约：请先运行分件规划')
                 if not blender_path:
@@ -508,6 +540,7 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 absolute = os.path.realpath(os.path.join(root, contract_path))
                 if not absolute.startswith(root + os.sep) or not os.path.isfile(absolute):
                     raise ValueError('分件契约不存在或越界：' + contract_path)
+                _apply_assemble_params(absolute, node.get('params') or {})
                 outputs_dir = os.path.join(root, 'outputs')
                 os.makedirs(outputs_dir, exist_ok=True)
                 filename = 'model_assembly_%s.glb' % node_id

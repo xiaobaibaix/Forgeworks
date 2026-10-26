@@ -427,6 +427,55 @@ class PipelinePartsTest(unittest.TestCase):
             self.assertEqual(node['result']['output']['triangles'], 200)
             self.assertTrue((parts_dir.parent / 'outputs' / 'model_assembly_assemble.glb').is_file())
 
+    def test_assemble_falls_back_to_partspec_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parts_dir = root / '_Source' / '机器' / 'M1' / 'pipeline' / 'parts'
+            parts_dir.mkdir(parents=True)
+            (parts_dir / 'partspec.json').write_text('{}', encoding='utf-8')
+            graph = fw_pipeline.starter_graph('M1', 'parts')
+            spec = next(node for node in graph['nodes'] if node['type'] == 'partSpec')
+            spec['result'] = {'state': 'done', 'output': {'contractPath': 'parts/partspec.json'}}
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+
+            def fake_assemble(contract_path, output_path, blender_path=None):
+                Path(output_path).write_bytes(b'glb')
+                return {'parts': [{'triangles': 10}]}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble', side_effect=fake_assemble):
+                result = fw_pipeline.execute_local(directory, 'M1', target_id='assemble',
+                                                   kind='machine', blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'assemble')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['parts'], 1)
+
+    def test_assemble_applies_node_params_to_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parts_dir = root / '_Source' / '机器' / 'M1' / 'pipeline' / 'parts'
+            parts_dir.mkdir(parents=True)
+            (parts_dir / 'partspec.json').write_text(json.dumps({
+                'views': {'front': {}, 'side': {}},
+                'parts': [{'id': 'part_0', 'name': '车身', 'mesh': 'part_0.glb',
+                           'fit': 'contain', 'overlap': 0.0}],
+            }), encoding='utf-8')
+            graph = fw_pipeline.starter_graph('M1', 'parts')
+            spec = next(node for node in graph['nodes'] if node['type'] == 'partSpec')
+            spec['result'] = {'state': 'done', 'output': {'contractPath': 'parts/partspec.json'}}
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            saved = fw_pipeline.load_graph(directory, 'M1', kind='machine')
+            assemble = next(node for node in saved['nodes'] if node['type'] == 'assemble')
+            assemble['params'] = {'fit': 'height', 'overlap': 0.05}
+            fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble',
+                                   side_effect=lambda *a, **k: {'parts': []}):
+                fw_pipeline.execute_local(directory, 'M1', target_id='assemble',
+                                          kind='machine', blender_path='/fake/blender')
+            contract = json.loads((parts_dir / 'partspec.json').read_text(encoding='utf-8'))
+            self.assertEqual(contract['parts'][0]['fit'], 'height')
+            self.assertEqual(contract['parts'][0]['overlap'], 0.05)
+
 
 if __name__ == '__main__':
     unittest.main()
