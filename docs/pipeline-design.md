@@ -203,6 +203,37 @@
 
 生成结果不满意 → 从任一节点**分叉**重试（不同 seed / 不同 provider），保留多版本对比，选一个继续。这是节点图相对"一键流程"的第二个优势：**历史不是线，是树**。
 
+### 3.10 分件：`partSpec` 契约 + `assemble` 装配（离线核心已落地）
+
+目标是把「一个整体模型」拆成「按提示词部件名命名的多件」，两条路线共用同一套契约与装配，只在「部件从哪来」分叉：
+
+| 路线 | 流程 | 部件来源 |
+|---|---|---|
+| A 逐件生成 | 三视图 → 部件描述与约束 → 逐件效果图 → 逐件模型 → 装配 | 每件单独调 Provider |
+| B 先整后拆 | 整机效果图 → 整机模型 → 粗切 → 逐件按约束重生成 → 装配 | 粗切出的包围盒先占位 |
+
+B 的粗切不需要语义分割（逐件都会重生成），这是该路线可成立的关键。
+
+**契约 `partSpec`（schemaVersion 1）**
+
+- `views.front` / `views.side`：`width`、`height`、`ground`、`pxPerMeter`、`flipX`。
+- `parts[]`：`id`、`name`、`mesh`（相对契约目录、禁止 `..`）、`front [x, y, w, h]`、`side [...]`、`fit`（`contain` / `height`）、`overlap`（0–0.2，默认 0.02）、`rotationZ`、可选 `scale`、`regenerate`。
+- 坐标约定：世界原点对准图像水平中心（`px = world × ppm + width/2`），`y = ground − z × ppm`；正视图 x → 世界 X，侧视图 x → 世界 Y（`flipX` 可镜像）；高度取正视与侧视的较小者，两者相差 >15% 产生警告。
+
+**装配规则**
+
+- `contain` 取三轴缩放比的最小值，`height` 只按 Z 比例，避免变形；`overlap` 以包围盒中心放大防缝。
+- Z 底面对齐目标盒底面；`rotationZ` 先旋转中心再平移。
+- 输出 `assembly.glb`、`parts.json`（每件世界包围盒、缩放、位移、flags）与 `*.report.json`；`aspect_mismatch` / `scale_outlier` / `manual_scale` / `empty_mesh` 记在 flags 里。
+
+**工具入口**
+
+- `tools/fw_parts.py`：`assemble --contract --out`、`bootstrap --source --out-dir --parts N --axis z`（粗切后反推契约，用于迁移与往返验证）、`validate --contract`。
+- `tools/fw_blender.py` 新增 `--mode measure`（逐文件包围盒与对象级包围盒）、`--mode assemble`（按 plan 摆放并导出）、`--mode cut`（`bmesh.ops.bisect_plane` 按平面切分）。
+- 粗切用平面切分而非布尔求交：EXACT 布尔在非流形网格上会产出越界几何，实测三台真实机器改用平面切分后往返误差为 0。
+
+**尚未接入**：管线节点、前端部件面板、UE 多 StaticMesh 发布。当前先用 2–3 个真实资产在同一目录下手动跑 `bootstrap → assemble` 验证。
+
 ---
 
 ## 4. Provider 抽象与密钥管理
@@ -538,6 +569,8 @@ graph.json 的状态                      ─▶ manifest.pipeline（§7）
 | textToImage | 远程 | text | image×1~4 | $0.05~0.10 |
 | imageTo3D | 远程 | image×1~4 | mesh | $0.20~0.40 |
 | decimate | Bridge/前端 | mesh | mesh | ✕ |
+| partSpec | 前端/Bridge | 三视图+部件 | contract | ✕ |
+| assemble | Bridge | contract+mesh×N | mesh | ✕ |
 | styleApply | 前端 | mesh | mesh | ✕ |
 | validate | 前端 | mesh | report | ✕ |
 | manualEdit | 人工 | mesh | mesh | ✕ |

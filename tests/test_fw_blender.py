@@ -19,7 +19,80 @@ sys.path.insert(0, str(ROOT / 'tools'))
 bridge_args = sys.argv
 sys.argv = [sys.argv[0]]
 import bridge
+import fw_parts
 sys.argv = bridge_args
+
+
+def find_blender():
+    blender = os.environ.get('FW_BLENDER') or shutil.which('blender')
+    if not blender:
+        candidates = ['/Volumes/KingstonXS1000Media/app/Blender.app/Contents/MacOS/Blender', '/Applications/Blender.app/Contents/MacOS/Blender']
+        blender = next((candidate for candidate in candidates if Path(candidate).is_file()), None)
+    return blender
+
+
+def run_blender(blender, arguments, timeout=120):
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / 'report.json'
+        result = subprocess.run(
+            [blender, '--background', '--factory-startup', '--python-exit-code', '1',
+             '--python', str(SCRIPT), '--', '--report', str(report)] + arguments,
+            capture_output=True, text=True, timeout=timeout)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return json.loads(report.read_text())
+
+
+def _write_glb(path, document, binary):
+    json_chunk = json.dumps(document, separators=(',', ':')).encode()
+    json_chunk += b' ' * ((4 - len(json_chunk) % 4) % 4)
+    binary.extend(b'\0' * ((4 - len(binary) % 4) % 4))
+    total = 12 + 8 + len(json_chunk) + 8 + len(binary)
+    path.write_bytes(
+        struct.pack('<4sII', b'glTF', 2, total)
+        + struct.pack('<I4s', len(json_chunk), b'JSON') + json_chunk
+        + struct.pack('<I4s', len(binary), b'BIN\0') + binary
+    )
+
+
+def make_box_glb(path, size=(1.0, 1.0, 2.0), closed=True):
+    # size 按 Blender 的 X/Y/Z 给；glTF 是 Y 轴朝上，写文件时把 Z 高度换到 Y
+    half = [value / 2 for value in (size[0], size[2], size[1])]
+    points = [(-half[0], -half[1], -half[2]), (half[0], -half[1], -half[2]),
+              (half[0], half[1], -half[2]), (-half[0], half[1], -half[2]),
+              (-half[0], -half[1], half[2]), (half[0], -half[1], half[2]),
+              (half[0], half[1], half[2]), (-half[0], half[1], half[2])]
+    triangles = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
+                 (1, 2, 6), (1, 6, 5), (2, 3, 7), (2, 7, 6), (3, 0, 4), (3, 4, 7)]
+    if not closed:
+        triangles = triangles[2:]
+
+    positions = b''.join(struct.pack('<3f', *point) for point in points)
+    indices = b''.join(struct.pack('<3H', *triangle) for triangle in triangles)
+    binary = bytearray(positions)
+    while len(binary) % 4:
+        binary.append(0)
+    index_offset = len(binary)
+    binary.extend(indices)
+    document = {
+        'asset': {'version': '2.0'},
+        'scene': 0,
+        'scenes': [{'nodes': [0]}],
+        'nodes': [{'mesh': 0}],
+        'meshes': [{'primitives': [{'attributes': {'POSITION': 0}, 'indices': 1, 'material': 0}]}],
+        'materials': [{'name': 'M_box'}],
+        'buffers': [{'byteLength': len(binary)}],
+        'bufferViews': [
+            {'buffer': 0, 'byteOffset': 0, 'byteLength': len(positions), 'target': 34962},
+            {'buffer': 0, 'byteOffset': index_offset, 'byteLength': len(indices), 'target': 34963},
+        ],
+        'accessors': [
+            {'bufferView': 0, 'componentType': 5126, 'count': len(points), 'type': 'VEC3',
+             'min': [-half[0], -half[1], -half[2]], 'max': [half[0], half[1], half[2]]},
+            {'bufferView': 1, 'componentType': 5123, 'count': len(triangles) * 3,
+             'type': 'SCALAR', 'min': [0], 'max': [len(points) - 1]},
+        ],
+    }
+    _write_glb(path, document, binary)
 
 
 def make_glb(path):
@@ -137,6 +210,112 @@ class BlenderPipelineTest(unittest.TestCase):
             self.assertEqual(data['trianglesBefore'], 5)
             self.assertLess(data['trianglesAfter'], data['trianglesBefore'])
             self.assertTrue(output.read_bytes().startswith(b'glTF'))
+
+    def test_measure_reports_object_bounds(self):
+        blender = find_blender()
+        if not blender:
+            self.skipTest('Blender executable not found')
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'box.glb'
+            make_box_glb(source, (1.0, 2.0, 3.0))
+            data = run_blender(blender, ['--mode', 'measure', '--inputs', str(source)])
+
+            self.assertTrue(data['valid'], data)
+            entry = data['files'][0]
+            for axis, expected in enumerate((0.5, 1.0, 1.5)):
+                self.assertAlmostEqual(entry['min'][axis], -expected, places=4)
+                self.assertAlmostEqual(entry['max'][axis], expected, places=4)
+            self.assertEqual(entry['meshCount'], 1)
+            self.assertEqual(len(entry['objects']), 1)
+
+    def test_cut_slices_stay_within_slabs(self):
+        blender = find_blender()
+        if not blender:
+            self.skipTest('Blender executable not found')
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            source = temp / 'open_box.glb'
+            # 开放网格能暴露布尔求交越界的问题
+            make_box_glb(source, (2.0, 2.0, 2.0), closed=False)
+            data = run_blender(blender, ['--mode', 'cut', '--input', str(source),
+                                         '--out-dir', str(temp / 'parts'),
+                                         '--parts', '3', '--axis', 'z'])
+
+            self.assertTrue(data['valid'], data)
+            self.assertEqual(len(data['files']), 3)
+            epsilon = 2.0 * 0.001
+            step = 2.0 / 3
+            for item in data['files']:
+                low = -1.0 + step * item['index'] - epsilon
+                high = -1.0 + step * (item['index'] + 1) + epsilon
+                self.assertGreaterEqual(item['min'][2], low - 1e-4)
+                self.assertLessEqual(item['max'][2], high + 1e-4)
+                self.assertLessEqual(max(abs(value) for value in item['min'][:2]), 1.0 + 1e-4)
+                self.assertLessEqual(max(abs(value) for value in item['max'][:2]), 1.0 + 1e-4)
+
+    def test_assemble_places_parts_by_plan(self):
+        blender = find_blender()
+        if not blender:
+            self.skipTest('Blender executable not found')
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            source = temp / 'box.glb'
+            make_box_glb(source, (1.0, 1.0, 1.0))
+            plan = temp / 'plan.json'
+            plan.write_text(json.dumps({'parts': [
+                {'id': 'a', 'name': 'part_a', 'mesh': str(source),
+                 'scale': 1, 'translate': [0, 0, 0], 'rotationZ': 0},
+                {'id': 'b', 'name': 'part_b', 'mesh': str(source),
+                 'scale': 2, 'translate': [3, 0, 0], 'rotationZ': 0},
+            ]}), encoding='utf-8')
+            output = temp / 'assembly.glb'
+            data = run_blender(blender, ['--mode', 'assemble', '--plan', str(plan),
+                                         '--output', str(output)])
+
+            self.assertTrue(data['valid'], data)
+            self.assertEqual(len(data['parts']), 2)
+            self.assertTrue(output.read_bytes().startswith(b'glTF'))
+
+            measured = run_blender(blender, ['--mode', 'measure', '--inputs', str(output)])
+            objects = measured['files'][0]['objects']
+            self.assertEqual(len(objects), 2)
+            centers = sorted(round((item['min'][0] + item['max'][0]) / 2, 3) for item in objects)
+            self.assertEqual(centers, [0.0, 3.0])
+            widths = sorted(round(item['max'][0] - item['min'][0], 3) for item in objects)
+            self.assertEqual(widths, [1.0, 2.0])
+
+    def test_bootstrap_and_assemble_roundtrip(self):
+        blender = find_blender()
+        if not blender:
+            self.skipTest('Blender executable not found')
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            source = temp / 'box.glb'
+            make_box_glb(source, (1.0, 1.0, 2.0))
+            parts_dir = temp / 'parts'
+            bootstrapped = fw_parts.bootstrap(str(source), str(parts_dir), parts=2,
+                                              blender_path=blender)
+            assembly = temp / 'assembly.glb'
+            report = fw_parts.assemble(bootstrapped['contract'], str(assembly),
+                                       blender_path=blender)
+
+            self.assertTrue(report['valid'], report)
+            self.assertEqual(len(report['parts']), 2)
+            self.assertTrue((parts_dir / 'partspec.json').is_file())
+            self.assertTrue((temp / 'parts.json').is_file())
+            self.assertTrue(assembly.read_bytes().startswith(b'glTF'))
+
+            rebuilt = run_blender(blender, ['--mode', 'measure', '--inputs', str(assembly)])
+            original = run_blender(blender, ['--mode', 'measure', '--inputs', str(source)])
+            for axis in range(3):
+                self.assertAlmostEqual(rebuilt['files'][0]['min'][axis],
+                                       original['files'][0]['min'][axis], places=3)
+                self.assertAlmostEqual(rebuilt['files'][0]['max'][axis],
+                                       original['files'][0]['max'][axis], places=3)
 
     def test_bridge_queues_validation_and_serves_thumbnail(self):
         blender = bridge.find_blender(force=True)

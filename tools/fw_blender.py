@@ -8,8 +8,14 @@ import sys
 def _arguments():
     values = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=('inspect', 'decimate'), default='inspect')
+    parser.add_argument('--mode', choices=('inspect', 'decimate', 'measure', 'assemble', 'cut'),
+                        default='inspect')
     parser.add_argument('--input')
+    parser.add_argument('--inputs', nargs='+')
+    parser.add_argument('--plan')
+    parser.add_argument('--out-dir')
+    parser.add_argument('--parts', type=int, default=2)
+    parser.add_argument('--axis', choices=('x', 'y', 'z'), default='z')
     parser.add_argument('--thumbnail')
     parser.add_argument('--output')
     parser.add_argument('--target-faces', type=int, default=900)
@@ -284,9 +290,227 @@ def _decimate(args):
     return report
 
 
+def _mesh_objects():
+    import bpy
+    return [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
+
+
+def _object_bounds(obj):
+    from mathutils import Vector
+    matrix = obj.matrix_world
+    points = [matrix @ Vector(vertex.co) for vertex in obj.data.vertices]
+    if not points:
+        return [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
+    return ([min(point[i] for point in points) for i in range(3)],
+            [max(point[i] for point in points) for i in range(3)])
+
+
+def _bounds(objects):
+    boxes = [_object_bounds(obj) for obj in objects]
+    return ([min(box[0][i] for box in boxes) for i in range(3)],
+            [max(box[1][i] for box in boxes) for i in range(3)])
+
+
+def _measure(args):
+    import bpy
+
+    report = {'valid': True, 'mode': 'measure', 'files': [], 'errors': []}
+    paths = args.inputs or ([args.input] if args.input else [])
+    if not paths:
+        report['errors'].append('缺少待测量文件')
+        return report
+    for path in paths:
+        try:
+            bpy.ops.wm.read_factory_settings(use_empty=True)
+            bpy.ops.import_scene.gltf(filepath=path)
+            objects = _mesh_objects()
+            if not objects:
+                raise RuntimeError('文件里没有网格')
+            lower, upper = _bounds(objects)
+            details = []
+            for obj in objects:
+                obj_lower, obj_upper = _object_bounds(obj)
+                details.append({'name': obj.name,
+                                'min': [round(value, 6) for value in obj_lower],
+                                'max': [round(value, 6) for value in obj_upper]})
+            report['files'].append({
+                'path': path,
+                'min': [round(value, 6) for value in lower],
+                'max': [round(value, 6) for value in upper],
+                'meshCount': len(objects),
+                'triangles': _count_triangles(objects),
+                'objects': details,
+            })
+        except Exception as error:
+            report['errors'].append('%s：%s' % (os.path.basename(path), error))
+    report['valid'] = not report['errors']
+    return report
+
+
+def _assemble(args):
+    import bpy
+    from math import radians
+
+    report = {'valid': False, 'mode': 'assemble', 'parts': [], 'errors': []}
+    if not args.plan or not os.path.isfile(args.plan):
+        report['errors'].append('缺少装配计划')
+        return report
+    if not args.output:
+        report['errors'].append('缺少装配输出路径')
+        return report
+    try:
+        with open(args.plan, encoding='utf-8') as stream:
+            plan = json.load(stream)
+        parts = plan.get('parts') if isinstance(plan, dict) else None
+        if not isinstance(parts, list) or not parts:
+            raise RuntimeError('装配计划没有部件')
+
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        for index, item in enumerate(parts):
+            path = item.get('mesh')
+            if not isinstance(path, str) or not os.path.isfile(path):
+                raise RuntimeError('部件文件不存在：%s' % path)
+            before = {obj.name for obj in bpy.context.scene.objects}
+            bpy.ops.import_scene.gltf(filepath=path)
+            imported = [obj for obj in bpy.context.scene.objects
+                        if obj.name not in before and obj.type == 'MESH']
+            if not imported:
+                raise RuntimeError('部件 %s 没有网格' % (item.get('id') or index))
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in imported:
+                obj.select_set(True)
+            bpy.context.view_layer.objects.active = imported[0]
+            if len(imported) > 1:
+                bpy.ops.object.join()
+            joined = bpy.context.view_layer.objects.active
+            bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+            joined.name = item.get('name') or item.get('id') or ('part_%d' % index)
+            joined.data.name = joined.name
+            joined['partId'] = item.get('id') or joined.name
+            scale = float(item.get('scale') or 1.0)
+            joined.scale = (scale, scale, scale)
+            joined.rotation_euler = (0.0, 0.0, radians(float(item.get('rotationZ') or 0)))
+            translate = item.get('translate') or [0, 0, 0]
+            joined.location = tuple(float(value) for value in translate)
+
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+        try:
+            bpy.ops.export_scene.gltf(filepath=args.output, export_format='GLB',
+                                      export_extras=True)
+        except TypeError:
+            bpy.ops.export_scene.gltf(filepath=args.output, export_format='GLB')
+        for obj in _mesh_objects():
+            lower, upper = _object_bounds(obj)
+            obj.data.calc_loop_triangles()
+            report['parts'].append({
+                'id': obj.get('partId') or obj.name,
+                'name': obj.name,
+                'min': [round(value, 6) for value in lower],
+                'max': [round(value, 6) for value in upper],
+                'triangles': len(obj.data.loop_triangles),
+            })
+        if not os.path.isfile(args.output):
+            report['errors'].append('未生成装配 GLB')
+    except Exception as error:
+        report['errors'].append(str(error))
+    report['valid'] = not report['errors']
+    return report
+
+
+def _cut(args):
+    import bpy
+
+    report = {'valid': False, 'mode': 'cut', 'files': [], 'errors': []}
+    if not args.input or not os.path.isfile(args.input):
+        report['errors'].append('GLB 文件不存在')
+        return report
+    if not args.out_dir:
+        report['errors'].append('缺少输出目录')
+        return report
+    count = max(1, int(args.parts or 1))
+    axis = {'x': 0, 'y': 1, 'z': 2}[args.axis]
+    try:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.ops.import_scene.gltf(filepath=args.input)
+        meshes = _mesh_objects()
+        if not meshes:
+            raise RuntimeError('模型没有网格')
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in meshes:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = meshes[0]
+        if len(meshes) > 1:
+            bpy.ops.object.join()
+        source = bpy.context.view_layer.objects.active
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        lower, upper = _object_bounds(source)
+        size = [upper[i] - lower[i] for i in range(3)]
+        if size[axis] <= 1e-6:
+            raise RuntimeError('该轴向没有厚度，无法切分')
+
+        os.makedirs(args.out_dir, exist_ok=True)
+        import bmesh
+
+        step = size[axis] / count
+        # 切面留一点重叠，避免相邻件在装配后出现可见缝隙
+        epsilon = max(size[axis] * 0.001, 1e-4)
+        normal = [0.0, 0.0, 0.0]
+        normal[axis] = 1.0
+        for index in range(count):
+            start = lower[axis] + step * index - (epsilon if index else 0.0)
+            end = lower[axis] + step * (index + 1) + (epsilon if index < count - 1 else 0.0)
+            center = [(lower[i] + upper[i]) / 2 for i in range(3)]
+            # 布尔求交在非流形网格上会产出越界面，改用平面切分
+            bm = bmesh.new()
+            bm.from_mesh(source.data)
+            plane = list(center)
+            plane[axis] = start
+            bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+                                   dist=1e-6, plane_co=plane, plane_no=normal,
+                                   clear_inner=True)
+            plane[axis] = end
+            bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+                                   dist=1e-6, plane_co=plane, plane_no=normal,
+                                   clear_outer=True)
+            mesh = bpy.data.meshes.new('FW_Cut_%d' % index)
+            for material in source.data.materials:
+                mesh.materials.append(material)
+            bm.to_mesh(mesh)
+            bm.free()
+            mesh.update()
+            if not mesh.polygons:
+                report['errors'].append('切片 %d 为空' % index)
+                bpy.data.meshes.remove(mesh)
+                continue
+
+            piece = bpy.data.objects.new('FW_Cut_%d' % index, mesh)
+            bpy.context.scene.collection.objects.link(piece)
+            path = os.path.join(args.out_dir, 'part_%d.glb' % index)
+            bpy.ops.object.select_all(action='DESELECT')
+            piece.select_set(True)
+            bpy.context.view_layer.objects.active = piece
+            bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True)
+            part_lower, part_upper = _object_bounds(piece)
+            mesh.calc_loop_triangles()
+            report['files'].append({
+                'index': index,
+                'file': path,
+                'min': [round(value, 6) for value in part_lower],
+                'max': [round(value, 6) for value in part_upper],
+                'triangles': len(mesh.loop_triangles),
+            })
+            bpy.data.objects.remove(piece, do_unlink=True)
+            bpy.data.meshes.remove(mesh)
+    except Exception as error:
+        report['errors'].append(str(error))
+    report['valid'] = not report['errors'] and bool(report['files'])
+    return report
+
+
 def main():
     args = _arguments()
-    handlers = {'inspect': _inspect, 'decimate': _decimate}
+    handlers = {'inspect': _inspect, 'decimate': _decimate,
+                'measure': _measure, 'assemble': _assemble, 'cut': _cut}
     try:
         report = handlers[args.mode](args)
     except Exception as error:
