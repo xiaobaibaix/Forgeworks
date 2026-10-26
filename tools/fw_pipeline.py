@@ -355,9 +355,9 @@ def _assemble_part_inputs(graph, by_id, node_id):
             'description': str((result.get('output') or {}).get('description') or ''),
             'mesh': str(model_path),
         })
-    if missing:
-        raise ValueError('组装缺少单件模型：' + '、'.join(missing) + '；请先运行这些单件模型节点')
-    return parts
+    if not parts:
+        raise ValueError('组装没有可用的单件模型：' + '、'.join(missing) + '；请先运行这些单件模型节点')
+    return parts, missing
 
 
 def _decimate_with_blender(blender_path, source, output, target_faces):
@@ -427,7 +427,7 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             try:
                 if not blender_path:
                     raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
-                parts = _assemble_part_inputs(graph, by_id, node_id)
+                parts, missing = _assemble_part_inputs(graph, by_id, node_id)
                 root = os.path.realpath(pipeline_root(forgeworks_root, asset_id, kind))
                 outputs_dir = os.path.join(root, 'outputs')
                 os.makedirs(outputs_dir, exist_ok=True)
@@ -437,14 +437,21 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                     os.path.join(root, 'parts', 'layout_%s.json' % node_id), root,
                     assembly_prompt=_upstream_text(graph, by_id, node_id),
                     reset=bool((node.get('params') or {}).get('resetLayout')),
-                    blender_path=blender_path, asset_id=asset_id, node_id=node_id)
+                    blender_path=blender_path, asset_id=asset_id, node_id=node_id,
+                    preserve_absent=bool(missing))
+                warnings = list(assembled['warnings'])
+                if missing:
+                    warnings.insert(0, '结果残缺：%d 个单件未就绪，未参与组装：%s'
+                                    % (len(missing), '、'.join(missing)))
                 result['state'] = 'done'
                 result['output'] = {
                     'meshPath': assembled['meshPath'],
                     'parts': assembled['parts'],
                     'triangles': assembled['triangles'],
                     'layoutPath': os.path.relpath(assembled['layoutPath'], root).replace(os.sep, '/'),
-                    'warnings': assembled['warnings'],
+                    'warnings': warnings,
+                    'partial': bool(missing),
+                    'missingParts': missing,
                     'engine': 'blender',
                     'updatedAt': assembled['updatedAt'],
                 }
@@ -562,8 +569,28 @@ def starter_graph(asset_id, template='machine'):
              'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
             {'id': 'partModel_roof', 'type': 'partModel', 'x': 780, 'y': 840,
              'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
-            {'id': 'prompt_assemble', 'type': 'prompt', 'x': 60, 'y': 1260, 'params': {'text': ''}},
-            {'id': 'assemble', 'type': 'assemble', 'x': 1020, 'y': 840,
+            {'id': 'prompt_wheel', 'type': 'prompt', 'x': 60, 'y': 1260, 'params': {'text': ''}},
+            {'id': 'partImage_wheel', 'type': 'partImage', 'x': 540, 'y': 1260,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_wheel', 'type': 'partModel', 'x': 780, 'y': 1260,
+             'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_door', 'type': 'prompt', 'x': 60, 'y': 1680, 'params': {'text': ''}},
+            {'id': 'partImage_door', 'type': 'partImage', 'x': 540, 'y': 1680,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_door', 'type': 'partModel', 'x': 780, 'y': 1680,
+             'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_side_window', 'type': 'prompt', 'x': 60, 'y': 2100, 'params': {'text': ''}},
+            {'id': 'partImage_side_window', 'type': 'partImage', 'x': 540, 'y': 2100,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_side_window', 'type': 'partModel', 'x': 780, 'y': 2100,
+             'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_rear_window', 'type': 'prompt', 'x': 60, 'y': 2520, 'params': {'text': ''}},
+            {'id': 'partImage_rear_window', 'type': 'partImage', 'x': 540, 'y': 2520,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_rear_window', 'type': 'partModel', 'x': 780, 'y': 2520,
+             'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_assemble', 'type': 'prompt', 'x': 60, 'y': 2940, 'params': {'text': ''}},
+            {'id': 'assemble', 'type': 'assemble', 'x': 1020, 'y': 1470,
              'params': {'resetLayout': False}},
         ]
         for index, (node_id, node_type, params) in enumerate([
@@ -575,18 +602,34 @@ def starter_graph(asset_id, template='machine'):
                 ('metadata', 'metadata', {'formats': ['csv', 'json']}),
                 ('validate', 'validate', {'maxTriangles': 20000}),
                 ('export', 'export', {})]):
-            nodes.append({'id': node_id, 'type': node_type, 'x': 1260 + index * 240, 'y': 840,
+            nodes.append({'id': node_id, 'type': node_type, 'x': 1260 + index * 240, 'y': 1470,
                           'params': params})
         edges = [
             {'from': 'prompt_overall', 'out': 'text', 'to': 'overall', 'in': 'text'},
             {'from': 'overall', 'out': 'image', 'to': 'partImage_body', 'in': 'image'},
             {'from': 'overall', 'out': 'image', 'to': 'partImage_roof', 'in': 'image'},
+            {'from': 'overall', 'out': 'image', 'to': 'partImage_wheel', 'in': 'image'},
+            {'from': 'overall', 'out': 'image', 'to': 'partImage_door', 'in': 'image'},
+            {'from': 'overall', 'out': 'image', 'to': 'partImage_side_window', 'in': 'image'},
+            {'from': 'overall', 'out': 'image', 'to': 'partImage_rear_window', 'in': 'image'},
             {'from': 'prompt_body', 'out': 'text', 'to': 'partImage_body', 'in': 'text'},
             {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
             {'from': 'partModel_body', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_roof', 'out': 'text', 'to': 'partImage_roof', 'in': 'text'},
             {'from': 'partImage_roof', 'out': 'image', 'to': 'partModel_roof', 'in': 'image'},
             {'from': 'partModel_roof', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'prompt_wheel', 'out': 'text', 'to': 'partImage_wheel', 'in': 'text'},
+            {'from': 'partImage_wheel', 'out': 'image', 'to': 'partModel_wheel', 'in': 'image'},
+            {'from': 'partModel_wheel', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'prompt_door', 'out': 'text', 'to': 'partImage_door', 'in': 'text'},
+            {'from': 'partImage_door', 'out': 'image', 'to': 'partModel_door', 'in': 'image'},
+            {'from': 'partModel_door', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'prompt_side_window', 'out': 'text', 'to': 'partImage_side_window', 'in': 'text'},
+            {'from': 'partImage_side_window', 'out': 'image', 'to': 'partModel_side_window', 'in': 'image'},
+            {'from': 'partModel_side_window', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'prompt_rear_window', 'out': 'text', 'to': 'partImage_rear_window', 'in': 'text'},
+            {'from': 'partImage_rear_window', 'out': 'image', 'to': 'partModel_rear_window', 'in': 'image'},
+            {'from': 'partModel_rear_window', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_assemble', 'out': 'text', 'to': 'assemble', 'in': 'text'},
             {'from': 'assemble', 'out': 'mesh', 'to': 'style', 'in': 'mesh'},
             {'from': 'style', 'out': 'mesh', 'to': 'uv', 'in': 'mesh'},

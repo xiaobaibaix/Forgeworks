@@ -256,8 +256,9 @@ def _plan_part(entry, mesh_path=None):
 
 
 def assemble_parts(parts, output_path, layout_path, root, assembly_prompt='',
-                   reset=False, blender_path=None, asset_id='', node_id=''):
-    """按布局合并部件；布局缺失或 reset 时自动生成，已有布局里的变换优先于自动布局。"""
+                   reset=False, blender_path=None, asset_id='', node_id='',
+                   preserve_absent=False):
+    """按布局合并部件；布局缺失或 reset 时自动生成，已有布局里的变换优先于自动布局；preserve_absent 时保留未接入部件的旧布局。"""
     if not parts:
         raise ValueError('没有可组装的部件模型')
     blender = blender_path or find_blender()
@@ -290,11 +291,13 @@ def assemble_parts(parts, output_path, layout_path, root, assembly_prompt='',
 
     warnings = []
     existing = None if reset else load_layout(layout_path)
-    existing_by_mesh = {}
+    existing_by_mesh, preserved = {}, []
     if existing:
         existing_by_mesh = {entry['mesh']: entry for entry in existing['parts']}
         dropped = [mesh for mesh in existing_by_mesh if mesh not in seen]
-        if dropped:
+        if dropped and preserve_absent:
+            preserved = [existing_by_mesh[mesh] for mesh in dropped]
+        elif dropped:
             warnings.append('布局里有 %d 个部件已不再接入，已丢弃：%s'
                             % (len(dropped), '、'.join(os.path.basename(mesh) for mesh in dropped)))
         added = [entry['mesh'] for entry in entries if entry['mesh'] not in existing_by_mesh]
@@ -326,6 +329,9 @@ def assemble_parts(parts, output_path, layout_path, root, assembly_prompt='',
         layout_parts.append(layout_entry)
         records.append({'id': entry['id'], 'name': entry['name'], 'mesh': entry['mesh'],
                         'sourceTriangles': entry['sourceTriangles']})
+    if preserved:
+        warnings.append('%d 个未就绪部件的旧布局已保留，重跑时可继续使用' % len(preserved))
+        layout_parts.extend(preserved)
 
     absolute_output = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(absolute_output), exist_ok=True)

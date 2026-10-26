@@ -152,25 +152,53 @@ function pipelineStarterGraph(assetId, template){
       {id:'prompt_roof', type:'prompt', x:60, y:840, params:{text:''}},
       {id:'partImage_roof', type:'partImage', x:540, y:840, params:{provider:'ark', size:'1K', outputFormat:'png'}},
       {id:'partModel_roof', type:'partModel', x:780, y:840, params:{provider:'ark', texture:false, faceLimit:3000}},
-      {id:'prompt_assemble', type:'prompt', x:60, y:1260, params:{text:''}},
-      {id:'assemble', type:'assemble', x:1020, y:840, params:{resetLayout:false}},
+      {id:'prompt_wheel', type:'prompt', x:60, y:1260, params:{text:''}},
+      {id:'partImage_wheel', type:'partImage', x:540, y:1260, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'partModel_wheel', type:'partModel', x:780, y:1260, params:{provider:'ark', texture:false, faceLimit:3000}},
+      {id:'prompt_door', type:'prompt', x:60, y:1680, params:{text:''}},
+      {id:'partImage_door', type:'partImage', x:540, y:1680, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'partModel_door', type:'partModel', x:780, y:1680, params:{provider:'ark', texture:false, faceLimit:3000}},
+      {id:'prompt_side_window', type:'prompt', x:60, y:2100, params:{text:''}},
+      {id:'partImage_side_window', type:'partImage', x:540, y:2100, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'partModel_side_window', type:'partModel', x:780, y:2100, params:{provider:'ark', texture:false, faceLimit:3000}},
+      {id:'prompt_rear_window', type:'prompt', x:60, y:2520, params:{text:''}},
+      {id:'partImage_rear_window', type:'partImage', x:540, y:2520, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'partModel_rear_window', type:'partModel', x:780, y:2520, params:{provider:'ark', texture:false, faceLimit:3000}},
+      {id:'prompt_assemble', type:'prompt', x:60, y:2940, params:{text:''}},
+      {id:'assemble', type:'assemble', x:1020, y:1470, params:{resetLayout:false}},
     ];
     [['style','styleApply',{}],['uv','uv',{mode:'primitive'}],['lod','lod',{levels:3}],
      ['collision','collision',{type:'box'}],['animation','animation',{mode:'ue-rebuild'}],
      ['metadata','metadata',{formats:['csv','json']}],['validate','validate',{maxTriangles:20000}],
      ['export','export',{}]].forEach(([id,type,params],index)=>{
-      nodes.push({id, type, x:1260 + index * 240, y:840, params});
+      nodes.push({id, type, x:1260 + index * 240, y:1470, params});
     });
     edges = [
       {from:'prompt_overall', out:'text', to:'overall', in:'text'},
       {from:'overall', out:'image', to:'partImage_body', in:'image'},
       {from:'overall', out:'image', to:'partImage_roof', in:'image'},
+      {from:'overall', out:'image', to:'partImage_wheel', in:'image'},
+      {from:'overall', out:'image', to:'partImage_door', in:'image'},
+      {from:'overall', out:'image', to:'partImage_side_window', in:'image'},
+      {from:'overall', out:'image', to:'partImage_rear_window', in:'image'},
       {from:'prompt_body', out:'text', to:'partImage_body', in:'text'},
       {from:'partImage_body', out:'image', to:'partModel_body', in:'image'},
       {from:'prompt_roof', out:'text', to:'partImage_roof', in:'text'},
       {from:'partImage_roof', out:'image', to:'partModel_roof', in:'image'},
+      {from:'prompt_wheel', out:'text', to:'partImage_wheel', in:'text'},
+      {from:'partImage_wheel', out:'image', to:'partModel_wheel', in:'image'},
+      {from:'prompt_door', out:'text', to:'partImage_door', in:'text'},
+      {from:'partImage_door', out:'image', to:'partModel_door', in:'image'},
+      {from:'prompt_side_window', out:'text', to:'partImage_side_window', in:'text'},
+      {from:'partImage_side_window', out:'image', to:'partModel_side_window', in:'image'},
+      {from:'prompt_rear_window', out:'text', to:'partImage_rear_window', in:'text'},
+      {from:'partImage_rear_window', out:'image', to:'partModel_rear_window', in:'image'},
       {from:'partModel_body', out:'part', to:'assemble', in:'part'},
       {from:'partModel_roof', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_wheel', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_door', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_side_window', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_rear_window', out:'part', to:'assemble', in:'part'},
       {from:'prompt_assemble', out:'text', to:'assemble', in:'text'},
       {from:'assemble', out:'mesh', to:'style', in:'mesh'},
       {from:'style', out:'mesh', to:'uv', in:'mesh'},
@@ -883,9 +911,11 @@ function pipelineStageSummary(node){
   }
   if(node.type === 'assemble' && output.parts != null){
     const layout = output.layoutPath ? output.layoutPath.split('/').pop() : '';
+    const missing = Array.isArray(output.missingParts) ? output.missingParts.length : 0;
     return (Array.isArray(output.parts) ? output.parts.length : output.parts) + ' 件'
       + (output.triangles != null ? ' · ' + output.triangles + ' 面' : '')
-      + (layout ? ' · ' + layout : '');
+      + (layout ? ' · ' + layout : '')
+      + (missing ? ' · 残缺 ' + missing + ' 件' : '');
   }
   return '';
 }
@@ -1501,7 +1531,7 @@ function pipelineParamForm(node){
   if(node.type === 'assemble'){
     return `<div class="pipeline-params">
       ${pipelineParamCheck(node, 'resetLayout', '丢弃旧布局', false)}
-      <small class="pipeline-params-hint">由 Blender 按布局移动/缩放/旋转各部件并合并；布局写入 parts/layout_&lt;节点&gt;.json，可让 AI 调整后重跑。「丢弃旧布局」会丢出手动/自动布局并重新并排贴地。</small>
+      <small class="pipeline-params-hint">由 Blender 按布局移动/缩放/旋转各部件并合并；布局写入 parts/layout_&lt;节点&gt;.json，可让 AI 调整后重跑。「丢弃旧布局」会丢出手动/自动布局并重新并排贴地。有单件未就绪时会跳过它们、只组装已就绪部件，结果是不完整的残缺模型（摘要里标出残缺件数），被跳过部件的旧布局会保留。</small>
     </div>`;
   }
   if(node.type === 'decimate'){

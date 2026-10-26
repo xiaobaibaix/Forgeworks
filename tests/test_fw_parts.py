@@ -179,7 +179,7 @@ class AssemblePartsTest(unittest.TestCase):
         return [{'id': 'partModel_' + name, 'name': name.upper(),
                  'mesh': 'outputs/%s.glb' % name} for name in names]
 
-    def _assemble(self, parts, reset=False):
+    def _assemble(self, parts, reset=False, preserve_absent=False):
         def measure(_blender, paths):
             return {os.path.realpath(path): dict(self.measured[Path(path).stem]) for path in paths}
 
@@ -196,7 +196,7 @@ class AssemblePartsTest(unittest.TestCase):
             return fw_parts.assemble_parts(
                 parts, str(self.output_path), str(self.layout_path), str(self.root),
                 assembly_prompt='车身居中', reset=reset, blender_path='blender',
-                asset_id='M1', node_id='assemble_1')
+                asset_id='M1', node_id='assemble_1', preserve_absent=preserve_absent)
 
     def test_new_layout_is_generated_and_saved(self):
         result = self._assemble(self._parts('a', 'b'))
@@ -248,6 +248,16 @@ class AssemblePartsTest(unittest.TestCase):
         layout = fw_parts.load_layout(str(self.layout_path))
         self.assertEqual([part['mesh'] for part in layout['parts']], ['outputs/a.glb'])
         self.assertTrue(any('已不再接入' in warning for warning in result['warnings']))
+
+    def test_preserve_absent_keeps_skipped_part_layout(self):
+        self._assemble(self._parts('a', 'b'))
+        result = self._assemble(self._parts('a'), preserve_absent=True)
+        layout = fw_parts.load_layout(str(self.layout_path))
+        self.assertEqual([part['mesh'] for part in layout['parts']],
+                         ['outputs/a.glb', 'outputs/b.glb'])
+        self.assertEqual([part['id'] for part in self.plan['parts']], ['partModel_a'])
+        self.assertTrue(any('保留' in warning for warning in result['warnings']))
+        self.assertFalse(any('已不再接入' in warning for warning in result['warnings']))
 
     def test_new_part_is_appended(self):
         self._assemble(self._parts('a'))

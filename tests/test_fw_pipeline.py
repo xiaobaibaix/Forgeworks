@@ -339,27 +339,31 @@ class PipelinePartsTest(unittest.TestCase):
     def test_parts_template_builds_one_chain_per_part(self):
         graph = fw_pipeline.starter_graph('M1', 'parts')
         _, order = fw_pipeline.validate_graph(graph)
+        parts = ('body', 'roof', 'wheel', 'door', 'side_window', 'rear_window')
         self.assertLess(order.index('prompt_body'), order.index('partImage_body'))
         self.assertLess(order.index('partImage_body'), order.index('partModel_body'))
-        self.assertLess(order.index('partModel_body'), order.index('assemble'))
-        self.assertLess(order.index('partModel_roof'), order.index('assemble'))
+        for part in parts:
+            self.assertLess(order.index('partImage_' + part), order.index('partModel_' + part))
+            self.assertLess(order.index('partModel_' + part), order.index('assemble'))
         self.assertLess(order.index('prompt_assemble'), order.index('assemble'))
         self.assertLess(order.index('assemble'), order.index('style'))
         self.assertNotIn('partSpec', {node['type'] for node in graph['nodes']})
-        assemble_inputs = [edge['in'] for edge in graph['edges'] if edge['to'] == 'assemble']
-        self.assertEqual(sorted(assemble_inputs), ['part', 'part', 'text'])
+        sources = [edge['from'] for edge in graph['edges']
+                   if edge['to'] == 'assemble' and edge['in'] == 'part']
+        self.assertEqual(sorted(sources), sorted('partModel_' + part for part in parts))
 
     def test_parts_template_splits_parts_from_overall_image(self):
         graph = fw_pipeline.starter_graph('M1', 'parts')
         by_id = {node['id']: node for node in graph['nodes']}
         self.assertEqual(by_id['overall']['type'], 'textToImage')
         self.assertEqual(by_id['overall']['params']['provider'], 'ark')
-        for part in ('body', 'roof'):
+        parts = ('body', 'roof', 'wheel', 'door', 'side_window', 'rear_window')
+        for part in parts:
             self.assertEqual(by_id['partImage_' + part]['params']['provider'], 'ark')
             self.assertEqual(by_id['partModel_' + part]['params']['provider'], 'ark')
         edges = {(edge['from'], edge['out'], edge['to'], edge['in']) for edge in graph['edges']}
         self.assertIn(('prompt_overall', 'text', 'overall', 'text'), edges)
-        for part in ('body', 'roof'):
+        for part in parts:
             self.assertIn(('overall', 'image', 'partImage_' + part, 'image'), edges)
 
     def test_part_image_accepts_text_and_image_inputs(self):
@@ -415,9 +419,11 @@ class PipelinePartsTest(unittest.TestCase):
             _save_ready(directory, _assemble_graph())
 
             def fake_assemble(parts, output_path, layout_path, root, assembly_prompt='',
-                              reset=False, blender_path=None, asset_id='', node_id=''):
+                              reset=False, blender_path=None, asset_id='', node_id='',
+                              preserve_absent=False):
                 self.assertEqual([part['id'] for part in parts],
                                  ['partModel_body', 'partModel_roof'])
+                self.assertFalse(preserve_absent)
                 self.assertEqual([part['name'] for part in parts], ['车身', '车顶'])
                 self.assertEqual([part['mesh'] for part in parts],
                                  ['outputs/model_partModel_body.glb', 'outputs/model_partModel_roof.glb'])
@@ -441,19 +447,35 @@ class PipelinePartsTest(unittest.TestCase):
             self.assertEqual(node['result']['output']['layoutPath'], 'parts/layout_assemble.json')
             self.assertEqual(node['result']['output']['updatedAt'], '2026-10-26T00:00:00Z')
 
-    def test_assemble_blocked_when_a_part_model_is_not_ready(self):
+    def test_assemble_skips_parts_that_are_not_ready(self):
         with tempfile.TemporaryDirectory() as directory:
-            graph = _assemble_graph()
+            graph = _save_ready(directory, _assemble_graph())
             roof = next(node for node in graph['nodes'] if node['id'] == 'partModel_roof')
-            roof['result'] = {'providerTask': {'state': 'running'}}
+            roof['result']['providerTask'] = {'state': 'running'}
             fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
-            with mock.patch.object(fw_pipeline.fw_parts, 'assemble_parts') as assemble:
+
+            def fake_assemble(parts, output_path, layout_path, root, assembly_prompt='',
+                              reset=False, blender_path=None, asset_id='', node_id='',
+                              preserve_absent=False):
+                self.assertEqual([part['id'] for part in parts], ['partModel_body'])
+                self.assertTrue(preserve_absent)
+                return {'meshPath': os.path.basename(output_path), 'outputPath': output_path,
+                        'layoutPath': layout_path,
+                        'parts': [{'id': 'partModel_body', 'name': '车身', 'triangles': 10}],
+                        'triangles': 10, 'warnings': [], 'engine': 'blender',
+                        'updatedAt': '2026-10-26T00:00:00Z'}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble_parts',
+                                   side_effect=fake_assemble):
                 result = self._execute(directory)
-            assemble.assert_not_called()
             node = next(item for item in result['graph']['nodes'] if item['type'] == 'assemble')
-            self.assertEqual(node['result']['state'], 'blocked')
-            self.assertIn('partModel_roof', node['result']['error'])
-            self.assertIn('running', node['result']['error'])
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertTrue(node['result']['output']['partial'])
+            self.assertEqual(len(node['result']['output']['missingParts']), 1)
+            self.assertIn('partModel_roof', node['result']['output']['missingParts'][0])
+            self.assertIn('running', node['result']['output']['missingParts'][0])
+            self.assertTrue(any('残缺' in warning
+                                for warning in node['result']['output']['warnings']))
 
     def test_assemble_without_part_edges_is_blocked(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -465,18 +487,42 @@ class PipelinePartsTest(unittest.TestCase):
             self.assertEqual(node['result']['state'], 'blocked')
             self.assertIn('没有接入', node['result']['error'])
 
-    def test_assemble_blocked_when_part_model_is_stale(self):
+    def test_assemble_skips_stale_part_model(self):
         with tempfile.TemporaryDirectory() as directory:
-            graph = _assemble_graph()
+            graph = _save_ready(directory, _assemble_graph())
             roof = next(node for node in graph['nodes'] if node['id'] == 'partModel_roof')
             roof['result']['state'] = 'dirty'
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+
+            def fake_assemble(parts, output_path, layout_path, root, **kwargs):
+                self.assertEqual([part['id'] for part in parts], ['partModel_body'])
+                return {'meshPath': os.path.basename(output_path), 'outputPath': output_path,
+                        'layoutPath': layout_path,
+                        'parts': [{'id': 'partModel_body', 'name': '车身', 'triangles': 10}],
+                        'triangles': 10, 'warnings': [], 'engine': 'blender',
+                        'updatedAt': '2026-10-26T00:00:00Z'}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble_parts',
+                                   side_effect=fake_assemble):
+                result = self._execute(directory)
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'assemble')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertIn('上游已变更', node['result']['output']['missingParts'][0])
+
+    def test_assemble_blocked_when_no_part_is_ready(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = _save_ready(directory, _assemble_graph())
+            for node in graph['nodes']:
+                if node['type'] == 'partModel':
+                    node['result']['providerTask'] = {'state': 'running'}
             fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
             with mock.patch.object(fw_pipeline.fw_parts, 'assemble_parts') as assemble:
                 result = self._execute(directory)
             assemble.assert_not_called()
             node = next(item for item in result['graph']['nodes'] if item['type'] == 'assemble')
             self.assertEqual(node['result']['state'], 'blocked')
-            self.assertIn('上游已变更', node['result']['error'])
+            self.assertIn('没有可用的单件模型', node['result']['error'])
+            self.assertIn('partModel_body', node['result']['error'])
 
     def test_run_all_keeps_dirty_provider_result_dirty(self):
         with tempfile.TemporaryDirectory() as directory:
