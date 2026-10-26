@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -205,6 +206,90 @@ class PipelineExportNodeTest(unittest.TestCase):
             result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
             node = next(n for n in result['graph']['nodes'] if n['type'] == 'export')
             self.assertEqual(node['result']['state'], 'blocked')
+
+
+def _decimate_graph(asset_id, with_upstream=True):
+    nodes = [{'id': 'dec', 'type': 'decimate', 'x': 0, 'y': 0, 'params': {'targetFaces': 900}}]
+    edges = []
+    if with_upstream:
+        nodes.insert(0, {
+            'id': 'model', 'type': 'imageTo3D', 'x': 0, 'y': 0, 'params': {},
+            'result': {'providerTask': {'state': 'success', 'output': {'modelPath': 'model_up.glb'}}},
+        })
+        edges.append({'from': 'model', 'out': 'mesh', 'to': 'dec', 'in': 'mesh'})
+    return {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0, 'nodes': nodes, 'edges': edges}
+
+
+class PipelineDecimateTest(unittest.TestCase):
+    def test_target_faces_falls_back_and_clamps(self):
+        self.assertEqual(fw_pipeline._decimate_target(None), 900)
+        self.assertEqual(fw_pipeline._decimate_target('abc'), 900)
+        self.assertEqual(fw_pipeline._decimate_target(1), 50)
+        self.assertEqual(fw_pipeline._decimate_target(99999999), 2000000)
+
+    def test_decimate_writes_output_and_records_triangles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs' / 'model_up.glb'
+            upstream.parent.mkdir(parents=True)
+            upstream.write_bytes(b'glb')
+            fw_pipeline.save_graph(directory, 'M1', _decimate_graph('M1'), kind='machine')
+
+            def fake_run(blender_path, source, output, target_faces):
+                Path(output).write_bytes(b'decimated')
+                return {'valid': True, 'trianglesBefore': 12000, 'trianglesAfter': 900,
+                        'targetFaces': target_faces, 'ratio': 0.075}
+
+            with mock.patch.object(fw_pipeline, '_decimate_with_blender', side_effect=fake_run):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine', blender_path='/fake/blender')
+
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'decimate')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['meshPath'], 'model_decimate_dec_900.glb')
+            self.assertEqual(node['result']['output']['trianglesBefore'], 12000)
+            self.assertEqual(node['result']['output']['trianglesAfter'], 900)
+            self.assertTrue((upstream.parent / 'model_decimate_dec_900.glb').is_file())
+
+    def test_decimate_uses_manifest_mesh_when_no_upstream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            asset_dir = root / '_Source' / '机器' / '钻机'
+            asset_dir.mkdir(parents=True)
+            (asset_dir / 'M1.glb').write_bytes(b'glb')
+            _write_manifest(directory, {'M1': {
+                'kind': 'machine', 'sourceDir': '_Source/机器/钻机',
+                'files': {'mesh': [{'path': 'M1.glb'}]},
+            }})
+            fw_pipeline.save_graph(directory, 'M1', _decimate_graph('M1', with_upstream=False), kind='machine')
+
+            def fake_run(blender_path, source, output, target_faces):
+                self.assertTrue(source.endswith('M1.glb'))
+                Path(output).write_bytes(b'decimated')
+                return {'valid': True, 'trianglesBefore': 5000, 'trianglesAfter': 900, 'targetFaces': 900}
+
+            with mock.patch.object(fw_pipeline, '_decimate_with_blender', side_effect=fake_run):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine', blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'decimate')
+            self.assertEqual(node['result']['state'], 'done')
+
+    def test_decimate_blocked_without_blender(self):
+        with tempfile.TemporaryDirectory() as directory:
+            upstream = Path(directory) / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs' / 'model_up.glb'
+            upstream.parent.mkdir(parents=True)
+            upstream.write_bytes(b'glb')
+            fw_pipeline.save_graph(directory, 'M1', _decimate_graph('M1'), kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'decimate')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertIn('Blender', node['result']['error'])
+
+    def test_decimate_blocked_without_input_mesh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fw_pipeline.save_graph(directory, 'M1', _decimate_graph('M1', with_upstream=False), kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine', blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'decimate')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertIn('上游 GLB', node['result']['error'])
 
 
 if __name__ == '__main__':

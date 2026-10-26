@@ -8,8 +8,11 @@ import sys
 def _arguments():
     values = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input', required=True)
-    parser.add_argument('--thumbnail', required=True)
+    parser.add_argument('--mode', choices=('inspect', 'decimate'), default='inspect')
+    parser.add_argument('--input')
+    parser.add_argument('--thumbnail')
+    parser.add_argument('--output')
+    parser.add_argument('--target-faces', type=int, default=900)
     parser.add_argument('--report', required=True)
     parser.add_argument('--expected-meshes', type=int, default=1)
     parser.add_argument('--expected-materials', type=int, default=5)
@@ -138,7 +141,10 @@ def _inspect(args):
         'errors': [],
     }
 
-    if not os.path.isfile(args.input):
+    if not args.thumbnail:
+        report['errors'].append('缺少缩略图输出路径')
+        return report
+    if not args.input or not os.path.isfile(args.input):
         report['errors'].append('GLB 文件不存在')
         return report
 
@@ -212,10 +218,77 @@ def _inspect(args):
     return report
 
 
+def _count_triangles(objects):
+    for obj in objects:
+        obj.data.calc_loop_triangles()
+    return sum(len(obj.data.loop_triangles) for obj in objects)
+
+
+def _decimate(args):
+    import bpy
+
+    report = {
+        'valid': False,
+        'mode': 'decimate',
+        'meshCount': 0,
+        'trianglesBefore': 0,
+        'trianglesAfter': 0,
+        'targetFaces': int(args.target_faces or 0),
+        'ratio': 0,
+        'errors': [],
+    }
+    if not args.output:
+        report['errors'].append('缺少减面输出路径')
+        return report
+    if not args.input or not os.path.isfile(args.input):
+        report['errors'].append('GLB 文件不存在')
+        return report
+
+    try:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.ops.import_scene.gltf(filepath=args.input)
+        objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
+        report['meshCount'] = len(objects)
+        if not objects:
+            report['errors'].append('模型没有可减面的网格')
+            return report
+
+        before = _count_triangles(objects)
+        report['trianglesBefore'] = before
+        target = max(1, min(int(args.target_faces or 0), before))
+        report['targetFaces'] = target
+        if before <= target:
+            report['errors'].append('当前面数 %d 已不高于目标 %d，无需减面' % (before, target))
+            return report
+
+        ratio = target / before
+        report['ratio'] = round(ratio, 6)
+        for obj in objects:
+            bpy.context.view_layer.objects.active = obj
+            obj.select_set(True)
+            modifier = obj.modifiers.new('FW_Decimate', 'DECIMATE')
+            modifier.decimate_type = 'COLLAPSE'
+            modifier.ratio = max(0.001, min(1.0, ratio))
+            modifier.use_collapse_triangulate = True
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+        report['trianglesAfter'] = _count_triangles(objects)
+
+        os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+        bpy.ops.export_scene.gltf(filepath=args.output, export_format='GLB')
+        if not os.path.isfile(args.output):
+            report['errors'].append('未生成减面后的 GLB')
+        report['valid'] = not report['errors']
+    except Exception as error:
+        report['errors'].append(str(error))
+
+    return report
+
+
 def main():
     args = _arguments()
+    handlers = {'inspect': _inspect, 'decimate': _decimate}
     try:
-        report = _inspect(args)
+        report = handlers[args.mode](args)
     except Exception as error:
         report = {'valid': False, 'errors': [str(error)]}
     _write_report(args.report, report)

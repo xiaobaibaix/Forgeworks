@@ -110,6 +110,34 @@ class BlenderPipelineTest(unittest.TestCase):
             self.assertEqual(len(data['materialDetails']), 5)
             self.assertEqual(data['forgeworks'], {})
 
+    def test_decimate_reduces_triangles_and_writes_glb(self):
+        blender = os.environ.get('FW_BLENDER') or shutil.which('blender')
+        if not blender:
+            candidates = ['/Volumes/KingstonXS1000Media/app/Blender.app/Contents/MacOS/Blender', '/Applications/Blender.app/Contents/MacOS/Blender']
+            blender = next((candidate for candidate in candidates if Path(candidate).is_file()), None)
+        if not blender:
+            self.skipTest('Blender executable not found')
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            source = temp / 'sample.glb'
+            output = temp / 'decimated.glb'
+            report = temp / 'report.json'
+            make_glb(source)
+            result = subprocess.run([
+                blender, '--background', '--factory-startup', '--python-exit-code', '1',
+                '--python', str(SCRIPT), '--', '--mode', 'decimate',
+                '--input', str(source), '--output', str(output),
+                '--report', str(report), '--target-faces', '3',
+            ], capture_output=True, text=True, timeout=120)
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            data = json.loads(report.read_text())
+            self.assertTrue(data['valid'], data)
+            self.assertEqual(data['trianglesBefore'], 5)
+            self.assertLess(data['trianglesAfter'], data['trianglesBefore'])
+            self.assertTrue(output.read_bytes().startswith(b'glTF'))
+
     def test_bridge_queues_validation_and_serves_thumbnail(self):
         blender = bridge.find_blender(force=True)
         if not blender:

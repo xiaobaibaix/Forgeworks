@@ -6,10 +6,17 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 
 ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
+
+DECIMATE_DEFAULT_FACES = 900
+DECIMATE_MIN_FACES = 50
+DECIMATE_MAX_FACES = 2000000
+BLENDER_DECIMATE_TIMEOUT = 300
 
 NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
@@ -240,7 +247,72 @@ def resolve_output(forgeworks_root, asset_id, kind, filename):
     return None
 
 
-def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine'):
+def _decimate_target(value):
+    try:
+        target = int(value)
+    except (TypeError, ValueError):
+        target = DECIMATE_DEFAULT_FACES
+    return max(DECIMATE_MIN_FACES, min(DECIMATE_MAX_FACES, target))
+
+
+def _decimate_input(forgeworks_root, asset_id, kind, graph, by_id, node_id):
+    root = os.path.realpath(pipeline_root(forgeworks_root, asset_id, kind))
+    legacy = os.path.realpath(legacy_pipeline_root(forgeworks_root, asset_id))
+    allowed = [root, legacy]
+    candidates = []
+    edge = next((edge for edge in graph['edges'] if edge.get('to') == node_id and edge.get('in') == 'mesh'), None)
+    source = by_id.get(edge.get('from')) if edge else None
+    result = (source or {}).get('result') or {}
+    provider_output = (result.get('providerTask') or {}).get('output') or {}
+    local_output = result.get('output') or {}
+    for value in (provider_output.get('modelPath'), local_output.get('meshPath')):
+        if value:
+            name = os.path.basename(str(value))
+            candidates.append(os.path.join(root, 'outputs', name))
+            candidates.append(os.path.join(legacy, 'outputs', name))
+    source_dir = _manifest_source_dir(forgeworks_root, asset_id)
+    if source_dir:
+        allowed.append(os.path.realpath(source_dir))
+        record = _manifest_asset(forgeworks_root, asset_id, kind)
+        files = record.get('files') if isinstance(record.get('files'), dict) else {}
+        for item in files.get('mesh') or []:
+            if isinstance(item, dict) and item.get('path'):
+                candidates.append(os.path.join(source_dir, item['path']))
+    for path in candidates:
+        real = os.path.realpath(path)
+        if os.path.isfile(real) and any(real == base or real.startswith(base + os.sep) for base in allowed):
+            return real
+    raise ValueError('减面节点没有可用的上游 GLB：请先生成模型或导出资产网格')
+
+
+def _decimate_with_blender(blender_path, source, output, target_faces):
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fw_blender.py')
+    with tempfile.TemporaryDirectory(prefix='forgeworks-decimate-') as temp_dir:
+        report_path = os.path.join(temp_dir, 'report.json')
+        try:
+            completed = subprocess.run([
+                blender_path, '--background', '--factory-startup', '--python-exit-code', '1',
+                '--python', script, '--', '--mode', 'decimate',
+                '--input', source, '--output', output, '--report', report_path,
+                '--target-faces', str(target_faces),
+            ], capture_output=True, text=True, timeout=BLENDER_DECIMATE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise ValueError('Blender 减面超时（%d 秒）' % BLENDER_DECIMATE_TIMEOUT)
+        report = None
+        try:
+            with open(report_path, encoding='utf-8') as stream:
+                report = json.load(stream)
+        except (OSError, ValueError):
+            report = None
+        if not isinstance(report, dict):
+            tail = (completed.stderr or completed.stdout or 'Blender 无输出')[-1000:]
+            report = {'valid': False, 'errors': [tail]}
+        if completed.returncode != 0:
+            report['valid'] = False
+        return report
+
+
+def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine', blender_path=None):
     kind = normalize_kind(kind)
     graph = load_graph(forgeworks_root, asset_id, kind)
     by_id, order = validate_graph(graph)
@@ -273,6 +345,33 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             if not (result.get('source') == 'forgeworks-ui' and result.get('state') == 'done'):
                 result['state'] = 'blocked'
                 result['error'] = '该阶段由 Forgeworks 浏览器端资产图层推导；请在工具里运行此节点'
+        elif node['type'] == 'decimate':
+            result = node.setdefault('result', {})
+            try:
+                target = _decimate_target(node.get('params', {}).get('targetFaces'))
+                source_path = _decimate_input(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+                if not blender_path:
+                    raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
+                outputs_dir = os.path.join(pipeline_root(forgeworks_root, asset_id, kind), 'outputs')
+                os.makedirs(outputs_dir, exist_ok=True)
+                filename = 'model_decimate_%s_%d.glb' % (node_id, target)
+                report = _decimate_with_blender(blender_path, source_path, os.path.join(outputs_dir, filename), target)
+                if not report.get('valid'):
+                    raise ValueError('; '.join(report.get('errors') or []) or 'Blender 减面失败')
+                result['state'] = 'done'
+                result['output'] = {
+                    'meshPath': filename,
+                    'trianglesBefore': int(report.get('trianglesBefore') or 0),
+                    'trianglesAfter': int(report.get('trianglesAfter') or 0),
+                    'targetFaces': int(report.get('targetFaces') or target),
+                    'ratio': report.get('ratio'),
+                    'engine': 'blender',
+                    'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                }
+                result.pop('error', None)
+            except (ValueError, OSError) as error:
+                result['state'] = 'blocked'
+                result['error'] = str(error)
         elif node['type'] == 'imageExport':
             edge = next((item for item in graph['edges'] if item.get('to') == node_id and item.get('in') == 'image'), None)
             source = by_id.get(edge.get('from')) if edge else None

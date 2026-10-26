@@ -1643,7 +1643,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             b = body or {}
             try:
                 result = fw_pipeline.execute_local(fw_dir(), b.get('assetId'), b.get('nodeId'), bool(b.get('through')),
-                                                   b.get('kind') or 'machine')
+                                                   b.get('kind') or 'machine', find_blender())
                 push_event('pipeline.progress', {'id': b.get('assetId'), 'ran': result['ran']})
                 self._json({'ok': True, **result})
             except (ValueError, TypeError) as error:

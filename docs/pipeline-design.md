@@ -151,8 +151,18 @@
 | 2 | **Blender Decimate** | Bridge → `blender -b` | 质量好，可控制坍塌比/保持边界 | 0（本地，~1s） |
 | 3 | **浏览器 meshopt simplify** | 前端 | 无需外部依赖，质量中等 | 0 |
 
-设计：节点参数 `method: auto` 时按 1→2→3 兜底（生成时已达标就 skip）。
-Blender 已实测可用（0.15s 导入 + 修改器 + 导出全程 <2s）。
+**当前实现：手动、单级按次生成。**
+
+- 参数只有 `targetFaces`（默认 900，钳制在 50–2,000,000）。
+- Bridge 调 `blender -b --python tools/fw_blender.py -- --mode decimate`：导入上游 GLB，
+  对每个网格加 `DECIMATE(COLLAPSE)` 修改器（ratio ≈ 目标/当前），应用后导出
+  `outputs/model_decimate_<节点>_<目标面数>.glb`。
+- 节点结果记录 `trianglesBefore / trianglesAfter / ratio`，**不自动应用**；
+  用户满意后点「应用减面」，走 `adoptModel`（烘焙、缩略图、导出、UE 发布）。
+- 需要多档 LOD 时：改目标面数重复运行，逐档确认后手动应用。
+- 未找到 Blender、上游没有 GLB、当前面数已不高于目标 → 节点标记 blocked 并说明原因。
+- 后续可扩展 `method:auto`：Provider `face_limit`（1）→ Blender（2）→ 浏览器 meshopt（3）。
+  Blender 已实测可用（0.15s 导入 + 修改器 + 导出全程 <2s）。
 
 ### 3.5 `styleApply` 风格对齐节点（本工具的差异化价值）
 

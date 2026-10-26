@@ -10,7 +10,7 @@
 - **P4/P5 3D 编辑**：稳定部件 ID、位置/旋转/缩放数值编辑、显隐、网格吸附、撤销/重做、重置；PBR 参数/颜色、贴图上传与移除、恢复风格及 GLB 导出路径已接入。缺少拖拽 gizmo、local/world 切换、选中部件聚焦高亮；GLB 材质因子与 Alpha 导出尚未回归验证。
 - **P6 冲突处理**：Bridge watcher、冲突双版本留档、keep-tool / keep-disk / save-copy，以及 Blender 精修文件覆盖保护已实现。save-copy 在有工具基线时恢复工具版本，无基线时采用磁盘版本并更新 hash。真实 Blender 精修回灌及事件延迟仍待验收。
 - **Q0–Q2 流水线**：新增 `tools/fw_pipeline.py`、`tools/fw_providers.py`、`js/pipeline.js`、`js/views/pipeline.js`、`css/pipeline.css`。有 graph schema、typed ports、DAG 检查、持久化、dirty 签名、节点图 UI、Tripo 文生图/图生 3D 提交和手动轮询。尚未实现多视角 API、自动轮询、retry/cancel/恢复、3D 预览；本次没有发远程请求。
-- **Q3–Q5 仍不完整**：未实现 Blender 减面与风格重染、完整 GLB 门禁/流水线导出、历史版本选择/对比/回滚、批量队列执行。目前只保留 Provider 输出和任务历史，预算估算是按公开价目的静态估值。
+- **Q3–Q5 仍不完整**：已实现 Blender 减面节点（手动、单级按次生成，见 §20）；风格重染、完整 GLB 门禁/流水线导出、历史版本选择/对比/回滚、批量队列执行仍未实现。预算估算是按公开价目的静态估值。
 
 ### 安全与执行边界
 
@@ -49,7 +49,7 @@
 | Q0 Provider | Tripo 服务端配置读取、text-to-image 与 image-to-model 提交/手动轮询、图片/GLB 安全下载、输出落盘已实现；界面提交前需逐次确认 | 本次未发出远程请求；当前未配置 key；未做本地 fake HTTP adapter 测试；Multiview API 和自动轮询尚未接入 |
 | Q1 流水线数据层 | 图 schema、typed ports、DAG 环检测、图落盘、dirty 签名、本地 prompt/imageExport、Provider 任务状态已实现 | retry/cancel/进程恢复、真实本地 Blender 处理器仍待补 |
 | Q2 节点图 | SVG 连线、节点卡、拖动、自动布局、连接/断开、参数与运行状态视图已实现 | 尚无重试/取消和 3D 输出预览；连接校验最终由 Bridge 执行 |
-| Q3 | 本机 Tripo 输出有 GLB 格式/体积检查 | Blender 减面、PBR 风格重染、真实 GLB 门禁与最终同步 manifest 导出尚未实现 |
+| Q3 | 本机 Tripo 输出有 GLB 格式/体积检查；Blender 减面已实现（手动单级，见 §20） | PBR 风格重染、真实 GLB 门禁与最终同步 manifest 导出尚未实现 |
 | Q4 | 重跑 Provider 节点会保留 taskId 命名的历史输出文件和任务记录 | 图上版本选取/并排对比与回滚 UI 尚未实现 |
 | Q5 | 机器/物品/图标模板已分开；批量预估入口按当前公开价目计算 image/3D credits 与 USD 区间 | 单价会变；估算不是实时报价，最终以 Provider 返回的 credits_consumed 为准；尚未实现批量队列运行 |
 | 材质贴图（AI） | 8 类材质的中性灰贴图生成、目录缓存、同步页管理 UI、3D 预览按材质映射、GLB 内嵌贴图均已实现；`tests/test_textures.py` 通过 | 未配置 Tripo key，未发出真实生成请求；GLB 内嵌用本地注入的 CanvasTexture 验证（1 image / 5 materials 全部带 baseColorTexture） |
@@ -644,3 +644,11 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - **实时同步**：写入成功后广播 `content.changed`（含 `revision`、`source`、`clientId`）。页面忽略自身事件；编辑器打开或本地有待保存改动时延迟同步，其余立即重载重绘。
 - **界面冲突合并**：自动保存带 `baseRevision`；遇到 409 时以最后载入内容为基线做三方合并（单方改动直接采用，双方都改保留本地并提示），用新 revision 重试一次。
 - **验证**：`tests/test_bridge_projects.py` 覆盖 revision/409、实体增删与非法输入；`tests/test_mcp_forgeworks.py` 覆盖 MCP 协议与工具转发。
+
+## 20. Blender 减面节点（2026-10-26）
+
+- **交互**：管线「减面」节点参数只有目标面数（默认 900，钳制 50–2,000,000）；每次运行产出一个新 GLB，**不自动应用**。用户满意后点「应用减面」，走 `js/pipeline-adopt.js` 的 `adoptModel`（烘焙、缩略图、导出、UE 发布）。改目标面数重复运行即可手动设计多档 LOD。
+- **Blender**：`tools/fw_blender.py` 新增 `--mode decimate --output <glb> --target-faces N`；导入 GLB 后按 `目标/当前` 比例给每个网格加 `DECIMATE(COLLAPSE)`，应用后导出。报告含 `trianglesBefore/trianglesAfter/ratio`。
+- **Bridge**：`pipeline/run` 把 `find_blender()` 传给 `fw_pipeline.execute_local`；未找到 Blender、上游没有 GLB、面数已低于目标都会把节点标为 blocked 并写明原因。
+- **输入**：优先取上游节点的 `providerTask.output.modelPath`；没有上游时回退到 manifest 记录的资产网格（`sourceDir/files.mesh`）。输出固定为 `pipeline/outputs/model_decimate_<节点>_<面数>.glb`。
+- **验证**：`tests/test_fw_blender.py` 用 5 面 GLB 实测 5→3；`tests/test_fw_pipeline.py` 覆盖目标钳制、上游/清单回退、缺 Blender、缺输入。

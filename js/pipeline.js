@@ -696,7 +696,31 @@ function pipelineStageSummary(node){
   if(node.type === 'collision') return (output.size || []).join('×') + ' m';
   if(node.type === 'animation') return output.parts + ' 件' + (output.kinds && output.kinds.length ? ' · ' + output.kinds.join('、') : '');
   if(node.type === 'metadata') return (output.formats || []).join(' / ');
+  if(node.type === 'decimate' && output.trianglesBefore != null && output.trianglesAfter != null){
+    return output.trianglesBefore + ' → ' + output.trianglesAfter + ' 面';
+  }
   return '';
+}
+
+/** 减面结果没有 providerTask，用节点输出拼一个可复用的任务标识。 */
+function pipelineDecimateTaskId(node, output){
+  const faces = output && output.targetFaces != null ? output.targetFaces : '';
+  const after = output && output.trianglesAfter != null ? output.trianglesAfter : '';
+  return 'decimate:' + node.id + ':' + faces + ':' + after;
+}
+
+function pipelineApplyTaskFor(node){
+  if(!node) return null;
+  if(node.type === 'decimate'){
+    const output = node.result && node.result.state === 'done' ? node.result.output : null;
+    if(!output || !output.meshPath) return null;
+    return {
+      state:'success', provider:'blender',
+      taskId:pipelineDecimateTaskId(node, output),
+      output:{modelPath:output.meshPath},
+    };
+  }
+  return node.result && node.result.providerTask || null;
 }
 
 function pipelineRunLocal(nodeId, through){
@@ -926,7 +950,7 @@ function pipelineWireCard(card){
   card.querySelectorAll('[data-apply]').forEach(button=>button.onclick=event=>{
     event.stopPropagation();
     const node=PIPELINE.graph.nodes.find(item=>item.id===button.dataset.apply);
-    const task=node&&node.result&&node.result.providerTask;
+    const task=pipelineApplyTaskFor(node);
     if(task) pipelineAdoptTask(PIPELINE.assetId,PIPELINE.kind,node.id,node.type,task,true);
   });
   card.querySelectorAll('[data-open-asset]').forEach(button=>button.onclick=event=>{
@@ -1254,6 +1278,12 @@ function pipelineParamForm(node){
       <small class="pipeline-params-hint">面数/贴图参数仅 Tripo 生效；PBR 需先开启贴图。</small>
     </div>`;
   }
+  if(node.type === 'decimate'){
+    return `<div class="pipeline-params">
+      ${pipelineParamNumber(node, 'targetFaces', '目标面数', 'min="50" max="2000000" step="50"', '900')}
+      <small class="pipeline-params-hint">由 Blender Decimate 执行；每次运行生成一个新 GLB，满意后手动「应用减面」。</small>
+    </div>`;
+  }
   return `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
 }
 
@@ -1262,18 +1292,19 @@ function pipelineNodeCard(node){
   const busy = pipelineNodeBusy(node);
   const selected = PIPELINE.selected === node.id;
   const task = node.result && node.result.providerTask;
+  const applyTask = pipelineApplyTaskFor(node);
   const currentAsset = pipelineFindAsset(PIPELINE.kind, PIPELINE.assetId);
   const applySlot = node.type === 'textToImage' ? 'image'
-    : (node.type === 'imageTo3D' && PIPELINE.kind !== 'element' ? 'model' : '');
+    : ((node.type === 'imageTo3D' || node.type === 'decimate') && PIPELINE.kind !== 'element' ? 'model' : '');
   const generated = (currentAsset && currentAsset.generated) || {};
-  const applied = !!(applySlot && task && task.taskId
-    && generated[applySlot] && generated[applySlot].taskId === task.taskId);
+  const applied = !!(applySlot && applyTask && applyTask.taskId
+    && generated[applySlot] && generated[applySlot].taskId === applyTask.taskId);
   const applyOwner = (PIPELINE.applyNodes || {})[PIPELINE.assetId] || '';
   const applyMine = !applyOwner || applyOwner === node.id;
   const applyStatus = applySlot && applyMine ? (PIPELINE.applyStatus[PIPELINE.assetId] || '') : '';
   const applyError = applySlot && applyMine ? (PIPELINE.applyErrors[PIPELINE.assetId] || '') : '';
-  const applyReady = !!(applySlot && task && task.state === 'success' && task.output
-    && (applySlot === 'image' ? task.output.imagePath : task.output.modelPath));
+  const applyReady = !!(applySlot && applyTask && applyTask.state === 'success' && applyTask.output
+    && (applySlot === 'image' ? applyTask.output.imagePath : applyTask.output.modelPath));
   const exportOutput = node.type === 'export' && node.result && node.result.state === 'done'
     && node.result.output && node.result.output.sourceDir ? node.result.output : null;
   const appliedDate = applied && generated[applySlot] && generated[applySlot].at
@@ -1284,21 +1315,21 @@ function pipelineNodeCard(node){
   const params = node.type === 'prompt'
     ? `<textarea data-param="text" rows="3" placeholder="输入模型描述词">${pipelineEscape(node.params.text || '')}</textarea>`
     : pipelineParamForm(node);
-  const taskOutput=task&&task.output||node.result&&node.result.output||{};
-  const outputFile=taskOutput.modelPath||taskOutput.imagePath;
+  const taskOutput=applyTask&&applyTask.output||node.result&&node.result.output||{};
+  const outputFile=taskOutput.modelPath||taskOutput.meshPath||taskOutput.imagePath;
   const outputURL=pipelineOutputURL(outputFile);
   const outputLink=outputURL?`<a class="pipeline-output" href="${pipelineEscape(outputURL)}" download>下载输出</a>`:'';
   const imageURL=pipelineOutputURL(taskOutput.imagePath);
-  const modelURL=pipelineOutputURL(taskOutput.modelPath);
+  const modelURL=pipelineOutputURL(taskOutput.modelPath||taskOutput.meshPath);
   let media='';
   if(node.type==='textToImage'){
     media=imageURL
       ? `<figure class="pipeline-node-media"><img src="${pipelineEscape(imageURL)}" alt="生成图" loading="lazy"></figure>`
       : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成图像'}</div>`;
-  }else if(node.type==='imageTo3D'){
+  }else if(node.type==='imageTo3D'||node.type==='decimate'){
     media=modelURL
       ? `<figure class="pipeline-node-media model" data-node-model="${pipelineEscape(modelURL)}" data-node-model-id="${pipelineEscape(node.id)}" title="点击放大查看"><canvas aria-label="3D 模型预览"></canvas></figure><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
-      : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成模型'}</div>`;
+      : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='decimate'?'未生成减面模型':'未生成模型')}</div>`;
   }
   const history=(node.result&&node.result.history||[]).slice().reverse();
   const historyHTML=history.length?`<details class="pipeline-history"><summary>历史版本 ${history.length}</summary><div class="pipeline-history-list">${history.map(item=>{
@@ -1320,7 +1351,7 @@ function pipelineNodeCard(node){
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(pipelineStateLabel(state, progress))}</span></header>
     <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : '应用结果'}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : '应用结果')}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
     ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir)}</small>` : ''}
     ${applied
       ? `<small class="pipeline-stage">已应用到 ${pipelineEscape((currentAsset && currentAsset.name) || '资产')}${appliedWhen ? ' · ' + pipelineEscape(appliedWhen) : ''}</small>`

@@ -341,7 +341,7 @@
     if(!task || task.state !== 'success'){
       return Promise.resolve(reportApplyFailure(assetId, '任务尚未成功', nodeId));
     }
-    if(nodeType !== 'textToImage' && nodeType !== 'imageTo3D'){
+    if(nodeType !== 'textToImage' && nodeType !== 'imageTo3D' && nodeType !== 'decimate'){
       return Promise.resolve({ok:true, skipped:true});
     }
     // 元素只支持图标：先于就绪检查跳过，避免误报“Bridge 未连接”
@@ -408,7 +408,7 @@
       PIPELINE.applyStatus[assetId] = '已应用';
       PIPELINE.applyErrors[assetId] = result.warning || '';
       PIPELINE.applyNodes[assetId] = nodeId;
-      const what = slot === 'image' ? 'AI 图标' : 'AI 模型';
+      const what = slot === 'image' ? 'AI 图标' : (task.provider === 'blender' ? '减面模型' : 'AI 模型');
       toast(result.note || result.warning || ('已应用' + what + '：' + asset.name));
       if(cur === 'pipeline' && PIPELINE.assetId === assetId) refreshExportNode(assetId, kind);
       else render();
