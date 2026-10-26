@@ -1,0 +1,25 @@
+.main{position:relative}
+
+#fwTerminalDock{position:absolute;left:0;right:0;bottom:0;height:clamp(260px,42vh,520px);z-index:80;
+  display:flex;flex-direction:column;background:#0b0f14;color:#d7e2ee;
+  border-top:1px solid #1f2937;box-shadow:0 -10px 28px rgba(0,0,0,.28)}
+#fwTerminalDock.hide{display:none}
+#fwTerminalDock>header{height:38px;flex:0 0 38px;display:flex;align-items:center;gap:8px;padding:0 10px;
+  background:#111827;border-bottom:1px solid #1f2937;font-size:12px}
+#fwTerminalDock>header b{font-weight:600;letter-spacing:.02em}
+#fwTerminalDock .fw-term-dot{width:8px;height:8px;border-radius:50%;background:#6b7280;flex:0 0 8px}
+#fwTerminalDock .fw-term-dot[data-state="connecting"]{background:#f59e0b}
+#fwTerminalDock .fw-term-dot[data-state="live"]{background:#22c55e}
+#fwTerminalDock .fw-term-dot[data-state="exited"]{background:#94a3b8}
+#fwTerminalDock .fw-term-dot[data-state="error"]{background:#ef4444}
+#fwTerminalDock .fw-term-cwd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--mono);font-size:10.5px;color:#8aa0b6}
+#fwTerminalDock .fw-term-body{flex:1;min-height:0;overflow:hidden;padding:6px 8px 4px}
+#fwTerminalDock .fw-term-body .xterm{height:100%}
+#fwTerminalDock .fw-term-body .xterm-viewport{background:transparent !important}
+#fwTerminalDock .fw-term-notice{padding:10px 4px;font-size:12px;line-height:1.7;color:#9fb3c8}
+#fwTerminalDock .fw-term-notice code{font-family:var(--mono);color:#e2e8f0}
+
+@media (max-width:900px){
+  #fwTerminalDock{height:45vh}
+}

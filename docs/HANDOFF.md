@@ -664,3 +664,20 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - **已删除**：`partSpec` 节点、`contract` 端口、`parts/partspec.json`、粗切 bootstrap、逐件进度/重试 UI 与相关 Bridge 辅助函数。旧图会因未知节点/端口被拒，需要按新模板重建。
 - **入口**：`python3 tools/fw_parts.py assemble --layout <layout.json> --root <pipeline 目录> --out <assembly.glb>`；库函数 `measure_parts / auto_layout / load_layout / save_layout / resolve_layout_mesh / assemble_parts`。
 - **验证**：`tests/test_fw_parts.py` 29 项（布局校验、越界拒绝、自动布局、对账、ground 重算，Blender 全部 mock）；`tests/test_fw_pipeline.py` 覆盖多输入校验、重复边拒绝、新模板结构、组装三种状态；`tests/test_bridge_providers.py` 覆盖单件提示词/命名/落盘、整体参考图解析（缺失/未生成/已变更）与无 `partId` 回归；`tests/test_fw_providers.py` 覆盖参考图下发与 Tripo 拒绝；`tests/smoke.html` 覆盖整体图链路、新标签、多部件汇入、单输入替换与组装应用映射。
+
+## 22. 生成管线内嵌终端（PTY + xterm.js）（2026-10-26）
+
+- **用途**：在管线视图里直接得到一个真终端，可在其中启动 `claude` 会话，经 `forgeworks` MCP 读写项目内容与管线，不必切到外部终端。
+- **后端**：`tools/fw_terminal.py`（会话层，纯 stdlib）+ `tools/fw_pty_exec.py`（子进程 shim）。Bridge 用 `pty.openpty()` + `Popen(..., start_new_session=True)` 起登录 shell，shim 里 `TIOCSCTTY` 后 `execvpe`。**不起 `pty.fork()`**：Bridge 是多线程进程，不能让子进程继续跑 Python。读线程独占 master 句柄（含关闭），跨线程 close 在 macOS 上会与阻塞的 `os.read` 互锁。
+- **cwd**：固定为当前绑定项目的数据根（`fw_dir()`），不是 Bridge 安装目录；未绑定项目时启动返回 409。
+- **启动 Claude**：`claude_command(port)` 生成 `claude --mcp-config '<json>'`，JSON 内用当前解释器、`tools/mcp_forgeworks.py` 绝对路径与 `FORGEWORKS_BRIDGE=http://127.0.0.1:<port>`，整体 `shlex.quote`。后端生成、前端原样写入 PTY，因此按钮点下去 MCP 一定可用；未装 `claude` 时按钮禁用并给出原因。
+- **API**（全部只允许 loopback，且 **不发送 `Access-Control-Allow-Origin`**，防止任意网页借 `EventSource` 连本机）：
+  - `GET /api/terminal/status` → 平台可用性、shell、项目、claude 命令、会话数。
+  - `POST /api/terminal/start` `{cols,rows}` → `{id,token,pid,cwd,cols,rows}`；未绑项目 409、平台不支持 501、超过 4 个会话 429。
+  - `GET /api/terminal/stream/<sid>?token=` → SSE：`ready{reset,cols,rows}`（重放历史）、`output{"b64":...}`、`exit{code}`、15s 心跳。
+  - `POST /api/terminal/input` `{sessionId,token,data:<base64>}`（单次 ≤64KB，超限 413）；`POST /api/terminal/resize` `{sessionId,token,cols,rows}`；`POST /api/terminal/stop`。
+- **鉴权**：session id `secrets.token_hex(8)`，token `secrets.token_urlsafe(32)`，`hmac.compare_digest` 比较；缺少会话或 token 一律 403。POST 额外校验 `Origin` 为本机；所有终端路由校验 `Host` 为 `127.0.0.1:<port>` / `localhost:<port>`，防 DNS rebinding。日志中 `token=` 脱敏。
+- **前端**：`js/terminal.js` + `css/terminal.css`；xterm 5.5.0 / addon-fit 0.10.0 本地 vendor 在 `js/vendor/`。dock 挂在 `.main` 内、`#view` 外，管线重渲染不销毁；离开管线视图自动关闭；项目切换时比对 cwd 不一致则关闭。输入 8ms 微批、resize 120ms 去抖，EventSource 连续失败 3 次停止重连并提示重开。
+- **限制**：仅 macOS / Linux。Windows 无 ConPTY 适配，`/api/terminal/status` 返回 `available:false` 并说明原因。这是真终端，能拿到 token 的本机进程即可执行命令，不做命令白名单或沙箱。
+- **验证**：`tests/test_fw_terminal.py` 覆盖 shell 往返、resize、停止回收、历史重放、错误 token、会话上限、`shutdown_all`、Windows 守卫、claude 命令内容，以及 HTTP 层 Origin/Host/token 拒绝与 SSE 端到端；`tests/smoke.html` 覆盖 vendor 全局、工具条按钮与 base64 中文往返。
+- **手工验收**：管线视图点「终端」→ dock 出现并显示提示符 → 输入 `echo FW_TERM_OK` 有回显 → 点「启动 Claude」进入 TUI（确认中文输入）→ `/mcp` 能看到 `forgeworks` → 关闭后 `pgrep -f fw_pty_exec` 无残留。

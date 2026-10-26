@@ -1596,6 +1596,7 @@ function renderPipelineView(){
   if(!view) return;
   pipelineDisposeAllNodePreviews();
   if(cur !== 'pipeline') return;
+  if(typeof terminalOnPipelineRender === 'function') terminalOnPipelineRender();
   if(SYNC.probing && !SYNC.online){
     view.innerHTML='<div class="card"><p>正在连接 Forge Bridge…</p></div>';
     return;
@@ -1635,6 +1636,7 @@ function renderPipelineView(){
       <select id="pipelineTemplate">${PIPELINE_TEMPLATES.map(template=>`<option value="${template.id}" ${template.id===(PIPELINE.graph.template || defaultTemplate)?'selected':''}>${template.label}</option>`).join('')}</select></div>
     <div class="pt-btns">
       ${PIPELINE.returnTo?`<button id="pipelineBack">${pipelineReturnLabel()}</button>`:''}
+      ${typeof terminalToolbarButton === 'function' ? terminalToolbarButton() : ''}
       <button id="pipelineMake">新建模板</button><button id="pipelineEstimate">批量预估</button><button id="pipelineArrange">自动布局</button><button id="pipelineSave">保存图</button><button id="pipelineZoomReset" title="滚轮缩放 · 按住右键拖动平移 · 点击复位">100%</button><button id="pipelineRunAll" class="primary">运行全部（本地节点）</button>
     </div>
     <div class="pt-note">
@@ -1655,6 +1657,8 @@ function renderPipelineView(){
   document.getElementById('pipelineAsset').onchange=async event=>{PIPELINE.graph=null;await pipelineLoad(event.target.value);renderPipelineView();};
   const pipelineBackButton=document.getElementById('pipelineBack');
   if(pipelineBackButton)pipelineBackButton.onclick=pipelineReturn;
+  const terminalButton=document.getElementById('pipelineTerminal');
+  if(terminalButton) terminalButton.onclick=()=>terminalToggle();
   document.getElementById('pipelineMake').onclick=()=>pipelineCreateTemplate(document.getElementById('pipelineTemplate').value).catch(error=>toast(error.message));
   document.getElementById('pipelineEstimate').onclick=()=>{const kind=document.getElementById('pipelineTemplate').value;const count=['machine','parts'].includes(kind)?S.machines.length:S.items.length;const estimate=pipelineEstimate(kind,count);toast(`${estimate.assets} 个资产：约 ${estimate.lowCredits}–${estimate.highCredits} credits（$${estimate.lowUsd.toFixed(2)}–$${estimate.highUsd.toFixed(2)}）；以任务实际实耗为准`);};
   document.getElementById('pipelineSave').onclick=()=>pipelineSave().catch(error=>toast(error.message));

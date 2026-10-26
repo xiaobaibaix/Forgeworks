@@ -41,6 +41,7 @@ import pathlib
 import queue
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -65,6 +66,11 @@ _texture_spec.loader.exec_module(fw_textures)
 _project_spec = importlib.util.spec_from_file_location('fw_project', os.path.join(ROOT, 'tools', 'fw_project.py'))
 fw_project = importlib.util.module_from_spec(_project_spec)
 _project_spec.loader.exec_module(fw_project)
+_terminal_spec = importlib.util.spec_from_file_location('fw_terminal', os.path.join(ROOT, 'tools', 'fw_terminal.py'))
+fw_terminal = importlib.util.module_from_spec(_terminal_spec)
+_terminal_spec.loader.exec_module(fw_terminal)
+
+_TERMINAL = fw_terminal.TerminalManager(PORT)
 
 BRIDGE_VERSION = '0.1.0'
 STATE_FILE = os.path.join(ROOT, 'tools', '.bridge_state.json')
@@ -1431,17 +1437,21 @@ def export_asset(kind, asset_id, files, meta):
 
 class BridgeHandler(SimpleHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
+    _suppress_cors = False   # 终端路由按请求关闭 ACAO:*
 
     # ---- 静态文件：no-store（与 serve.py 同教训） ----
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
         self.send_header('Pragma', 'no-cache')
-        self.send_header('Access-Control-Allow-Origin', '*')   # 允许 file:// 打开时调 API
+        if not self._suppress_cors:
+            self.send_header('Access-Control-Allow-Origin', '*')   # 允许 file:// 打开时调 API
         super().end_headers()
 
     def log_message(self, fmt, *args):
-        if os.environ.get('FW_BRIDGE_VERBOSE'):
-            super().log_message(fmt, *args)
+        if not os.environ.get('FW_BRIDGE_VERBOSE'):
+            return
+        text = (fmt % args) if args else fmt
+        super().log_message('%s', re.sub(r'(token=)[^&\s]+', r'\1***', text))
 
     # ---- CORS preflight ----
     def do_OPTIONS(self):
@@ -1562,6 +1572,25 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(data)
             except (ValueError, TypeError) as error:
                 self._json({'ok': False, 'error': str(error)}, 404)
+        elif route == 'terminal/status':
+            self._suppress_cors = True
+            if not self._loopback_host():
+                self._json({'ok': False, 'error': '终端只允许本机访问'}, 403)
+            else:
+                self._json({'ok': True, **fw_terminal.terminal_availability(),
+                            'sessions': _TERMINAL.status(), 'project': fw_dir(),
+                            'claude': fw_terminal.claude_command(PORT)})
+        elif route.startswith('terminal/stream/'):
+            self._suppress_cors = True
+            if not self._loopback_host():
+                self._json({'ok': False, 'error': '终端只允许本机访问'}, 403)
+                return
+            token = (self._query().get('token') or [''])[0]
+            session = _TERMINAL.get(route.rsplit('/', 1)[-1], token) if token else None
+            if session is None:
+                self._json({'ok': False, 'error': '终端会话不存在或令牌无效'}, 403)
+            else:
+                self._terminal_sse(session)
         elif route == 'events':
             self._sse()
         elif route.startswith('thumbnail/machine/'):
@@ -1862,8 +1891,93 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 self._json({'ok': True, 'catalog': catalog, 'item': item})
             except (ValueError, TypeError, RuntimeError, OSError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
+        elif route.startswith('terminal/'):
+            self._suppress_cors = True
+            self._route_terminal(route, body or {})
         else:
             self._json({'ok': False, 'error': 'unknown route: %s' % route}, 404)
+
+    # ---- terminal ----
+    def _route_terminal(self, route, body):
+        if not self._same_loopback_origin():
+            self._json({'ok': False, 'error': '终端只允许本机同源页面调用'}, 403)
+            return
+        if route == 'terminal/start':
+            try:
+                session = _TERMINAL.start(fw_dir(), body.get('cols'), body.get('rows'))
+            except fw_terminal.TerminalLimit as error:
+                self._json({'ok': False, 'error': str(error)}, 429)
+            except fw_terminal.TerminalUnavailable as error:
+                self._json({'ok': False, 'error': str(error)}, 501)
+            except fw_terminal.TerminalError as error:
+                self._json({'ok': False, 'error': str(error)}, 409)
+            except OSError as error:
+                self._json({'ok': False, 'error': '无法启动终端：%s' % error}, 500)
+            else:
+                self._json({'ok': True, 'id': session.id, 'token': session.token,
+                            'pid': session.pid, 'cwd': session.cwd,
+                            'cols': session.cols, 'rows': session.rows})
+            return
+        session = _TERMINAL.get(body.get('sessionId'), body.get('token'))
+        if session is None:
+            self._json({'ok': False, 'error': '终端会话不存在或令牌无效'}, 403)
+            return
+        if route == 'terminal/input':
+            try:
+                data = base64.b64decode(str(body.get('data') or ''), validate=True)
+            except (ValueError, TypeError):
+                self._json({'ok': False, 'error': '输入数据不是合法 base64'}, 400)
+                return
+            if len(data) > fw_terminal.MAX_INPUT_BYTES:
+                self._json({'ok': False, 'error': '单次输入过大'}, 413)
+                return
+            session.write(data)
+            self._json({'ok': True})
+        elif route == 'terminal/resize':
+            session.resize(body.get('cols'), body.get('rows'))
+            self._json({'ok': True, 'cols': session.cols, 'rows': session.rows})
+        elif route == 'terminal/stop':
+            _TERMINAL.stop(session.id)
+            self._json({'ok': True})
+        else:
+            self._json({'ok': False, 'error': 'unknown route: %s' % route}, 404)
+
+    def _terminal_sse(self, session):
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Connection', 'keep-alive')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.end_headers()
+        except OSError:
+            return
+        client = session.add_client()
+        try:
+            self._sse_event('ready', {'reset': True, 'id': session.id,
+                                      'cols': session.cols, 'rows': session.rows})
+            while True:
+                try:
+                    chunk = client.get(timeout=15)
+                except queue.Empty:
+                    if not session.has_client(client):
+                        break
+                    self.wfile.write(b': ping\n\n')
+                    self.wfile.flush()
+                    continue
+                if chunk is None:
+                    self._sse_event('exit', {'code': session.exit_code})
+                    break
+                self._sse_event('output', {'b64': base64.b64encode(chunk).decode('ascii')})
+        except OSError:
+            pass
+        finally:
+            session.drop_client(client)
+
+    def _sse_event(self, name, obj):
+        payload = json.dumps(obj, ensure_ascii=False)
+        self.wfile.write(('event: %s\ndata: %s\n\n' % (name, payload)).encode('utf-8'))
+        self.wfile.flush()
 
     # ---- helpers ----
     def _query(self):
@@ -1877,6 +1991,11 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             return json.loads(self.rfile.read(n).decode('utf-8'))
         except Exception:
             return {}
+
+    def _loopback_host(self):
+        port = self.server.server_address[1]
+        host = (self.headers.get('Host') or '').lower()
+        return host in ('127.0.0.1:%d' % port, 'localhost:%d' % port)
 
     def _same_loopback_origin(self):
         origin = self.headers.get('Origin')
@@ -1942,10 +2061,18 @@ def main():
     ue_target = ue_project_root()
     print('  UE 导出目标: %s' % (ue_target or '未设置'))
     print('  Ctrl+C 停止')
+
+    def terminate(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, terminate)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print('\n已停止。')
+    finally:
+        _TERMINAL.shutdown_all()
+        httpd.server_close()
 
 
 if __name__ == '__main__':

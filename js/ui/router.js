@@ -127,6 +127,7 @@ function render(){
   const crumb=document.getElementById('viewCrumb');
   if(crumb) crumb.textContent=menuGroupOf(cur);
   document.getElementById('headActions').innerHTML='';
+  if(typeof terminalOnViewChange==='function') terminalOnViewChange(cur);
   document.getElementById('view').innerHTML='';
   v.render();
   updateStat();
