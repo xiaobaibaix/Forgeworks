@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-27-dimension-connector-assembly-design.md`
 
+**执行入口：** 先读 [P1 执行入口](2026-10-27-dimension-spec-p1-start-here.md)（环境、基线、执行方式、安全边界、完成定义）。
+
 ## Global Constraints
 
 - 运行 Python 一律用 `python`，不要用 `python3`（本机 `python3` 是坏的 Windows Store 别名）。
