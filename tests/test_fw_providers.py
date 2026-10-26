@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -127,6 +128,60 @@ class DownloadGuardTest(unittest.TestCase):
     def test_rejects_non_https_image_url(self):
         with self.assertRaises(ValueError):
             fw_providers._check_remote_url('http://ark-acg-cn-beijing.tos-cn-beijing.volces.com/a.png', 'Ark 图片')
+
+
+class AnalyzeLayoutTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.image = pathlib.Path(self.temp.name) / 'overall.png'
+        self.image.write_bytes(b'\x89PNG\r\n')
+        self.original = fw_providers._ark_request
+        self.calls = []
+
+    def tearDown(self):
+        fw_providers._ark_request = self.original
+        self.temp.cleanup()
+
+    def _fake(self, content):
+        def fake(config, path, payload=None, timeout=60):
+            self.calls.append((path, payload))
+            return {'choices': [{'message': {'content': content}}]}
+        fw_providers._ark_request = fake
+
+    def test_parses_fenced_json_and_sends_image(self):
+        self._fake('```json\n{"groundLengthRatio":1.3,"boomLengthRatio":1.6,'
+                   '"cabSide":"right","notes":"履带偏长"}\n```')
+        hints, meta = fw_providers.analyze_layout(
+            ARK_CONFIG, str(self.image), [{'id': 'partModel_body', 'name': '车身'}],
+            prompt='车头朝 +X')
+        self.assertEqual(hints, {'groundLengthRatio': 1.3, 'boomLengthRatio': 1.6,
+                                 'cabSide': 'right'})
+        self.assertEqual(meta, {'model': fw_providers.ARK_VISION_MODEL,
+                                'notes': '履带偏长'})
+        path, payload = self.calls[0]
+        self.assertEqual(path, '/chat/completions')
+        content = payload['messages'][1]['content']
+        self.assertTrue(content[1]['image_url']['url'].startswith('data:image/png;base64,'))
+        self.assertIn('车身', content[0]['text'])
+
+    def test_configured_vision_model_overrides_default(self):
+        self._fake('{"cabSide":"left"}')
+        config = {'providers': {'ark': {'api_key': 'ark', 'vision_model': 'custom-vision'}}}
+        _, meta = fw_providers.analyze_layout(
+            config, str(self.image), [{'id': 'partModel_body', 'name': '车身'}])
+        self.assertEqual(meta['model'], 'custom-vision')
+        self.assertEqual(self.calls[0][1]['model'], 'custom-vision')
+
+    def test_invalid_json_raises(self):
+        self._fake('not json')
+        with self.assertRaises(RuntimeError):
+            fw_providers.analyze_layout(
+                ARK_CONFIG, str(self.image), [{'id': 'partModel_body', 'name': '车身'}])
+
+    def test_missing_key_raises_before_request(self):
+        with self.assertRaises(ValueError):
+            fw_providers.analyze_layout(
+                {'providers': {}}, str(self.image), [{'id': 'partModel_body', 'name': '车身'}])
 
 
 if __name__ == '__main__':

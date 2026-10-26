@@ -1,4 +1,4 @@
-const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, selection:new Set(), busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}, applyQueue:{}, applyStatus:{}, applyErrors:{}, applyNodes:{}};
+const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, selection:new Set(), busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}, polling:{}, applyQueue:{}, applyStatus:{}, applyErrors:{}, applyNodes:{}};
 const PIPELINE_STORE_PREFIX = 'fw.pipeline.';
 const PIPELINE_LAST_ASSET_KEY = 'fw.pipeline.lastAsset';
 
@@ -24,9 +24,9 @@ const PIPELINE_ZOOM_MAX = 1.8;
 
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
-  decimate:{in:['mesh'],out:['mesh']},
-  partImage:{in:['text','image'],out:['image']}, partModel:{in:['image'],out:['part']},
-  assemble:{in:['text','part'],out:['mesh']},
+  decimate:{in:['mesh'],out:['mesh','part']},
+  partImage:{in:['text','image'],out:['image']}, partModel:{in:['image'],out:['part','mesh']},
+  assemble:{in:['text','part','image'],out:['mesh']},
   styleApply:{in:['mesh'],out:['mesh']},
   uv:{in:['mesh'],out:['mesh']}, lod:{in:['mesh'],out:['mesh']}, collision:{in:['mesh'],out:['mesh']},
   animation:{in:['mesh'],out:['mesh']}, metadata:{in:['mesh'],out:['mesh']},
@@ -165,13 +165,17 @@ function pipelineStarterGraph(assetId, template){
       {id:'partImage_rear_window', type:'partImage', x:540, y:2520, params:{provider:'ark', size:'1K', outputFormat:'png'}},
       {id:'partModel_rear_window', type:'partModel', x:780, y:2520, params:{provider:'ark', texture:false, faceLimit:3000}},
       {id:'prompt_assemble', type:'prompt', x:60, y:2940, params:{text:''}},
-      {id:'assemble', type:'assemble', x:1020, y:1470, params:{resetLayout:false}},
+      {id:'assemble', type:'assemble', x:1260, y:1470, params:{resetLayout:false, decimateFaces:0, visionAssist:true}},
     ];
+    ['body','roof','wheel','door','side_window','rear_window'].forEach((part, index)=>{
+      nodes.push({id:'decimate_' + part, type:'decimate', x:1020, y:420 + index * 420,
+                  params:{targetFaces:10000}});
+    });
     [['style','styleApply',{}],['uv','uv',{mode:'primitive'}],['lod','lod',{levels:3}],
      ['collision','collision',{type:'box'}],['animation','animation',{mode:'ue-rebuild'}],
      ['metadata','metadata',{formats:['csv','json']}],['validate','validate',{maxTriangles:20000}],
      ['export','export',{}]].forEach(([id,type,params],index)=>{
-      nodes.push({id, type, x:1260 + index * 240, y:1470, params});
+      nodes.push({id, type, x:1500 + index * 240, y:1470, params});
     });
     edges = [
       {from:'prompt_overall', out:'text', to:'overall', in:'text'},
@@ -181,6 +185,7 @@ function pipelineStarterGraph(assetId, template){
       {from:'overall', out:'image', to:'partImage_door', in:'image'},
       {from:'overall', out:'image', to:'partImage_side_window', in:'image'},
       {from:'overall', out:'image', to:'partImage_rear_window', in:'image'},
+      {from:'overall', out:'image', to:'assemble', in:'image'},
       {from:'prompt_body', out:'text', to:'partImage_body', in:'text'},
       {from:'partImage_body', out:'image', to:'partModel_body', in:'image'},
       {from:'prompt_roof', out:'text', to:'partImage_roof', in:'text'},
@@ -193,12 +198,18 @@ function pipelineStarterGraph(assetId, template){
       {from:'partImage_side_window', out:'image', to:'partModel_side_window', in:'image'},
       {from:'prompt_rear_window', out:'text', to:'partImage_rear_window', in:'text'},
       {from:'partImage_rear_window', out:'image', to:'partModel_rear_window', in:'image'},
-      {from:'partModel_body', out:'part', to:'assemble', in:'part'},
-      {from:'partModel_roof', out:'part', to:'assemble', in:'part'},
-      {from:'partModel_wheel', out:'part', to:'assemble', in:'part'},
-      {from:'partModel_door', out:'part', to:'assemble', in:'part'},
-      {from:'partModel_side_window', out:'part', to:'assemble', in:'part'},
-      {from:'partModel_rear_window', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_body', out:'mesh', to:'decimate_body', in:'mesh'},
+      {from:'decimate_body', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_roof', out:'mesh', to:'decimate_roof', in:'mesh'},
+      {from:'decimate_roof', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_wheel', out:'mesh', to:'decimate_wheel', in:'mesh'},
+      {from:'decimate_wheel', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_door', out:'mesh', to:'decimate_door', in:'mesh'},
+      {from:'decimate_door', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_side_window', out:'mesh', to:'decimate_side_window', in:'mesh'},
+      {from:'decimate_side_window', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_rear_window', out:'mesh', to:'decimate_rear_window', in:'mesh'},
+      {from:'decimate_rear_window', out:'part', to:'assemble', in:'part'},
       {from:'prompt_assemble', out:'text', to:'assemble', in:'text'},
       {from:'assemble', out:'mesh', to:'style', in:'mesh'},
       {from:'style', out:'mesh', to:'uv', in:'mesh'},
@@ -288,6 +299,8 @@ async function pipelineLoad(assetId){
     }catch(_){ /* 迁移失败时继续用本地存档 */ }
   }
   pipelineSelect(PIPELINE.graph.nodes[0] ? [PIPELINE.graph.nodes[0].id] : []);
+  // 刷新页面/切换资产后，服务端仍排队或运行中的任务继续轮询
+  pipelineResumePollers();
 }
 
 function pipelineEnter(assetId, returnTo){
@@ -357,9 +370,10 @@ async function pipelineSave(options){
   if(pipelineBridgeReady()){
     try{
       const result = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, graph:PIPELINE.graph});
-      PIPELINE.graph = result.graph;
+      pipelineAdoptGraph(result.graph);
       PIPELINE.archive = result.archive || PIPELINE.archive;
       PIPELINE.source = 'bridge';
+      pipelineResumePollers();
       if(quiet){ pipelinePaintChrome(); return; }
       renderPipelineView();
       return;
@@ -912,8 +926,16 @@ function pipelineStageSummary(node){
   if(node.type === 'assemble' && output.parts != null){
     const layout = output.layoutPath ? output.layoutPath.split('/').pop() : '';
     const missing = Array.isArray(output.missingParts) ? output.missingParts.length : 0;
+    const decimated = output.decimateFaces ? ' · 减面 ≤' + output.decimateFaces : '';
+    const mode = output.layoutMode === 'coherent' ? ' · 整体' : '';
+    const vision = output.vision && output.vision.enabled
+      ? (output.vision.state === 'done' ? ' · 视觉'
+        : (output.vision.state === 'failed' ? ' · 视觉失败'
+          : (output.vision.state === 'blocked' ? ' · 缺整体图' : '')))
+      : '';
     return (Array.isArray(output.parts) ? output.parts.length : output.parts) + ' 件'
       + (output.triangles != null ? ' · ' + output.triangles + ' 面' : '')
+      + decimated + mode + vision
       + (layout ? ' · ' + layout : '')
       + (missing ? ' · 残缺 ' + missing + ' 件' : '');
   }
@@ -1008,7 +1030,7 @@ async function pipelineRun(nodeId, through){
   pipelineDeriveLocalStages();
   try{
     const saved = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, graph:PIPELINE.graph});
-    PIPELINE.graph = saved.graph;
+    pipelineAdoptGraph(saved.graph);
     PIPELINE.archive = saved.archive || PIPELINE.archive;
     PIPELINE.source = 'bridge';
   }catch(_){ pipelineRunLocal(nodeId, through); return; }
@@ -1016,7 +1038,8 @@ async function pipelineRun(nodeId, through){
   renderPipelineView();
   try{
     const result = await pipelineApi('pipeline/run', {assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId,through:!!through});
-    PIPELINE.graph = result.graph;
+    pipelineAdoptGraph(result.graph);
+    pipelineResumePollers();
     const blocked = PIPELINE.graph.nodes.filter(node => node.result && node.result.state === 'blocked').length;
     toast(blocked ? '本地步骤已执行；远程生成/GLB 校验等待 Provider 或模型输入' : '流水线步骤已执行');
   }catch(error){toast(error.message);}
@@ -1055,6 +1078,25 @@ function pipelinePollKey(assetId, kind, nodeId){
   return assetId + '|' + kind + '|' + nodeId;
 }
 
+/** 只接受不旧于当前内存图的响应，避免乱序返回把新任务/新结果冲掉。 */
+function pipelineAdoptGraph(graph){
+  if(!graph || !Array.isArray(graph.nodes)) return false;
+  const incoming=Number(graph.revision)||0;
+  const current=Number(PIPELINE.graph && PIPELINE.graph.revision)||0;
+  if(PIPELINE.graph && incoming<current) return false;
+  PIPELINE.graph=graph;
+  return true;
+}
+
+/** 页面刷新或切换资产后，恢复所有仍在排队/运行中的远程任务轮询。 */
+function pipelineResumePollers(){
+  if(!PIPELINE.graph || !PIPELINE.assetId) return;
+  PIPELINE.graph.nodes.forEach(node=>{
+    const task=node.result && node.result.providerTask;
+    if(task && (task.state==='queued'||task.state==='running')) pipelineTrackRemote(node.id);
+  });
+}
+
 function pipelineRefreshNode(nodeId){
   if(cur !== 'pipeline' || !PIPELINE.graph) return;
   const node = PIPELINE.graph.nodes.find(item => item.id === nodeId);
@@ -1074,24 +1116,27 @@ function pipelineRefreshNode(nodeId){
 
 function pipelinePollLoop(assetId, kind, nodeId, attempt, delay, nodeType){
   const key = pipelinePollKey(assetId, kind, nodeId);
-  if(PIPELINE.pollers[key]) return;
+  if(PIPELINE.pollers[key] || PIPELINE.polling[key]) return;
   if(!nodeType && PIPELINE.assetId === assetId && PIPELINE.kind === kind && PIPELINE.graph){
     const polled = PIPELINE.graph.nodes.find(item=>item.id === nodeId);
     nodeType = polled ? polled.type : '';
   }
   PIPELINE.pollers[key] = setTimeout(async () => {
     delete PIPELINE.pollers[key];
-    if(!pipelineBridgeReady()) return;
+    PIPELINE.polling[key] = true;
+    let reschedule = null;
     try{
+      if(!pipelineBridgeReady()) return;
       const result = await pipelineApi('pipeline/provider/poll', {assetId, kind, nodeId});
       const task = result.task || {};
       const current = PIPELINE.assetId === assetId && PIPELINE.kind === kind;
-      if(current){
-        PIPELINE.graph = result.graph;
-        pipelineRefreshNode(nodeId);
+      if(current && pipelineAdoptGraph(result.graph)) pipelineRefreshNode(nodeId);
+      if(result.stale){
+        if(task.state === 'queued' || task.state === 'running') reschedule = [0, 4000];
+        return;
       }
       if(task.state === 'queued' || task.state === 'running'){
-        pipelinePollLoop(assetId, kind, nodeId, 0, 4000, nodeType);
+        reschedule = [0, 4000];
         return;
       }
       if(current){
@@ -1104,14 +1149,19 @@ function pipelinePollLoop(assetId, kind, nodeId, attempt, delay, nodeType){
         pipelineAdoptTask(assetId, kind, nodeId, nodeType, task);
       }
     }catch(error){
-      if(attempt < 3) pipelinePollLoop(assetId, kind, nodeId, attempt + 1, 5000, nodeType);
+      if(attempt < 3) reschedule = [attempt + 1, 5000];
       else toast('查询远程任务失败：' + error.message);
+    }finally{
+      delete PIPELINE.polling[key];
+      if(reschedule) pipelinePollLoop(assetId, kind, nodeId, reschedule[0], reschedule[1], nodeType);
     }
   }, delay == null ? 1500 : delay);
 }
 
 function pipelineTrackRemote(nodeId){
   const key = pipelinePollKey(PIPELINE.assetId, PIPELINE.kind, nodeId);
+  // 同一节点已有请求在途时不要重复发；在途结果会按最新 taskId 自愈或续排
+  if(PIPELINE.polling[key]) return;
   if(PIPELINE.pollers[key]){ clearTimeout(PIPELINE.pollers[key]); delete PIPELINE.pollers[key]; }
   const node = PIPELINE.graph && PIPELINE.graph.nodes.find(item=>item.id===nodeId);
   pipelinePollLoop(PIPELINE.assetId, PIPELINE.kind, nodeId, 0, undefined, node && node.type);
@@ -1136,11 +1186,13 @@ async function pipelineSubmitRemote(nodeId){
   try{
     await pipelineSave();
     const result=await pipelineApi('pipeline/provider/submit',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId,confirmRemote:true});
-    PIPELINE.graph=result.graph;
+    pipelineAdoptGraph(result.graph);
     delete PIPELINE.remote[nodeId];
-    const task=((PIPELINE.graph.nodes.find(item=>item.id===nodeId)||{}).result||{}).providerTask||{};
+    const task=((PIPELINE.graph.nodes.find(item=>item.id===nodeId)||{}).result||{}).providerTask
+      || result.task || {taskId:result.taskId, state:result.state, provider:result.provider || provider};
     toast(task.state==='success' ? `${label} 生成完成` : `已提交 ${label} 任务：${task.taskId||result.taskId}`);
     pipelineRefreshNode(nodeId);
+    pipelineResumePollers();
     if(task.state==='queued'||task.state==='running') pipelineTrackRemote(nodeId);
     if(task.state==='success') pipelineAdoptTask(PIPELINE.assetId,PIPELINE.kind,nodeId,node.type,task);
   }catch(error){
@@ -1154,11 +1206,16 @@ async function pipelinePollRemote(nodeId){
   if(!pipelineBridgeReady()){toast('查询远程任务需要 Bridge 在线并绑定项目');return;}
   try{
     const result=await pipelineApi('pipeline/provider/poll',{assetId:PIPELINE.assetId,kind:PIPELINE.kind,nodeId});
-    PIPELINE.graph=result.graph;
+    const adopted=pipelineAdoptGraph(result.graph);
     const task=result.task||{};
+    if(result.stale){
+      if(adopted) pipelineRefreshNode(nodeId);
+      if(task.state==='queued'||task.state==='running') pipelineTrackRemote(nodeId);
+      return;
+    }
     const label=task.provider==='ark'?'Ark':(task.provider==='tripo'?'Tripo':'Provider');
     toast(label+' 状态：'+pipelineStateLabel(task.state, task.progress));
-    pipelineRefreshNode(nodeId);
+    if(adopted) pipelineRefreshNode(nodeId);
     if(task.state==='queued'||task.state==='running') pipelineTrackRemote(nodeId);
     const polled=PIPELINE.graph&&PIPELINE.graph.nodes.find(item=>item.id===nodeId);
     if(task.state==='success'&&polled) pipelineAdoptTask(PIPELINE.assetId,PIPELINE.kind,nodeId,polled.type,task);
@@ -1525,19 +1582,21 @@ function pipelineParamForm(node){
       ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
       ${pipelineParamNumber(node, 'faceLimit', '面数上限', 'min="500" max="150000" step="500"', '3000')}
       ${pipelineParamCheck(node, 'texture', '生成贴图', false)}
-      <small class="pipeline-params-hint">读取上游单件效果图生成单件模型，输出接到组装节点的部件端口。</small>
+      <small class="pipeline-params-hint">读取上游单件效果图生成单件模型。Ark Seed3D 当前不接受面数参数，单件仍是高模；请把 mesh 口接到减面节点，再把减面节点的 part 口接到组装节点。</small>
     </div>`;
   }
   if(node.type === 'assemble'){
     return `<div class="pipeline-params">
+      ${pipelineParamNumber(node, 'decimateFaces', '每件目标面数（额外减面）', 'min="0" max="2000000" step="500"', '0')}
+      ${pipelineParamCheck(node, 'visionAssist', '用整体效果图做视觉分析', true)}
       ${pipelineParamCheck(node, 'resetLayout', '丢弃旧布局', false)}
-      <small class="pipeline-params-hint">由 Blender 按布局移动/缩放/旋转各部件并合并；布局写入 parts/layout_&lt;节点&gt;.json，可让 AI 调整后重跑。「丢弃旧布局」会丢出手动/自动布局并重新并排贴地。有单件未就绪时会跳过它们、只组装已就绪部件，结果是不完整的残缺模型（摘要里标出残缺件数），被跳过部件的旧布局会保留。</small>
+      <small class="pipeline-params-hint">把整体效果图接到 image 口后，组装时会让 Ark 视觉模型看图，得出履带/动臂/铲斗比例和驾驶室左右侧，再按车身/履带/驾驶室/动臂/铲斗等角色整体装配。视觉分析会产生一次付费 Provider 请求（仅在运行组装时触发），可关闭。已接减面节点时这里的额外减面保持 0，避免重复减面。布局写入 parts/layout_&lt;节点&gt;.json，可手动调整后重跑；视觉结果变化或旧规则版本会自动重算。「丢弃旧布局」会丢弃当前变换重新自动布局。有单件未就绪时会跳过它们，结果为残缺模型（摘要标出残缺件数）。</small>
     </div>`;
   }
   if(node.type === 'decimate'){
     return `<div class="pipeline-params">
       ${pipelineParamNumber(node, 'targetFaces', '目标面数', 'min="50" max="2000000" step="50"', '900')}
-      <small class="pipeline-params-hint">由 Blender Decimate 执行；每次运行生成一个新 GLB，满意后手动「应用减面」。</small>
+      <small class="pipeline-params-hint">由 Blender Decimate 执行；每次运行生成一个新 GLB，满意后手动「应用减面」。把 part 口接到组装节点可把减面结果作为单件输入。</small>
     </div>`;
   }
   return `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
@@ -1649,7 +1708,9 @@ function renderPipelineView(){
   const machine= S.machines.find(item=>item.id===PIPELINE.assetId);
   const item= S.items.find(value=>value.id===PIPELINE.assetId);
   const element= (S.elements||[]).find(value=>value.id===PIPELINE.assetId);
-  const promptNode=PIPELINE.graph.template==='parts'?null:PIPELINE.graph.nodes.find(node=>node.type==='prompt');
+  const promptNode=PIPELINE.graph.template==='parts'
+    ? PIPELINE.graph.nodes.find(node=>node.id==='prompt_overall')
+    : PIPELINE.graph.nodes.find(node=>node.type==='prompt');
   if(promptNode && !promptNode.params.text && machine && typeof machinePrompt==='function') promptNode.params.text=machinePrompt(machine,{withTech:true});
   if(promptNode && !promptNode.params.text && item && typeof itemPrompt==='function') promptNode.params.text=itemPrompt(item,{withTech:true});
   if(promptNode && !promptNode.params.text && element && typeof elementPrompt==='function') promptNode.params.text=elementPrompt(element,{withTech:true});

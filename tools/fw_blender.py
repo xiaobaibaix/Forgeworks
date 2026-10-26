@@ -393,6 +393,50 @@ def _assemble(args):
             translate = item.get('translate') or [0, 0, 0]
             joined.location = tuple(float(value) for value in translate)
 
+        # 挂接件（铲斗）按动臂真实网格补位：包围盒近似会在减面后留下可见缝。
+        report['snaps'] = []
+        snaps = plan.get('snaps') if isinstance(plan, dict) else None
+        if isinstance(snaps, list):
+            from mathutils.kdtree import KDTree
+
+            bpy.context.view_layer.update()
+            objects_by_id = {obj.get('partId'): obj for obj in bpy.context.scene.objects
+                             if obj.type == 'MESH'}
+            for snap in snaps:
+                if not isinstance(snap, dict):
+                    continue
+                source = objects_by_id.get(snap.get('part'))
+                target = objects_by_id.get(snap.get('to'))
+                if source is None or target is None or source is target:
+                    continue
+                tree = KDTree(len(target.data.vertices))
+                for index, vertex in enumerate(target.data.vertices):
+                    tree.insert(target.matrix_world @ vertex.co, index)
+                tree.balance()
+                best = None
+                for vertex in source.data.vertices:
+                    world = source.matrix_world @ vertex.co
+                    point, index, distance = tree.find(world)
+                    if best is None or distance < best[0]:
+                        best = (distance, point - world)
+                if best is None:
+                    continue
+                gap, delta = best
+                planar = (delta.x ** 2 + delta.z ** 2) ** 0.5
+                record = {'part': snap.get('part'), 'to': snap.get('to'),
+                          'gap': round(gap, 4), 'planarGap': round(planar, 4)}
+                if 0.003 <= planar <= 0.5:
+                    overlap = 0.01
+                    factor = (planar + overlap) / planar
+                    source.location.x += delta.x * factor
+                    source.location.z += delta.z * factor
+                    record['moved'] = [round(delta.x * factor, 4),
+                                       round(delta.z * factor, 4)]
+                else:
+                    record['moved'] = [0.0, 0.0]
+                report['snaps'].append(record)
+            bpy.context.view_layer.update()
+
         os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
         try:
             bpy.ops.export_scene.gltf(filepath=args.output, export_format='GLB',
@@ -407,6 +451,7 @@ def _assemble(args):
                 'name': obj.name,
                 'min': [round(value, 6) for value in lower],
                 'max': [round(value, 6) for value in upper],
+                'location': [round(value, 6) for value in obj.location],
                 'triangles': len(obj.data.loop_triangles),
             })
         if not os.path.isfile(args.output):

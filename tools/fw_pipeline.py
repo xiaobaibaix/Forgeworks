@@ -8,16 +8,19 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 
 import fw_parts
+import fw_providers
 
 ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
 
 DECIMATE_DEFAULT_FACES = 900
 DECIMATE_MIN_FACES = 50
 DECIMATE_MAX_FACES = 2000000
+ASSEMBLE_DEFAULT_FACES = 10000
 BLENDER_DECIMATE_TIMEOUT = 300
 
 NODE_TYPES = {
@@ -25,9 +28,9 @@ NODE_TYPES = {
     'textToImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
     'partImage': {'in': {'text': 'text', 'image': 'image'}, 'out': {'image': 'image'}},
-    'partModel': {'in': {'image': 'image'}, 'out': {'part': 'part'}},
-    'assemble': {'in': {'text': 'text', 'part': 'part'}, 'out': {'mesh': 'mesh'}},
-    'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
+    'partModel': {'in': {'image': 'image'}, 'out': {'part': 'part', 'mesh': 'mesh'}},
+    'assemble': {'in': {'text': 'text', 'part': 'part', 'image': 'image'}, 'out': {'mesh': 'mesh'}},
+    'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh', 'part': 'part'}},
     'styleApply': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'uv': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'lod': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
@@ -51,6 +54,36 @@ MULTI_INPUTS = {('assemble', 'part')}
 def _digest(value):
     payload = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()
     return hashlib.sha256(payload).hexdigest()
+
+
+_GRAPH_LOCKS = {}
+_GRAPH_LOCKS_GUARD = threading.Lock()
+
+
+def _graph_lock(root):
+    """同一资产的图读改写必须串行；锁按存档目录复用，不跨资产阻塞。"""
+    key = os.path.realpath(root)
+    with _GRAPH_LOCKS_GUARD:
+        lock = _GRAPH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _GRAPH_LOCKS[key] = lock
+        return lock
+
+
+def _graph_hashes(graph, by_id=None, order=None):
+    if by_id is None or order is None:
+        by_id, order = validate_graph(graph)
+    previous, hashes = {}, {}
+    for node_id in order:
+        node = by_id[node_id]
+        upstream = [edge for edge in graph['edges'] if edge['to'] == node_id]
+        input_hash = _digest([(edge, previous.get(edge['from'])) for edge in upstream])
+        param_hash = _digest({'type': node['type'], 'params': node.get('params', {})})
+        signature = _digest([input_hash, param_hash])
+        hashes[node_id] = (input_hash, param_hash, signature)
+        previous[node_id] = signature
+    return hashes
 
 
 def validate_graph(graph):
@@ -160,8 +193,9 @@ def pipeline_root(forgeworks_root, asset_id, kind='machine'):
     kind = normalize_kind(kind)
     source_dir = _manifest_source_dir(forgeworks_root, asset_id)
     if source_dir:
-        return os.path.join(source_dir, 'pipeline')
-    return os.path.join(forgeworks_root, '_Source', *ASSET_KIND_DIRS[kind].split('/'), asset_id, 'pipeline')
+        return os.path.normpath(os.path.join(source_dir, 'pipeline'))
+    return os.path.normpath(os.path.join(forgeworks_root, '_Source',
+                                         *ASSET_KIND_DIRS[kind].split('/'), asset_id, 'pipeline'))
 
 
 def legacy_pipeline_root(forgeworks_root, asset_id):
@@ -218,39 +252,107 @@ def _write_prompt(root, graph):
         stream.write(text)
 
 
+def _write_json_atomic(path, value):
+    directory = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(prefix='.graph-', suffix='.tmp', dir=directory)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _write_graph(root, graph):
+    _write_json_atomic(os.path.join(root, 'graph.json'), graph)
+    _write_prompt(root, graph)
+
+
+def _current_revision(path):
+    try:
+        with open(path, encoding='utf-8') as stream:
+            return int((json.load(stream) or {}).get('revision') or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0
+
+
 def save_graph(forgeworks_root, asset_id, graph, kind='machine'):
     by_id, order = validate_graph(graph)
     kind = normalize_kind(kind)
-    graph = dict(graph, assetId=asset_id, revision=int(graph.get('revision') or 0) + 1,
-                 updatedAt=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     root = pipeline_root(forgeworks_root, asset_id, kind)
     os.makedirs(root, exist_ok=True)
-    _migrate_legacy_outputs(forgeworks_root, asset_id, root)
     path = os.path.join(root, 'graph.json')
-    tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as stream:
-        json.dump(graph, stream, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
-    _write_prompt(root, graph)
-    previous = {}
-    for node_id in order:
-        node = by_id[node_id]
-        upstream = [edge for edge in graph['edges'] if edge['to'] == node_id]
-        input_hash = _digest([(edge, previous.get(edge['from'])) for edge in upstream])
-        param_hash = _digest({'type': node['type'], 'params': node.get('params', {})})
-        signature = _digest([input_hash, param_hash])
-        old = node.get('result') or {}
-        # 本地阶段由浏览器端推导，签名无法在 Python 侧复算，按来源标记保留
-        ui_derived = old.get('source') == 'forgeworks-ui' and old.get('state') == 'done'
-        preserved = ('done', 'queued', 'running', 'failed')
-        matching = old.get('signature') == signature and old.get('state') in preserved
-        state = 'done' if ui_derived else (old.get('state') if matching else 'dirty')
-        node['result'] = dict(old, state=state, signature=signature, inputHash=input_hash, paramHash=param_hash)
-        previous[node_id] = signature
-    with open(tmp, 'w', encoding='utf-8') as stream:
-        json.dump(graph, stream, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    with _graph_lock(root):
+        _migrate_legacy_outputs(forgeworks_root, asset_id, root)
+        graph = dict(graph, assetId=asset_id,
+                     revision=max(_current_revision(path), int(graph.get('revision') or 0)) + 1,
+                     updatedAt=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        hashes = _graph_hashes(graph, by_id, order)
+        for node_id in order:
+            node = by_id[node_id]
+            input_hash, param_hash, signature = hashes[node_id]
+            old = node.get('result') or {}
+            # 本地阶段由浏览器端推导，签名无法在 Python 侧复算，按来源标记保留
+            ui_derived = old.get('source') == 'forgeworks-ui' and old.get('state') == 'done'
+            preserved = ('done', 'queued', 'running', 'failed')
+            matching = old.get('signature') == signature and old.get('state') in preserved
+            state = 'done' if ui_derived else (old.get('state') if matching else 'dirty')
+            node['result'] = dict(old, state=state, signature=signature,
+                                  inputHash=input_hash, paramHash=param_hash)
+        _write_graph(root, graph)
     return graph
+
+
+def _merge_client_results(disk, incoming):
+    """客户端只负责布局/参数/连线；Provider 与本地执行结果以服务端最新图为准。"""
+    disk_nodes = {node.get('id'): node for node in disk.get('nodes') or [] if isinstance(node, dict)}
+    for node in incoming.get('nodes') or []:
+        if not isinstance(node, dict):
+            continue
+        old = disk_nodes.get(node.get('id'))
+        if not old or old.get('type') != node.get('type'):
+            continue
+        incoming_result = node.get('result')
+        if isinstance(incoming_result, dict) and incoming_result.get('source') == 'forgeworks-ui':
+            continue
+        old_result = old.get('result')
+        if isinstance(old_result, dict):
+            node['result'] = old_result
+
+
+def save_client_graph(forgeworks_root, asset_id, incoming, kind='machine'):
+    """整图保存不能覆盖并发写入的远程任务；在锁内与最新图合并结果后落盘。"""
+    if not isinstance(incoming, dict):
+        raise ValueError('graph 必须是对象')
+    kind = normalize_kind(kind)
+    validate_graph(incoming)
+    root = pipeline_root(forgeworks_root, asset_id, kind)
+    with _graph_lock(root):
+        try:
+            disk = load_graph(forgeworks_root, asset_id, kind)
+        except (OSError, ValueError, TypeError):
+            disk = None
+        if disk:
+            _merge_client_results(disk, incoming)
+        return save_graph(forgeworks_root, asset_id, incoming, kind)
+
+
+def update_graph(forgeworks_root, asset_id, kind, updater):
+    """锁内读取最新图、应用更新再保存，网络/Blender 等慢操作必须在锁外完成。"""
+    if not callable(updater):
+        raise ValueError('updater 必须可调用')
+    kind = normalize_kind(kind)
+    root = pipeline_root(forgeworks_root, asset_id, kind)
+    with _graph_lock(root):
+        graph = load_graph(forgeworks_root, asset_id, kind)
+        updated = updater(graph)
+        if isinstance(updated, dict):
+            graph = updated
+        return save_graph(forgeworks_root, asset_id, graph, kind)
 
 
 def resolve_output(forgeworks_root, asset_id, kind, filename):
@@ -268,6 +370,17 @@ def _decimate_target(value):
     except (TypeError, ValueError):
         target = DECIMATE_DEFAULT_FACES
     return max(DECIMATE_MIN_FACES, min(DECIMATE_MAX_FACES, target))
+
+
+def _assemble_target(value):
+    """组装前每件目标面数；0 表示不减面，缺省则使用 10k。"""
+    if value in (None, ''):
+        return ASSEMBLE_DEFAULT_FACES
+    try:
+        target = int(value)
+    except (TypeError, ValueError):
+        return ASSEMBLE_DEFAULT_FACES
+    return max(0, min(DECIMATE_MAX_FACES, target))
 
 
 def _decimate_input(forgeworks_root, asset_id, kind, graph, by_id, node_id):
@@ -327,6 +440,39 @@ def _part_display_name(graph, by_id, node_id, output):
     return str((source or {}).get('id') or node_id)
 
 
+def _mesh_source_node(graph, by_id, node_id):
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node_id and edge.get('in') == 'mesh'), None)
+    return by_id.get(edge.get('from')) if edge else None
+
+
+def _decimated_part(graph, by_id, node):
+    """减面节点输出的是 GLB；名称/描述/来源仍取它上游的单件模型。"""
+    result = node.get('result') or {}
+    if result.get('state') != 'done':
+        raise ValueError(result.get('state') or '未运行')
+    output = result.get('output') or {}
+    mesh_path = output.get('meshPath')
+    if not mesh_path:
+        raise ValueError('缺少减面结果')
+    upstream = _mesh_source_node(graph, by_id, node.get('id'))
+    if not upstream or upstream.get('type') != 'partModel':
+        raise ValueError('上游不是单件模型')
+    upstream_result = upstream.get('result') or {}
+    task = upstream_result.get('providerTask') or {}
+    task_output = task.get('output') if isinstance(task.get('output'), dict) else {}
+    if task.get('state') != 'success':
+        raise ValueError('单件模型%s' % (task.get('state') or '未运行'))
+    if not task_output.get('modelPath'):
+        raise ValueError('单件模型缺少模型路径')
+    return {
+        'id': upstream.get('id'),
+        'name': _part_display_name(graph, by_id, upstream.get('id'), task_output),
+        'description': str((upstream_result.get('output') or {}).get('description') or ''),
+        'mesh': 'outputs/' + os.path.basename(str(mesh_path)),
+    }
+
+
 def _assemble_part_inputs(graph, by_id, node_id):
     edges = [edge for edge in graph['edges']
              if edge.get('to') == node_id and edge.get('in') == 'part']
@@ -335,6 +481,16 @@ def _assemble_part_inputs(graph, by_id, node_id):
     parts, missing = [], []
     for edge in edges:
         source = by_id.get(edge.get('from')) or {}
+        if source.get('type') == 'decimate':
+            # 显式减面节点的输出才是组装输入；单件模型本身保持未减面。
+            try:
+                parts.append(_decimated_part(graph, by_id, source))
+            except ValueError as error:
+                missing.append('%s（%s）' % (source.get('id'), error))
+            continue
+        if source.get('type') != 'partModel':
+            missing.append('%s（不支持的部件来源）' % (source.get('id') or edge.get('from')))
+            continue
         result = source.get('result') or {}
         task = result.get('providerTask') or {}
         output = task.get('output') if isinstance(task.get('output'), dict) else {}
@@ -358,6 +514,33 @@ def _assemble_part_inputs(graph, by_id, node_id):
     if not parts:
         raise ValueError('组装没有可用的单件模型：' + '、'.join(missing) + '；请先运行这些单件模型节点')
     return parts, missing
+
+
+def _assemble_reference_image(forgeworks_root, asset_id, kind, graph, by_id, node_id):
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node_id and edge.get('in') == 'image'), None)
+    source = by_id.get(edge.get('from')) if edge else None
+    if not source:
+        return ''
+    result = source.get('result') or {}
+    task_output = (result.get('providerTask') or {}).get('output') or {}
+    output = result.get('output') or {}
+    image_path = task_output.get('imagePath') or output.get('imagePath')
+    if not image_path:
+        return ''
+    return resolve_output(forgeworks_root, asset_id, kind, os.path.basename(str(image_path))) or ''
+
+
+def _load_provider_config(value):
+    if isinstance(value, dict):
+        return value
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bridge_config.json')
+    try:
+        with open(path, encoding='utf-8') as stream:
+            config = json.load(stream)
+    except (OSError, ValueError):
+        return {}
+    return config if isinstance(config, dict) else {}
 
 
 def _decimate_with_blender(blender_path, source, output, target_faces):
@@ -387,10 +570,12 @@ def _decimate_with_blender(blender_path, source, output, target_faces):
         return report
 
 
-def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine', blender_path=None):
+def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine',
+                  blender_path=None, provider_config=None):
     kind = normalize_kind(kind)
     graph = load_graph(forgeworks_root, asset_id, kind)
     by_id, order = validate_graph(graph)
+    snapshot_hashes = _graph_hashes(graph, by_id, order)
     if target_id and target_id not in by_id:
         raise ValueError('目标节点不存在')
     if target_id and not through:
@@ -432,14 +617,54 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 outputs_dir = os.path.join(root, 'outputs')
                 os.makedirs(outputs_dir, exist_ok=True)
                 filename = 'model_assembly_%s.glb' % node_id
+                params = node.get('params') or {}
+                decimate_faces = _assemble_target(params.get('decimateFaces'))
+                layout_mode = str(params.get('layoutMode') or 'coherent')
+                assembly_prompt = _upstream_text(graph, by_id, node_id)
+                reference = _assemble_reference_image(
+                    forgeworks_root, asset_id, kind, graph, by_id, node_id)
+                relative_reference = (os.path.relpath(reference, root).replace(os.sep, '/')
+                                      if reference else '')
+                has_image_edge = any(edge.get('to') == node_id and edge.get('in') == 'image'
+                                     for edge in graph['edges'])
+                hints, vision = {}, {'enabled': False, 'state': 'no-reference'}
+                if reference and bool(params.get('visionAssist', True)):
+                    try:
+                        hints, vision_meta = fw_providers.analyze_layout(
+                            _load_provider_config(provider_config), reference, parts,
+                            prompt=assembly_prompt,
+                            model=str(params.get('visionModel') or ''))
+                        vision = dict({'enabled': True, 'state': 'done',
+                                       'referenceImage': relative_reference}, **vision_meta)
+                    except (ValueError, RuntimeError, OSError) as error:
+                        vision = {'enabled': True, 'state': 'failed',
+                                  'referenceImage': relative_reference,
+                                  'error': str(error)[:300]}
+                        warnings_note = '整体图视觉分析失败，已按默认规则组装：%s' % str(error)[:200]
+                    else:
+                        warnings_note = ''
+                elif reference:
+                    vision = {'enabled': False, 'state': 'disabled',
+                              'referenceImage': relative_reference}
+                    warnings_note = ''
+                elif has_image_edge:
+                    vision = {'enabled': True, 'state': 'blocked',
+                              'error': '整体效果图未就绪，本次未做视觉分析'}
+                    warnings_note = '整体效果图未就绪，本次未做视觉分析'
+                else:
+                    warnings_note = ''
                 assembled = fw_parts.assemble_parts(
                     parts, os.path.join(outputs_dir, filename),
                     os.path.join(root, 'parts', 'layout_%s.json' % node_id), root,
-                    assembly_prompt=_upstream_text(graph, by_id, node_id),
-                    reset=bool((node.get('params') or {}).get('resetLayout')),
+                    assembly_prompt=assembly_prompt,
+                    reset=bool(params.get('resetLayout')),
                     blender_path=blender_path, asset_id=asset_id, node_id=node_id,
-                    preserve_absent=bool(missing))
+                    preserve_absent=bool(missing), decimate_faces=decimate_faces,
+                    layout_mode=layout_mode, layout_hints=hints,
+                    reference_image=relative_reference)
                 warnings = list(assembled['warnings'])
+                if warnings_note:
+                    warnings.insert(0, warnings_note)
                 if missing:
                     warnings.insert(0, '结果残缺：%d 个单件未就绪，未参与组装：%s'
                                     % (len(missing), '、'.join(missing)))
@@ -447,7 +672,14 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 result['output'] = {
                     'meshPath': assembled['meshPath'],
                     'parts': assembled['parts'],
-                    'triangles': assembled['triangles'],
+                    'triangles': assembled.get('triangles'),
+                    'trianglesBefore': assembled.get('trianglesBefore'),
+                    'decimateFaces': assembled.get('decimateFaces'),
+                    'decimated': assembled.get('decimated') or [],
+                    'layoutMode': assembled.get('layoutMode'),
+                    'layoutHints': assembled.get('layoutHints') or {},
+                    'referenceImage': relative_reference,
+                    'vision': vision,
                     'layoutPath': os.path.relpath(assembled['layoutPath'], root).replace(os.sep, '/'),
                     'warnings': warnings,
                     'partial': bool(missing),
@@ -520,12 +752,36 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             node.setdefault('result', {})['state'] = 'blocked'
             node['result']['error'] = '该处理器尚未实现；为避免产生虚假结果，此节点不标记为完成'
         outputs[node_id] = node.get('result', {}).get('output')
-    graph['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     root = pipeline_root(forgeworks_root, asset_id, kind)
     os.makedirs(root, exist_ok=True)
-    with open(os.path.join(root, 'graph.json'), 'w', encoding='utf-8') as stream:
-        json.dump(graph, stream, ensure_ascii=False, indent=2)
-    _write_prompt(root, graph)
+    with _graph_lock(root):
+        try:
+            latest = load_graph(forgeworks_root, asset_id, kind)
+        except (OSError, ValueError, TypeError):
+            latest = graph
+        latest_by_id, latest_order = validate_graph(latest)
+        latest_hashes = _graph_hashes(latest, latest_by_id, latest_order)
+        changed = False
+        for node_id in order:
+            computed = by_id[node_id]
+            current = latest_by_id.get(node_id)
+            if not current or current.get('type') != computed.get('type'):
+                continue
+            # 执行期间参数/连线变了，这次本地结果不能覆盖最新图
+            if snapshot_hashes[node_id][2] != latest_hashes[node_id][2]:
+                continue
+            # 远程任务的状态由 submit/poll 维护；本地运行不覆盖正在等待/已完成的任务
+            if computed['type'] in PROVIDER_TYPES:
+                current_task = (current.get('result') or {}).get('providerTask') or {}
+                if current_task:
+                    continue
+            current['result'] = computed.get('result')
+            changed = True
+        if changed:
+            latest = dict(latest, revision=int(latest.get('revision') or 0) + 1,
+                          updatedAt=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+            _write_graph(root, latest)
+        graph = latest
     return {'graph': graph, 'ran': order}
 
 
@@ -590,9 +846,15 @@ def starter_graph(asset_id, template='machine'):
             {'id': 'partModel_rear_window', 'type': 'partModel', 'x': 780, 'y': 2520,
              'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
             {'id': 'prompt_assemble', 'type': 'prompt', 'x': 60, 'y': 2940, 'params': {'text': ''}},
-            {'id': 'assemble', 'type': 'assemble', 'x': 1020, 'y': 1470,
-             'params': {'resetLayout': False}},
+            {'id': 'assemble', 'type': 'assemble', 'x': 1260, 'y': 1470,
+             'params': {'resetLayout': False, 'decimateFaces': 0, 'visionAssist': True}},
         ]
+        # 每个单件模型先经过显式减面节点，再把减面结果送进组装节点。
+        for index, part in enumerate(('body', 'roof', 'wheel', 'door',
+                                      'side_window', 'rear_window')):
+            nodes.append({'id': 'decimate_' + part, 'type': 'decimate',
+                          'x': 1020, 'y': 420 + index * 420,
+                          'params': {'targetFaces': ASSEMBLE_DEFAULT_FACES}})
         for index, (node_id, node_type, params) in enumerate([
                 ('style', 'styleApply', {'mode': 'primitive'}),
                 ('uv', 'uv', {'mode': 'primitive'}),
@@ -602,7 +864,7 @@ def starter_graph(asset_id, template='machine'):
                 ('metadata', 'metadata', {'formats': ['csv', 'json']}),
                 ('validate', 'validate', {'maxTriangles': 20000}),
                 ('export', 'export', {})]):
-            nodes.append({'id': node_id, 'type': node_type, 'x': 1260 + index * 240, 'y': 1470,
+            nodes.append({'id': node_id, 'type': node_type, 'x': 1500 + index * 240, 'y': 1470,
                           'params': params})
         edges = [
             {'from': 'prompt_overall', 'out': 'text', 'to': 'overall', 'in': 'text'},
@@ -612,24 +874,31 @@ def starter_graph(asset_id, template='machine'):
             {'from': 'overall', 'out': 'image', 'to': 'partImage_door', 'in': 'image'},
             {'from': 'overall', 'out': 'image', 'to': 'partImage_side_window', 'in': 'image'},
             {'from': 'overall', 'out': 'image', 'to': 'partImage_rear_window', 'in': 'image'},
+            {'from': 'overall', 'out': 'image', 'to': 'assemble', 'in': 'image'},
             {'from': 'prompt_body', 'out': 'text', 'to': 'partImage_body', 'in': 'text'},
             {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
-            {'from': 'partModel_body', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'partModel_body', 'out': 'mesh', 'to': 'decimate_body', 'in': 'mesh'},
+            {'from': 'decimate_body', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_roof', 'out': 'text', 'to': 'partImage_roof', 'in': 'text'},
             {'from': 'partImage_roof', 'out': 'image', 'to': 'partModel_roof', 'in': 'image'},
-            {'from': 'partModel_roof', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'partModel_roof', 'out': 'mesh', 'to': 'decimate_roof', 'in': 'mesh'},
+            {'from': 'decimate_roof', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_wheel', 'out': 'text', 'to': 'partImage_wheel', 'in': 'text'},
             {'from': 'partImage_wheel', 'out': 'image', 'to': 'partModel_wheel', 'in': 'image'},
-            {'from': 'partModel_wheel', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'partModel_wheel', 'out': 'mesh', 'to': 'decimate_wheel', 'in': 'mesh'},
+            {'from': 'decimate_wheel', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_door', 'out': 'text', 'to': 'partImage_door', 'in': 'text'},
             {'from': 'partImage_door', 'out': 'image', 'to': 'partModel_door', 'in': 'image'},
-            {'from': 'partModel_door', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'partModel_door', 'out': 'mesh', 'to': 'decimate_door', 'in': 'mesh'},
+            {'from': 'decimate_door', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_side_window', 'out': 'text', 'to': 'partImage_side_window', 'in': 'text'},
             {'from': 'partImage_side_window', 'out': 'image', 'to': 'partModel_side_window', 'in': 'image'},
-            {'from': 'partModel_side_window', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'partModel_side_window', 'out': 'mesh', 'to': 'decimate_side_window', 'in': 'mesh'},
+            {'from': 'decimate_side_window', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_rear_window', 'out': 'text', 'to': 'partImage_rear_window', 'in': 'text'},
             {'from': 'partImage_rear_window', 'out': 'image', 'to': 'partModel_rear_window', 'in': 'image'},
-            {'from': 'partModel_rear_window', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'partModel_rear_window', 'out': 'mesh', 'to': 'decimate_rear_window', 'in': 'mesh'},
+            {'from': 'decimate_rear_window', 'out': 'part', 'to': 'assemble', 'in': 'part'},
             {'from': 'prompt_assemble', 'out': 'text', 'to': 'assemble', 'in': 'text'},
             {'from': 'assemble', 'out': 'mesh', 'to': 'style', 'in': 'mesh'},
             {'from': 'style', 'out': 'mesh', 'to': 'uv', 'in': 'mesh'},

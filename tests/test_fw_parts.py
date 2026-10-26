@@ -18,6 +18,7 @@ def _bbox(low, high):
 def _layout():
     return {
         'schemaVersion': 1,
+        'layoutVersion': fw_parts.LAYOUT_VERSION,
         'assetId': 'M1',
         'nodeId': 'assemble_1',
         'assemblyPrompt': '车身居中',
@@ -157,6 +158,83 @@ class AutoLayoutTest(unittest.TestCase):
                                    'sourceBbox': _bbox([0, 0, 0], [0, 0, 0])}])
 
 
+class CoherentLayoutTest(unittest.TestCase):
+    def _entries(self):
+        return [
+            {'id': 'partModel_body', 'name': '车身', 'mesh': 'body.glb',
+             'sourceBbox': _bbox([0, -1, 0], [2, 1, 1])},
+            {'id': 'partModel_track', 'name': '履带', 'mesh': 'track.glb',
+             'sourceBbox': _bbox([0, -1, 0], [3, 1, 0.5])},
+            {'id': 'partModel_cab', 'name': '驾驶室', 'mesh': 'cab.glb',
+             'sourceBbox': _bbox([0, -0.5, 0], [0.6, 0.5, 0.8])},
+            {'id': 'partModel_boom', 'name': '动臂', 'mesh': 'boom.glb',
+             'sourceBbox': _bbox([0, -0.2, 0], [2, 0.2, 0.4])},
+            {'id': 'partModel_bucket', 'name': '铲斗', 'mesh': 'bucket.glb',
+             'sourceBbox': _bbox([0, -0.5, 0], [0.8, 0.5, 0.6])},
+        ]
+
+    def test_parts_stack_into_a_machine_instead_of_side_by_side(self):
+        entries = self._entries()
+        laid_out = {item['id']: item for item in fw_parts.coherent_layout(entries)}
+        self.assertEqual([item['id'] for item in fw_parts.coherent_layout(entries)],
+                         [entry['id'] for entry in entries])
+        track = laid_out['partModel_track']
+        body = laid_out['partModel_body']
+        cab = laid_out['partModel_cab']
+        boom = laid_out['partModel_boom']
+        bucket = laid_out['partModel_bucket']
+        self.assertAlmostEqual(track['translate'][2], 0.0)
+        self.assertAlmostEqual(track['scale'], 0.8)
+        self.assertAlmostEqual(body['translate'][2], 0.4)
+        self.assertAlmostEqual(cab['translate'][2] + cab['sourceBbox']['min'][2] * cab['scale'], 1.4)
+        self.assertAlmostEqual(boom['translate'][0] + boom['sourceBbox']['min'][0] * boom['scale'], 1.0)
+        self.assertGreater(boom['translate'][0], body['translate'][0])
+        self.assertAlmostEqual(bucket['translate'][0], 3.2)
+        self.assertLess(bucket['translate'][0], boom['translate'][0] + 2.0 * boom['scale'])
+        # 铲斗安装耳压进动臂末端，而不是让包围盒顶面去顶动臂底沿。
+        bucket_height = ((bucket['sourceBbox']['max'][2] - bucket['sourceBbox']['min'][2])
+                         * bucket['scale'])
+        ear_top = (bucket['translate'][2] + bucket['sourceBbox']['max'][2] * bucket['scale']
+                   - bucket_height * fw_parts.BUCKET_EAR_DROP)
+        boom_length = (boom['sourceBbox']['max'][0] - boom['sourceBbox']['min'][0]) * boom['scale']
+        boom_tip_low = (boom['translate'][2] + boom['sourceBbox']['min'][2] * boom['scale']
+                        + boom_length * fw_parts.BOOM_TIP_RISE)
+        self.assertGreater(ear_top, boom_tip_low)
+        self.assertLess(ear_top, boom_tip_low + bucket_height * 0.1)
+
+    def test_missing_body_or_unknown_roles_fall_back(self):
+        entries = self._entries()
+        self.assertIsNone(fw_parts.coherent_layout(entries[1:]))
+        entries[0]['name'] = entries[0]['id'] = '甲'
+        self.assertIsNone(fw_parts.coherent_layout(entries))
+
+    def test_duplicate_ground_roles_fall_back(self):
+        entries = self._entries()
+        entries.append(dict(entries[1], id='partModel_track_2', name='第二履带'))
+        self.assertIsNone(fw_parts.coherent_layout(entries))
+
+    def test_vision_hints_adjust_proportions_and_cab_side(self):
+        entries = self._entries()
+        base = {item['id']: item for item in fw_parts.coherent_layout(entries)}
+        hinted = {item['id']: item for item in fw_parts.coherent_layout(entries, hints={
+            'groundLengthRatio': 1.6, 'boomLengthRatio': 1.5,
+            'bucketWidthRatio': 0.8, 'cabSide': 'right'})}
+        self.assertGreater(hinted['partModel_track']['scale'],
+                           base['partModel_track']['scale'])
+        self.assertGreater(hinted['partModel_boom']['scale'],
+                           base['partModel_boom']['scale'])
+        self.assertGreater(hinted['partModel_bucket']['scale'],
+                           base['partModel_bucket']['scale'])
+        self.assertGreater(base['partModel_cab']['translate'][1], 0)
+        self.assertLess(hinted['partModel_cab']['translate'][1], 0)
+
+    def test_layout_hints_are_range_clamped(self):
+        hints = fw_parts.normalize_layout_hints({
+            'groundLengthRatio': 99, 'boomLengthRatio': 'abc',
+            'bucketWidthRatio': 0.01, 'cabSide': 'up'})
+        self.assertEqual(hints, {'groundLengthRatio': 2.0, 'bucketWidthRatio': 0.25})
+
+
 class AssemblePartsTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -211,6 +289,81 @@ class AssemblePartsTest(unittest.TestCase):
         self.assertAlmostEqual(layout['parts'][1]['translate'][0], 3.02)
         self.assertEqual(self.plan['parts'][1]['translate'][2], -0.5)
         self.assertTrue(os.path.isfile(str(self.output_path)[:-4] + '.report.json'))
+
+    def test_decimate_runs_before_coherent_assembly(self):
+        shapes = {
+            'body': (_bbox([0, -1, 0], [2, 1, 1]), [0, 1, 1, 0]),
+            'track': (_bbox([0, -1, 0], [3, 1, 0.5]), [0, 1, 0.5, 0]),
+            'cab': (_bbox([0, -0.5, 0], [0.6, 0.5, 0.8]), [0, 0.5, 0.8, 0]),
+        }
+        for name, (bbox, _values) in shapes.items():
+            self.measured[name] = {'min': bbox['min'], 'max': bbox['max'], 'triangles': 500000}
+            (self.root / 'outputs' / (name + '.glb')).write_bytes(b'glb')
+
+        def measure(_blender, paths):
+            measured = {}
+            for path in paths:
+                real = os.path.realpath(path)
+                stem = Path(path).stem
+                role = next((name for name in shapes if 'partModel_' + name in stem), None)
+                if role:
+                    bbox = shapes[role][0]
+                    measured[real] = {'min': bbox['min'], 'max': bbox['max'], 'triangles': 10000}
+                else:
+                    item = self.measured[stem]
+                    measured[real] = {'min': item['min'], 'max': item['max'],
+                                      'triangles': item['triangles']}
+            return measured
+
+        def run(_blender, arguments, _label):
+            if arguments[1] == 'decimate':
+                Path(arguments[arguments.index('--output') + 1]).write_bytes(b'glb')
+                return {'valid': True, 'trianglesBefore': 500000, 'trianglesAfter': 10000}
+            with open(arguments[arguments.index('--plan') + 1], encoding='utf-8') as stream:
+                self.plan = json.load(stream)
+            return {'valid': True, 'parts': [
+                {'id': item['id'], 'name': item['name'],
+                 'min': [0, 0, 0], 'max': [1, 1, 1], 'triangles': 10000}
+                for item in self.plan['parts']]}
+
+        with mock.patch.object(fw_parts, 'measure_parts', side_effect=measure), \
+                mock.patch.object(fw_parts, '_run_blender', side_effect=run):
+            result = fw_parts.assemble_parts(
+                self._parts('body', 'track', 'cab'), str(self.output_path),
+                str(self.layout_path), str(self.root), blender_path='blender',
+                decimate_faces=10000, layout_mode='coherent')
+
+        layout = fw_parts.load_layout(str(self.layout_path))
+        self.assertEqual(layout['layoutMode'], 'coherent')
+        self.assertEqual(layout['decimateFaces'], 10000)
+        self.assertEqual([part['sourceMesh'] for part in layout['parts']],
+                         ['outputs/body.glb', 'outputs/track.glb', 'outputs/cab.glb'])
+        for part in layout['parts']:
+            self.assertTrue(part['mesh'].startswith('parts/decimated/'))
+            self.assertIn('partModel_', part['mesh'])
+        self.assertEqual(len(result['decimated']), 3)
+        self.assertEqual(result['trianglesBefore'], 1500000)
+        self.assertEqual(result['triangles'], 30000)
+        self.assertEqual(result['layoutMode'], 'coherent')
+        self.assertTrue(any('减面' in warning for warning in result['warnings']))
+        self.assertEqual([part['mesh'] for part in self.plan['parts']],
+                         [os.path.realpath(os.path.join(str(self.root), part['mesh']))
+                          for part in layout['parts']])
+
+    def test_coherent_plan_snaps_bucket_to_boom(self):
+        self.measured.update({
+            'body': {'min': [0, -1, 0], 'max': [2, 1, 1], 'triangles': 10},
+            'track': {'min': [0, -1, 0], 'max': [3, 1, 0.5], 'triangles': 10},
+            'boom': {'min': [0, -0.2, 0], 'max': [3, 0.2, 1], 'triangles': 10},
+            'bucket': {'min': [0, -0.5, 0], 'max': [1, 0.5, 1], 'triangles': 10},
+        })
+        for name in ('body', 'track', 'boom', 'bucket'):
+            (self.root / 'outputs' / (name + '.glb')).write_bytes(b'glb')
+
+        self._assemble(self._parts('body', 'track', 'boom', 'bucket'))
+
+        self.assertEqual(self.plan['snaps'],
+                         [{'part': 'partModel_bucket', 'to': 'partModel_boom'}])
 
     def test_existing_transforms_are_preserved(self):
         existing = fw_parts.normalize_layout(_layout())
@@ -274,6 +427,16 @@ class AssemblePartsTest(unittest.TestCase):
         self._assemble(self._parts('a'), reset=True)
         self.assertEqual(self.plan['parts'][0]['scale'], 1.0)
         self.assertEqual(self.plan['parts'][0]['translate'], [0.0, 0.0, 0.0])
+
+    def test_outdated_layout_rules_are_regenerated(self):
+        existing = fw_parts.normalize_layout(_layout())
+        existing['layoutVersion'] = fw_parts.LAYOUT_VERSION - 1
+        existing['parts'][0].update({'scale': 2.0, 'translate': [5, 6, 7]})
+        fw_parts.save_layout(str(self.layout_path), existing)
+        result = self._assemble(self._parts('a'))
+        self.assertEqual(self.plan['parts'][0]['scale'], 1.0)
+        self.assertEqual(self.plan['parts'][0]['translate'], [0.0, 0.0, 0.0])
+        self.assertTrue(any('旧版摆放规则' in warning for warning in result['warnings']))
 
     def test_duplicate_mesh_rejected(self):
         parts = self._parts('a')

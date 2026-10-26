@@ -1,6 +1,8 @@
 """Server-side provider adapters; no provider request runs without an explicit run action."""
 
+import base64
 import json
+import os
 import re
 import time
 import urllib.error
@@ -16,9 +18,12 @@ ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3'
 ARK_DOWNLOAD_SUFFIX = '.volces.com'
 ARK_IMAGE_MODEL = 'doubao-seedream-5-0-pro-260628'
 ARK_3D_MODEL = 'doubao-seed3d-2-0-260328'
+# 组装前的整体效果图分析；可在 bridge_config.json 的 providers.ark.vision_model 覆盖。
+ARK_VISION_MODEL = 'doubao-seed-1-6-vision-250815'
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_MODEL_BYTES = 150 * 1024 * 1024
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+VISION_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 PROVIDERS = ('tripo', 'ark')
 
 
@@ -205,6 +210,111 @@ def _check_remote_url(url, label):
     if parsed.scheme != 'https' or not _allowed_download_host(parsed.hostname) or parsed.username or parsed.password:
         raise ValueError('%s域名不在允许列表' % label)
     return url
+
+
+def _vision_image_uri(path):
+    extension = os.path.splitext(path)[1].lower()
+    mime = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.webp': 'image/webp'}.get(extension)
+    if not mime:
+        raise ValueError('整体效果图只支持 PNG/JPEG/WebP')
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        raise ValueError('整体效果图文件不存在') from None
+    if size > VISION_MAX_IMAGE_BYTES:
+        raise ValueError('整体效果图超过 8 MB，无法用于视觉分析')
+    try:
+        with open(path, 'rb') as stream:
+            data = stream.read()
+    except OSError as error:
+        raise ValueError('整体效果图读取失败：%s' % error) from None
+    return 'data:%s;base64,%s' % (mime, base64.b64encode(data).decode('ascii'))
+
+
+def _message_text(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return ''.join(str(item.get('text') or '') for item in value if isinstance(item, dict))
+    return ''
+
+
+def _json_object(text):
+    text = str(text or '').strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```[A-Za-z0-9_-]*\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+    start, end = text.find('{'), text.rfind('}')
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    try:
+        value = json.loads(text)
+    except (UnicodeDecodeError, ValueError):
+        raise RuntimeError('视觉分析没有返回有效 JSON') from None
+    if not isinstance(value, dict):
+        raise RuntimeError('视觉分析返回的不是 JSON 对象')
+    return value
+
+
+def analyze_layout(config, image_path, parts, prompt='', model=''):
+    """让 Ark 视觉模型看整体效果图，返回可指导本地布局的少量提示。
+
+    只在用户主动运行组装节点时调用；未配置密钥或模型不支持图片时会抛错，
+    由调用方退回启发式布局。
+    """
+    name = str(model or _provider_config(config, 'ark').get('vision_model') or ARK_VISION_MODEL).strip()
+    if not name:
+        raise ValueError('未配置 Ark 视觉模型')
+    image_uri = _vision_image_uri(image_path)
+    part_lines = []
+    for part in parts or []:
+        if not isinstance(part, dict):
+            continue
+        title = str(part.get('name') or part.get('id') or '部件').strip()
+        description = str(part.get('description') or '').strip()
+        part_lines.append('- %s%s' % (title, ('：' + description[:160]) if description else ''))
+    if not part_lines:
+        raise ValueError('没有可用于视觉分析的部件')
+    instruction = str(prompt or '').strip()[:1200]
+    user_text = (
+        '参考图是一台机械的整体效果图。已经拆出的部件：\n%s\n'
+        '组装说明：%s\n'
+        '请只依据参考图判断这些已有部件的相对比例与驾驶室位置：\n'
+        '1. 接地件（履带或车轮）长度 ÷ 车身长度；\n'
+        '2. 动臂长度 ÷ 车身长度；\n'
+        '3. 铲斗宽度 ÷ 车身宽度；\n'
+        '4. 驾驶室在整机左侧还是右侧（机头朝 +X 时 +Y 为左侧）。\n'
+        '只输出 JSON，不要解释，字段：'
+        '{"groundLengthRatio":1.2,"boomLengthRatio":1.15,'
+        '"bucketWidthRatio":0.6,"cabSide":"left","notes":"一句话"}。\n'
+        '比例是倍数，保留两位小数；图中看不出的项给合理估计。'
+        % ('\n'.join(part_lines[:30]), instruction or '（无）'))
+    body = {
+        'model': name,
+        'messages': [
+            {'role': 'system',
+             'content': '你是机械装配分析师。只能依据参考图判断已有部件的相对比例和位置，'
+                        '不要新增部件，不要改变结构，只输出严格 JSON。'},
+            {'role': 'user', 'content': [
+                {'type': 'text', 'text': user_text},
+                {'type': 'image_url', 'image_url': {'url': image_uri}},
+            ]},
+        ],
+        'temperature': 0.2,
+        'max_tokens': 600,
+    }
+    result = _ark_request(config, '/chat/completions', body, timeout=120)
+    choices = result.get('choices')
+    message = ((choices or [{}])[0] or {}).get('message') if isinstance(choices, list) else None
+    content = _message_text((message or {}).get('content'))
+    raw = _json_object(content)
+    hints = {key: raw.get(key) for key in
+             ('groundLengthRatio', 'boomLengthRatio', 'bucketWidthRatio', 'cabSide')
+             if raw.get(key) is not None}
+    if not hints:
+        raise RuntimeError('视觉分析没有给出可用字段')
+    return hints, {'model': name, 'notes': str(raw.get('notes') or '').strip()[:500]}
 
 
 def submit(config, kind, params, prompt='', input_task_id=None, image_data=None, fallback=False):

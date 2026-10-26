@@ -3,8 +3,10 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +15,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 _argv = sys.argv
 sys.argv = [_argv[0]]
 import bridge
+import fw_pipeline
 import fw_providers
 sys.argv = _argv
 
@@ -386,6 +389,121 @@ class ProviderErrorTest(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 fw_providers._request('https://openapi.tripo3d.ai/v3/generation/text-to-image', 'k', {})
         self.assertEqual(str(raised.exception), 'Provider HTTP 403')
+
+
+class PipelineProviderConcurrencyTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.tmp.name)
+        self.old_state = dict(bridge._state)
+        self.old_state_file = bridge.STATE_FILE
+        bridge.STATE_FILE = str(self.workspace / 'bridge-state.json')
+        bridge._state.clear()
+        bridge._state['recentProjects'] = []
+        created = bridge.create_project(str(self.workspace), '并发工程')
+        self.root = Path(created['fwDir'])
+        self.server = bridge.Bridge(('127.0.0.1', 0), bridge.BridgeHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.origin = 'http://127.0.0.1:%d' % self.server.server_address[1]
+        self.graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'img_a', 'type': 'textToImage', 'x': 0, 'y': 0,
+                 'params': {'provider': 'ark', 'prompt': 'a'}},
+                {'id': 'img_b', 'type': 'textToImage', 'x': 300, 'y': 0,
+                 'params': {'provider': 'ark', 'prompt': 'b'}},
+            ],
+            'edges': [],
+        }
+        fw_pipeline.save_graph(str(self.root), 'M1', self.graph, kind='machine')
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+        bridge._state.clear()
+        bridge._state.update(self.old_state)
+        bridge.STATE_FILE = self.old_state_file
+        self.tmp.cleanup()
+
+    def _post(self, route, payload):
+        request = urllib.request.Request(
+            self.origin + '/api/' + route,
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'Origin': self.origin},
+            method='POST',
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read())
+
+    def _run_parallel(self, jobs):
+        results = [None] * len(jobs)
+        errors = []
+
+        def worker(index, job):
+            try:
+                results[index] = job()
+            except Exception as error:  # pragma: no cover - 失败时在线程内保留原因
+                errors.append(error)
+
+        threads = [threading.Thread(target=worker, args=(index, job))
+                   for index, job in enumerate(jobs)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        return results
+
+    def test_simultaneous_submits_keep_both_tasks(self):
+        barrier = threading.Barrier(2)
+
+        def fake_submit(config, kind, params, prompt='', input_task_id=None,
+                        image_data=None, fallback=False):
+            barrier.wait(timeout=10)
+            return {'taskId': 'arkimg_' + prompt, 'provider': 'ark', 'state': 'queued',
+                    'params': dict(params)}
+
+        with mock.patch.object(bridge.fw_providers, 'submit', side_effect=fake_submit):
+            results = self._run_parallel([
+                lambda node='img_a': self._post('pipeline/provider/submit', {
+                    'assetId': 'M1', 'kind': 'machine', 'nodeId': node, 'confirmRemote': True}),
+                lambda node='img_b': self._post('pipeline/provider/submit', {
+                    'assetId': 'M1', 'kind': 'machine', 'nodeId': node, 'confirmRemote': True}),
+            ])
+        self.assertTrue(all(result.get('ok') for result in results), results)
+        graph = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        tasks = {node['id']: node['result']['providerTask']['taskId'] for node in graph['nodes']}
+        self.assertEqual(tasks, {'img_a': 'arkimg_a', 'img_b': 'arkimg_b'})
+
+    def test_simultaneous_stale_saves_keep_provider_tasks(self):
+        tasks = {
+            'img_a': {'taskId': 'arkimg_aaaa', 'provider': 'ark', 'state': 'queued'},
+            'img_b': {'taskId': 'arkimg_bbbb', 'provider': 'ark', 'state': 'running'},
+        }
+        graph = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        for node in graph['nodes']:
+            node['result'] = {'providerTask': tasks[node['id']]}
+        fw_pipeline.save_graph(str(self.root), 'M1', graph, kind='machine')
+        current = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        snapshots = [json.loads(json.dumps(current)) for _ in range(2)]
+        for snapshot in snapshots:
+            for node in snapshot['nodes']:
+                node['result'] = {}
+        results = self._run_parallel([
+            lambda snapshot=snapshot: self._post('pipeline/graph/save', {
+                'assetId': 'M1', 'kind': 'machine', 'graph': snapshot})
+            for snapshot in snapshots
+        ])
+        self.assertTrue(all(result.get('ok') for result in results), results)
+        final = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        saved = {node['id']: (node.get('result') or {}).get('providerTask', {}).get('taskId')
+                 for node in final['nodes']}
+        self.assertEqual(saved, {'img_a': 'arkimg_aaaa', 'img_b': 'arkimg_bbbb'})
 
 
 if __name__ == '__main__':

@@ -497,6 +497,21 @@ PIPELINE_HISTORY_LIMIT = 50
 PROVIDER_NODE_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel')
 
 
+def write_bytes_atomic(path, data):
+    directory = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(prefix='.output-', suffix='.tmp', dir=directory)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def store_task_output(root, asset_id, kind, node_type, task):
     """同步成功的图片立即落盘，节点无需再等一次轮询才显示结果。"""
     if node_type not in ('textToImage', 'partImage') or task.get('state') != 'success':
@@ -512,8 +527,7 @@ def store_task_output(root, asset_id, kind, node_type, task):
     directory = os.path.join(fw_pipeline.pipeline_root(root, asset_id, kind), 'outputs')
     os.makedirs(directory, exist_ok=True)
     filename = 'image_' + task['taskId'] + '.' + extension
-    with open(os.path.join(directory, filename), 'wb') as stream:
-        stream.write(data)
+    write_bytes_atomic(os.path.join(directory, filename), data)
     task['output'] = {'imagePath': 'outputs/' + filename, 'size': len(data)}
     return task
 
@@ -1696,7 +1710,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             b = body or {}
             try:
                 kind = b.get('kind') or 'machine'
-                graph = fw_pipeline.save_graph(fw_dir(), b.get('assetId'), b.get('graph'), kind)
+                graph = fw_pipeline.save_client_graph(fw_dir(), b.get('assetId'), b.get('graph'), kind)
                 push_event('pipeline.graph_saved', {'id': b.get('assetId'), 'revision': graph['revision']})
                 self._json({'ok': True, 'graph': graph,
                             'archive': fw_pipeline.archive_info(fw_dir(), b.get('assetId'), kind)})
@@ -1716,7 +1730,8 @@ class BridgeHandler(SimpleHTTPRequestHandler):
             b = body or {}
             try:
                 result = fw_pipeline.execute_local(fw_dir(), b.get('assetId'), b.get('nodeId'), bool(b.get('through')),
-                                                   b.get('kind') or 'machine', find_blender())
+                                                   b.get('kind') or 'machine', find_blender(),
+                                                   provider_config=read_json(CONFIG_FILE, {}) or {})
                 push_event('pipeline.progress', {'id': b.get('assetId'), 'ran': result['ran']})
                 self._json({'ok': True, **result})
             except (ValueError, TypeError) as error:
@@ -1801,24 +1816,37 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                                                  (upstream_task.get('output') or {}).get('imagePath'))
                     if node['type'] == 'partModel':
                         part_name = str((upstream_result.get('output') or {}).get('partName') or '')
-                provider_kind = {'partImage': 'textToImage', 'partModel': 'imageTo3D'}.get(node['type'], node['type'])
+                node_type = node['type']
+                provider_kind = {'partImage': 'textToImage', 'partModel': 'imageTo3D'}.get(node_type, node_type)
+                # 慢速 Provider 调用必须在锁外完成，避免串行化整个资产的提交
                 task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, provider_kind, params,
                                            prompt, input_task_id, image_data, fallback=True)
-                store_task_output(fw_dir(), asset_id, kind, node['type'], task)
-                state = node.setdefault('result', {})
-                previous_task = state.get('providerTask')
-                if previous_task:
-                    history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
-                    state['history'] = history + [previous_task]
-                if part_name:
-                    state['output'] = dict(state.get('output') or {}, partName=part_name)
-                state['providerTask'] = task
-                state['state'] = 'done' if task.get('state') == 'success' else 'queued'
-                state.pop('error', None)
-                result = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
+                store_task_output(fw_dir(), asset_id, kind, node_type, task)
+                applied = {}
+
+                def apply_latest(latest):
+                    latest_nodes, _ = fw_pipeline.validate_graph(latest)
+                    latest_node = latest_nodes.get(node_id)
+                    if not latest_node or latest_node.get('type') != node_type:
+                        raise ValueError('提交期间节点已被删除或修改，任务未写入流水线：%s' % task['taskId'])
+                    state = latest_node.setdefault('result', {})
+                    previous_task = state.get('providerTask')
+                    if previous_task:
+                        history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
+                        state['history'] = history + [previous_task]
+                    if part_name:
+                        state['output'] = dict(state.get('output') or {}, partName=part_name)
+                    state['providerTask'] = task
+                    state['state'] = 'done' if task.get('state') == 'success' else 'queued'
+                    state.pop('error', None)
+                    applied['state'] = state['state']
+                    return latest
+
+                result = fw_pipeline.update_graph(fw_dir(), asset_id, kind, apply_latest)
                 push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id,
-                                                 'state': state['state'], 'taskId': task['taskId']})
-                self._json({'ok': True, 'graph': result, 'taskId': task['taskId'], 'state': state['state']})
+                                                 'state': applied.get('state'), 'taskId': task['taskId']})
+                self._json({'ok': True, 'graph': result, 'task': task, 'taskId': task['taskId'],
+                            'state': applied.get('state')})
             except (ValueError, TypeError, RuntimeError, OSError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/provider/poll':
@@ -1833,34 +1861,57 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 node = nodes.get(node_id)
                 if not node or node.get('type') not in PROVIDER_NODE_TYPES:
                     raise ValueError('目标节点不是受支持的远程生成节点')
-                task = (node.get('result') or {}).get('providerTask') or {}
-                if not task.get('taskId'):
+                task = dict((node.get('result') or {}).get('providerTask') or {})
+                task_id = task.get('taskId')
+                if not task_id:
                     raise ValueError('没有可轮询的 Provider 任务')
+                node_type = node['type']
+                # 慢速轮询/模型下载也放在锁外，只有最终写图时再读取最新图
                 result = fw_providers.poll(read_json(CONFIG_FILE, {}) or {}, task)
                 state = result.get('status')
                 if state not in ('queued', 'running', 'success', 'failed', 'cancelled', 'banned'):
                     raise ValueError('Provider 返回了未知任务状态')
                 task.update({'state': state, 'progress': max(0, min(100, int(result.get('progress') or 0))),
-                             'creditsConsumed': result.get('credits_consumed'), 'error': str(result.get('error_message') or '')[:300]})
+                             'creditsConsumed': result.get('credits_consumed'),
+                             'error': str(result.get('error_message') or '')[:300]})
                 output = result.get('output') or {}
-                node.setdefault('result', {})['state'] = 'done' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
-                if state == 'success':
-                    node['result'].pop('error', None)
-                if state == 'success' and node['type'] in ('textToImage', 'partImage'):
+                node_state = 'done' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
+                if state == 'success' and node_type in ('textToImage', 'partImage'):
                     task['output'] = {'generated_image_url': output.get('generated_image_url')}
-                    store_task_output(fw_dir(), asset_id, kind, node['type'], task)
-                if state == 'success' and node['type'] in ('imageTo3D', 'partModel') and output.get('model_url'):
+                    store_task_output(fw_dir(), asset_id, kind, node_type, task)
+                if state == 'success' and node_type in ('imageTo3D', 'partModel') and output.get('model_url'):
                     data = fw_providers.download_model(output.get('model_url'))
                     output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
                     os.makedirs(output_dir, exist_ok=True)
-                    filename = 'model_' + task['taskId'] + '.glb'
-                    with open(os.path.join(output_dir, filename), 'wb') as stream:
-                        stream.write(data)
+                    filename = 'model_' + task_id + '.glb'
+                    write_bytes_atomic(os.path.join(output_dir, filename), data)
                     task['output'] = {'modelPath': 'outputs/' + filename, 'size': len(data)}
-                result_graph = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
-                push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': state,
-                                                 'progress': task.get('progress')})
-                self._json({'ok': True, 'graph': result_graph, 'task': task})
+                applied = {}
+
+                def apply_latest(latest):
+                    latest_nodes, _ = fw_pipeline.validate_graph(latest)
+                    latest_node = latest_nodes.get(node_id)
+                    if not latest_node or latest_node.get('type') != node_type:
+                        raise ValueError('轮询期间节点已被删除或修改')
+                    current_task = (latest_node.get('result') or {}).get('providerTask') or {}
+                    if current_task.get('taskId') != task_id:
+                        applied['stale'] = current_task
+                        return latest
+                    latest_node.setdefault('result', {})['state'] = node_state
+                    if state == 'success':
+                        latest_node['result'].pop('error', None)
+                    latest_node['result']['providerTask'] = task
+                    applied['task'] = task
+                    return latest
+
+                result_graph = fw_pipeline.update_graph(fw_dir(), asset_id, kind, apply_latest)
+                if 'stale' in applied:
+                    self._json({'ok': True, 'graph': result_graph, 'task': applied.get('stale') or {},
+                                'stale': True})
+                else:
+                    push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': state,
+                                                     'progress': task.get('progress')})
+                    self._json({'ok': True, 'graph': result_graph, 'task': task})
             except (ValueError, TypeError, RuntimeError, OSError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'materials/texture/submit':

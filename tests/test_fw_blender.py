@@ -287,6 +287,44 @@ class BlenderPipelineTest(unittest.TestCase):
             widths = sorted(round(item['max'][0] - item['min'][0], 3) for item in objects)
             self.assertEqual(widths, [1.0, 2.0])
 
+    def test_assemble_snaps_bucket_to_boom_in_xz(self):
+        blender = find_blender()
+        if not blender:
+            self.skipTest('Blender executable not found')
+
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            source = temp / 'box.glb'
+            make_box_glb(source, (1.0, 1.0, 1.0))
+            plan = temp / 'plan.json'
+            plan.write_text(json.dumps({'parts': [
+                {'id': 'boom', 'name': 'boom', 'mesh': str(source),
+                 'scale': 1, 'translate': [0, 0, 0], 'rotationZ': 0},
+                {'id': 'bucket', 'name': 'bucket', 'mesh': str(source),
+                 'scale': 1, 'translate': [1.2, 0, 0], 'rotationZ': 0},
+            ], 'snaps': [{'part': 'bucket', 'to': 'boom'}]}), encoding='utf-8')
+            output = temp / 'assembly.glb'
+            report_path = temp / 'report.json'
+            result = subprocess.run([
+                blender, '--background', '--factory-startup', '--python-exit-code', '1',
+                '--python', str(SCRIPT), '--', '--mode', 'assemble',
+                '--plan', str(plan), '--output', str(output), '--report', str(report_path),
+            ], capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            data = json.loads(report_path.read_text())
+            self.assertTrue(data['valid'], data)
+            snap = data['snaps'][0]
+            self.assertAlmostEqual(snap['planarGap'], 0.2, places=3)
+            self.assertAlmostEqual(snap['moved'][0], -0.21, places=3)
+            self.assertAlmostEqual(snap['moved'][1], 0.0, places=3)
+            locations = {part['id']: part['location'] for part in data['parts']}
+            self.assertAlmostEqual(locations['bucket'][0], 0.99, places=3)
+
+            measured = run_blender(blender, ['--mode', 'measure', '--inputs', str(output)])
+            boxes = {item['name']: item for item in measured['files'][0]['objects']}
+            self.assertAlmostEqual(boxes['bucket']['min'][0], 0.49, places=2)
+            self.assertAlmostEqual(boxes['boom']['max'][0], 0.5, places=3)
+
     def test_layout_and_assemble_roundtrip(self):
         blender = find_blender()
         if not blender:

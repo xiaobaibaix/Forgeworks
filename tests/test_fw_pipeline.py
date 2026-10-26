@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -335,6 +336,32 @@ def _assemble_graph(asset_id='M1'):
             'nodes': nodes, 'edges': edges}
 
 
+def _decimated_assemble_graph(asset_id='M1'):
+    nodes = [
+        {'id': 'prompt_body', 'type': 'prompt', 'params': {'text': '红色车身'}},
+        {'id': 'partImage_body', 'type': 'partImage', 'params': {},
+         'result': {'output': {'partName': '车身'}}},
+        _part_model_node('partModel_body'),
+        {'id': 'decimate_body', 'type': 'decimate', 'params': {'targetFaces': 10000},
+         'result': {'state': 'done', 'output': {'meshPath': 'model_decimate_body_10000.glb'}}},
+        {'id': 'overall', 'type': 'textToImage', 'params': {'provider': 'ark'},
+         'result': {'providerTask': {'state': 'success',
+                                     'output': {'imagePath': 'outputs/image_overall.png'}}}},
+        {'id': 'prompt_assemble', 'type': 'prompt', 'params': {'text': '车身居中'}},
+        {'id': 'assemble', 'type': 'assemble', 'params': {'resetLayout': True}},
+    ]
+    edges = [
+        {'from': 'prompt_body', 'out': 'text', 'to': 'partImage_body', 'in': 'text'},
+        {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
+        {'from': 'partModel_body', 'out': 'mesh', 'to': 'decimate_body', 'in': 'mesh'},
+        {'from': 'decimate_body', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+        {'from': 'overall', 'out': 'image', 'to': 'assemble', 'in': 'image'},
+        {'from': 'prompt_assemble', 'out': 'text', 'to': 'assemble', 'in': 'text'},
+    ]
+    return {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0,
+            'nodes': nodes, 'edges': edges}
+
+
 class PipelinePartsTest(unittest.TestCase):
     def test_parts_template_builds_one_chain_per_part(self):
         graph = fw_pipeline.starter_graph('M1', 'parts')
@@ -342,15 +369,18 @@ class PipelinePartsTest(unittest.TestCase):
         parts = ('body', 'roof', 'wheel', 'door', 'side_window', 'rear_window')
         self.assertLess(order.index('prompt_body'), order.index('partImage_body'))
         self.assertLess(order.index('partImage_body'), order.index('partModel_body'))
+        edges = {(edge['from'], edge['out'], edge['to'], edge['in']) for edge in graph['edges']}
         for part in parts:
             self.assertLess(order.index('partImage_' + part), order.index('partModel_' + part))
-            self.assertLess(order.index('partModel_' + part), order.index('assemble'))
+            self.assertLess(order.index('partModel_' + part), order.index('decimate_' + part))
+            self.assertLess(order.index('decimate_' + part), order.index('assemble'))
+            self.assertIn(('partModel_' + part, 'mesh', 'decimate_' + part, 'mesh'), edges)
         self.assertLess(order.index('prompt_assemble'), order.index('assemble'))
         self.assertLess(order.index('assemble'), order.index('style'))
         self.assertNotIn('partSpec', {node['type'] for node in graph['nodes']})
         sources = [edge['from'] for edge in graph['edges']
                    if edge['to'] == 'assemble' and edge['in'] == 'part']
-        self.assertEqual(sorted(sources), sorted('partModel_' + part for part in parts))
+        self.assertEqual(sorted(sources), sorted('decimate_' + part for part in parts))
 
     def test_parts_template_splits_parts_from_overall_image(self):
         graph = fw_pipeline.starter_graph('M1', 'parts')
@@ -365,6 +395,18 @@ class PipelinePartsTest(unittest.TestCase):
         self.assertIn(('prompt_overall', 'text', 'overall', 'text'), edges)
         for part in parts:
             self.assertIn(('overall', 'image', 'partImage_' + part, 'image'), edges)
+
+    def test_parts_template_decimates_parts_before_assembly(self):
+        graph = fw_pipeline.starter_graph('M1', 'parts')
+        assemble = next(node for node in graph['nodes'] if node['id'] == 'assemble')
+        # 减面由显式节点完成，组装内部不再重复减面。
+        self.assertEqual(assemble['params']['decimateFaces'], 0)
+        self.assertTrue(assemble['params']['visionAssist'])
+        decimates = [node for node in graph['nodes'] if node['type'] == 'decimate']
+        self.assertEqual(len(decimates), 6)
+        self.assertTrue(all(node['params']['targetFaces'] == 10000 for node in decimates))
+        self.assertIn(('overall', 'image', 'assemble', 'image'),
+                      {(edge['from'], edge['out'], edge['to'], edge['in']) for edge in graph['edges']})
 
     def test_part_image_accepts_text_and_image_inputs(self):
         self.assertEqual(fw_pipeline.NODE_TYPES['partImage']['in'],
@@ -420,7 +462,8 @@ class PipelinePartsTest(unittest.TestCase):
 
             def fake_assemble(parts, output_path, layout_path, root, assembly_prompt='',
                               reset=False, blender_path=None, asset_id='', node_id='',
-                              preserve_absent=False):
+                              preserve_absent=False, decimate_faces=0, layout_mode='coherent',
+                              layout_hints=None, reference_image=''):
                 self.assertEqual([part['id'] for part in parts],
                                  ['partModel_body', 'partModel_roof'])
                 self.assertFalse(preserve_absent)
@@ -429,8 +472,12 @@ class PipelinePartsTest(unittest.TestCase):
                                  ['outputs/model_partModel_body.glb', 'outputs/model_partModel_roof.glb'])
                 self.assertEqual(assembly_prompt, '车身居中，车顶在上')
                 self.assertTrue(reset)
+                self.assertEqual(decimate_faces, 10000)
+                self.assertEqual(layout_mode, 'coherent')
+                self.assertEqual(layout_hints, {})
+                self.assertEqual(reference_image, '')
                 self.assertTrue(output_path.endswith('model_assembly_assemble.glb'))
-                self.assertTrue(layout_path.endswith('parts/layout_assemble.json'))
+                self.assertTrue(layout_path.replace('\\', '/').endswith('parts/layout_assemble.json'))
                 return {'meshPath': os.path.basename(output_path), 'outputPath': output_path,
                         'layoutPath': layout_path,
                         'parts': [{'id': 'partModel_body', 'name': '车身', 'triangles': 10},
@@ -456,9 +503,12 @@ class PipelinePartsTest(unittest.TestCase):
 
             def fake_assemble(parts, output_path, layout_path, root, assembly_prompt='',
                               reset=False, blender_path=None, asset_id='', node_id='',
-                              preserve_absent=False):
+                              preserve_absent=False, decimate_faces=0, layout_mode='coherent',
+                              layout_hints=None, reference_image=''):
                 self.assertEqual([part['id'] for part in parts], ['partModel_body'])
                 self.assertTrue(preserve_absent)
+                self.assertEqual(decimate_faces, 10000)
+                self.assertEqual(layout_mode, 'coherent')
                 return {'meshPath': os.path.basename(output_path), 'outputPath': output_path,
                         'layoutPath': layout_path,
                         'parts': [{'id': 'partModel_body', 'name': '车身', 'triangles': 10}],
@@ -542,6 +592,167 @@ class PipelinePartsTest(unittest.TestCase):
             node = next(item for item in result['graph']['nodes'] if item['type'] == 'assemble')
             self.assertEqual(node['result']['state'], 'blocked')
             self.assertIn('Blender', node['result']['error'])
+
+    def _prepare_decimated(self, directory):
+        saved = fw_pipeline.save_graph(directory, 'M1', _decimated_assemble_graph(), kind='machine')
+        for node in saved['nodes']:
+            if node['id'] == 'decimate_body':
+                node['result']['state'] = 'done'
+        fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+        root = fw_pipeline.pipeline_root(directory, 'M1', 'machine')
+        outputs = os.path.join(root, 'outputs')
+        os.makedirs(outputs, exist_ok=True)
+        Path(os.path.join(outputs, 'image_overall.png')).write_bytes(b'png')
+
+    def test_assemble_uses_decimated_part_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare_decimated(directory)
+
+            def fake_assemble(parts, output_path, layout_path, root, **kwargs):
+                self.assertEqual([part['id'] for part in parts], ['partModel_body'])
+                self.assertEqual([part['name'] for part in parts], ['车身'])
+                self.assertEqual([part['mesh'] for part in parts],
+                                 ['outputs/model_decimate_body_10000.glb'])
+                self.assertEqual(kwargs.get('layout_hints'), {'groundLengthRatio': 1.3})
+                self.assertEqual(kwargs.get('reference_image'), 'outputs/image_overall.png')
+                return {'meshPath': os.path.basename(output_path), 'outputPath': output_path,
+                        'layoutPath': layout_path, 'layoutHints': kwargs.get('layout_hints'),
+                        'parts': [{'id': 'partModel_body', 'name': '车身', 'triangles': 10}],
+                        'triangles': 10, 'warnings': [], 'engine': 'blender',
+                        'updatedAt': '2026-10-26T00:00:00Z'}
+
+            def fake_vision(config, image_path, parts, prompt='', model=''):
+                self.assertEqual(os.path.basename(image_path), 'image_overall.png')
+                self.assertEqual([part['id'] for part in parts], ['partModel_body'])
+                return {'groundLengthRatio': 1.3}, {'model': 'mock-vision', 'notes': '履带偏长'}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble_parts', side_effect=fake_assemble), \
+                    mock.patch.object(fw_pipeline.fw_providers, 'analyze_layout', side_effect=fake_vision):
+                result = self._execute(directory)
+            node = next(item for item in result['graph']['nodes'] if item['id'] == 'assemble')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['layoutHints'], {'groundLengthRatio': 1.3})
+            self.assertEqual(node['result']['output']['referenceImage'], 'outputs/image_overall.png')
+            self.assertEqual(node['result']['output']['vision'],
+                             {'enabled': True, 'state': 'done',
+                              'referenceImage': 'outputs/image_overall.png',
+                              'model': 'mock-vision', 'notes': '履带偏长'})
+
+    def test_vision_failure_falls_back_to_default_layout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare_decimated(directory)
+
+            def fake_assemble(parts, output_path, layout_path, root, **kwargs):
+                self.assertEqual(kwargs.get('layout_hints'), {})
+                return {'meshPath': os.path.basename(output_path), 'outputPath': output_path,
+                        'layoutPath': layout_path,
+                        'parts': [{'id': 'partModel_body', 'name': '车身', 'triangles': 10}],
+                        'triangles': 10, 'warnings': [], 'engine': 'blender',
+                        'updatedAt': '2026-10-26T00:00:00Z'}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble_parts',
+                                   side_effect=fake_assemble), \
+                    mock.patch.object(fw_pipeline.fw_providers, 'analyze_layout',
+                                      side_effect=RuntimeError('Ark API key 未配置')):
+                result = self._execute(directory)
+            node = next(item for item in result['graph']['nodes'] if item['id'] == 'assemble')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['vision']['state'], 'failed')
+            self.assertTrue(any('视觉分析失败' in warning
+                                for warning in node['result']['output']['warnings']))
+
+    def test_decimate_part_input_requires_decimate_result(self):
+        graph = _decimated_assemble_graph()
+        by_id = {node['id']: node for node in graph['nodes']}
+        by_id['decimate_body']['result'] = {'state': 'blocked'}
+        with self.assertRaises(ValueError) as raised:
+            fw_pipeline._assemble_part_inputs(graph, by_id, 'assemble')
+        self.assertIn('decimate_body', str(raised.exception))
+
+
+class PipelineConcurrencyTest(unittest.TestCase):
+    def _provider_graph(self):
+        return {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'img_a', 'type': 'textToImage', 'params': {'provider': 'ark'},
+                 'result': {'providerTask': {'taskId': 'arkimg_aaaa', 'provider': 'ark', 'state': 'queued'}}},
+                {'id': 'img_b', 'type': 'textToImage', 'params': {'provider': 'ark'},
+                 'result': {'providerTask': {'taskId': 'arkimg_bbbb', 'provider': 'ark', 'state': 'running'}}},
+            ],
+            'edges': [],
+        }
+
+    def test_concurrent_client_saves_keep_both_provider_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fw_pipeline.save_graph(directory, 'M1', self._provider_graph(), kind='machine')
+            snapshots = [fw_pipeline.load_graph(directory, 'M1', kind='machine') for _ in range(2)]
+            # 模拟两个都缺少远程任务结果的过期客户端快照
+            for graph in snapshots:
+                for node in graph['nodes']:
+                    node['result'] = {}
+            barrier = threading.Barrier(2)
+            errors = []
+
+            def worker(graph):
+                try:
+                    barrier.wait()
+                    fw_pipeline.save_client_graph(directory, 'M1', graph, kind='machine')
+                except Exception as error:  # pragma: no cover - 失败时给出线程内原因
+                    errors.append(error)
+
+            threads = [threading.Thread(target=worker, args=(graph,)) for graph in snapshots]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            final = fw_pipeline.load_graph(directory, 'M1', kind='machine')
+            task_ids = {node['result']['providerTask']['taskId'] for node in final['nodes']}
+            self.assertEqual(task_ids, {'arkimg_aaaa', 'arkimg_bbbb'})
+
+    def test_concurrent_updates_do_not_lose_nodes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = {
+                'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+                'nodes': [
+                    {'id': 'a', 'type': 'prompt', 'params': {'text': 'a'}},
+                    {'id': 'b', 'type': 'prompt', 'params': {'text': 'b'}},
+                ],
+                'edges': [],
+            }
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            barrier = threading.Barrier(2)
+            errors = []
+
+            def worker(node_id):
+                def apply(latest):
+                    node = next(item for item in latest['nodes'] if item['id'] == node_id)
+                    node.setdefault('result', {})['marker'] = node_id
+                    return latest
+                try:
+                    barrier.wait()
+                    fw_pipeline.update_graph(directory, 'M1', 'machine', apply)
+                except Exception as error:  # pragma: no cover
+                    errors.append(error)
+
+            threads = [threading.Thread(target=worker, args=(node_id,)) for node_id in ('a', 'b')]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(errors, [])
+            final = fw_pipeline.load_graph(directory, 'M1', kind='machine')
+            markers = {node['id']: node['result'].get('marker') for node in final['nodes']}
+            self.assertEqual(markers, {'a': 'a', 'b': 'b'})
+
+    def test_revision_is_monotonic_for_stale_client_graphs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            saved = fw_pipeline.save_graph(directory, 'M1', self._provider_graph(), kind='machine')
+            first_revision = saved['revision']
+            saved['revision'] = 0
+            again = fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+            self.assertGreater(again['revision'], first_revision)
 
 
 if __name__ == '__main__':
