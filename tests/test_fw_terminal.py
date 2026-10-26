@@ -51,10 +51,15 @@ def decode_output(raw):
 
 
 class AvailabilityTests(unittest.TestCase):
-    def test_windows_is_reported_unavailable(self):
-        status = fw_terminal.terminal_availability('win32')
-        self.assertFalse(status['available'])
-        self.assertIn('Windows', status['reason'])
+    def test_windows_without_pywinpty_is_reported_unavailable(self):
+        try:
+            import winpty  # noqa: F401
+        except ImportError:
+            status = fw_terminal.terminal_availability('win32')
+            self.assertFalse(status['available'])
+            self.assertIn('pywinpty', status['reason'])
+        else:
+            self.skipTest('本机已安装 pywinpty')
 
     @unittest.skipUnless(POSIX, 'PTY 终端仅支持 macOS/Linux')
     def test_posix_reports_shell(self):

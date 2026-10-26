@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""内嵌终端会话层：PTY、输出广播、会话回收。
+"""内嵌终端会话层：POSIX 用 pty，Windows 交给 pywinpty（ConPTY）。
 
 前端通过 Bridge 的 terminal 路由使用；本模块只依赖标准库。
 """
@@ -8,16 +8,21 @@
 import hmac
 import json
 import os
-import queue
-import secrets
 import shlex
 import shutil
 import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+
+from fw_terminal_core import (CLIENT_QUEUE, FINISHED_GRACE, HISTORY_BYTES,
+                              JANITOR_INTERVAL, MAX_INPUT_BYTES, MAX_SESSIONS,
+                              ORPHAN_GRACE, READ_CHUNK, STOP_GRACE,
+                              SessionCore, TerminalError, TerminalLimit,
+                              TerminalUnavailable, clamp_size)
 
 try:
     import fcntl
@@ -30,28 +35,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHIM = os.path.join(ROOT, 'tools', 'fw_pty_exec.py')
 MCP_SERVER = os.path.join(ROOT, 'tools', 'mcp_forgeworks.py')
 
-MAX_SESSIONS = 4
-HISTORY_BYTES = 256 * 1024
-CLIENT_QUEUE = 512
-READ_CHUNK = 65536
-MAX_INPUT_BYTES = 64 * 1024
-STOP_GRACE = 2.0
-ORPHAN_GRACE = 300
-FINISHED_GRACE = 60
-JANITOR_INTERVAL = 5
-
-
-class TerminalError(Exception):
-    pass
-
-
-class TerminalUnavailable(TerminalError):
-    pass
-
-
-class TerminalLimit(TerminalError):
-    pass
-
 
 def shell_path():
     for candidate in (os.environ.get('SHELL'), '/bin/zsh', '/bin/bash', '/bin/sh'):
@@ -60,11 +43,19 @@ def shell_path():
     return shutil.which('sh')
 
 
+def _windows_status(platform):
+    try:
+        import fw_pty_win
+    except ImportError as error:
+        return {'available': False, 'platform': platform, 'shell': None,
+                'reason': 'Windows 终端组件不可用：%s' % error}
+    return fw_pty_win.terminal_status(platform)
+
+
 def terminal_availability(platform=None):
     platform = sys.platform if platform is None else platform
     if platform.startswith('win'):
-        return {'available': False, 'platform': platform, 'shell': None,
-                'reason': 'Windows 暂不支持内嵌终端（需要 ConPTY 适配）'}
+        return _windows_status(platform)
     if pty is None:
         return {'available': False, 'platform': platform, 'shell': None,
                 'reason': '当前 Python 缺少 pty 支持'}
@@ -73,7 +64,8 @@ def terminal_availability(platform=None):
             'reason': '' if shell else '未找到可用的 shell'}
 
 
-def claude_command(port):
+def claude_command(port, platform=None):
+    platform = sys.platform if platform is None else platform
     binary = shutil.which('claude')
     if not binary:
         return {'available': False, 'command': None,
@@ -83,14 +75,24 @@ def claude_command(port):
         'args': [MCP_SERVER],
         'env': {'FORGEWORKS_BRIDGE': 'http://127.0.0.1:%d' % port},
     }}}
+    if platform.startswith('win'):
+        # cmd 与 PowerShell 的内联 JSON 引号规则不同，落成文件两边都能直接用
+        path = os.path.join(tempfile.gettempdir(), 'forgeworks-mcp-%d.json' % port)
+        try:
+            with open(path, 'w', encoding='utf-8') as handle:
+                json.dump(config, handle, ensure_ascii=False)
+        except OSError as error:
+            return {'available': False, 'command': None,
+                    'reason': '无法写入 MCP 配置：%s' % error}
+        return {'available': True, 'command': 'claude --mcp-config "%s"' % path,
+                'reason': '', 'configPath': path}
     command = '%s --mcp-config %s' % (
         shlex.quote(binary), shlex.quote(json.dumps(config, ensure_ascii=False)))
     return {'available': True, 'command': command, 'reason': ''}
 
 
 def set_winsize(fd, cols, rows):
-    cols = max(2, min(int(cols or 100), 500))
-    rows = max(2, min(int(rows or 30), 300))
+    cols, rows = clamp_size(cols, rows)
     if fcntl is not None and termios is not None:
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
     return cols, rows
@@ -108,34 +110,17 @@ def _signal_group(proc, sig):
         pass
 
 
-class TerminalSession:
+class TerminalSession(SessionCore):
     def __init__(self, cwd, shell=None, cols=100, rows=30):
         if pty is None:
             raise TerminalUnavailable('当前平台不支持 PTY')
-        self.id = secrets.token_hex(8)
-        self.token = secrets.token_urlsafe(32)
-        self.cwd = cwd
-        self.shell = shell or shell_path()
-        if not self.shell:
-            raise TerminalUnavailable('未找到可用的 shell')
-        self.cols, self.rows = cols, rows
-        self.created_at = time.time()
-        self.exited_at = None
-        self.exit_code = None
-        self.idle_since = None
-        self._lock = threading.Lock()
-        self._io_lock = threading.Lock()
-        self._stop_lock = threading.Lock()
-        self._clients = set()
-        self._history = bytearray()
-        self._stopped = False
         self._master = None
         self._proc = None
-        self._reader = None
-        self.pid = None
-        self._start()
+        super().__init__(cwd, shell or shell_path(), cols, rows)
 
     def _start(self):
+        if not self.shell:
+            raise TerminalUnavailable('未找到可用的 shell')
         master, slave = pty.openpty()
         env = os.environ.copy()
         env.update({'TERM': 'xterm-256color', 'COLORTERM': 'truecolor', 'LANG': env.get('LANG') or 'en_US.UTF-8'})
@@ -175,40 +160,8 @@ class TerminalSession:
                 pass
             self._mark_exit()
 
-    def _broadcast(self, data):
-        with self._lock:
-            self._history.extend(data)
-            if len(self._history) > HISTORY_BYTES:
-                del self._history[:-HISTORY_BYTES]
-            for client in list(self._clients):
-                try:
-                    client.put_nowait(data)
-                except queue.Full:
-                    self._clients.discard(client)
-
-    def add_client(self):
-        client = queue.Queue(maxsize=CLIENT_QUEUE)
-        with self._lock:
-            if self._history:
-                client.put_nowait(bytes(self._history))
-            if self.exited_at is not None:
-                client.put_nowait(None)
-            else:
-                self._clients.add(client)
-                self.idle_since = None
-        return client
-
-    def has_client(self, client):
-        with self._lock:
-            return client in self._clients
-
-    def drop_client(self, client):
-        with self._lock:
-            self._clients.discard(client)
-
-    def client_count(self):
-        with self._lock:
-            return len(self._clients)
+    def _exit_code(self):
+        return self._proc.poll() if self._proc is not None else None
 
     def write(self, data):
         if not data:
@@ -224,20 +177,6 @@ class TerminalSession:
 
     def resize(self, cols, rows):
         self.cols, self.rows = set_winsize(self._master, cols, rows)
-
-    def _mark_exit(self):
-        with self._lock:
-            if self.exited_at is not None:
-                return
-            self.exited_at = time.time()
-            self.exit_code = self._proc.poll() if self._proc is not None else None
-            clients = list(self._clients)
-            self._clients.clear()
-        for client in clients:
-            try:
-                client.put_nowait(None)
-            except queue.Full:
-                pass
 
     def stop(self):
         with self._stop_lock:
@@ -261,17 +200,12 @@ class TerminalSession:
             reader.join(timeout=STOP_GRACE)
         self._mark_exit()
 
-    def should_reap(self, now):
-        if self.exited_at is not None:
-            return now - self.exited_at > FINISHED_GRACE
-        with self._lock:
-            if self._clients:
-                self.idle_since = None
-                return False
-            if self.idle_since is None:
-                self.idle_since = now
-                return False
-            return now - self.idle_since > ORPHAN_GRACE
+
+def create_session(cwd, shell=None, cols=100, rows=30):
+    if os.name == 'nt':
+        import fw_pty_win
+        return fw_pty_win.WindowsSession(cwd, shell=shell, cols=cols, rows=rows)
+    return TerminalSession(cwd, shell=shell, cols=cols, rows=rows)
 
 
 class TerminalManager:
@@ -291,7 +225,7 @@ class TerminalManager:
         with self._lock:
             if len(self._sessions) >= self.max_sessions:
                 raise TerminalLimit('终端会话已达上限（%d）' % self.max_sessions)
-        session = TerminalSession(cwd, shell=status['shell'], cols=cols, rows=rows)
+        session = create_session(cwd, shell=status['shell'], cols=cols, rows=rows)
         with self._lock:
             if len(self._sessions) >= self.max_sessions:
                 session.stop()

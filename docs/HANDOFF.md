@@ -669,6 +669,8 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 - **用途**：在管线视图里直接得到一个真终端，可在其中启动 `claude` 会话，经 `forgeworks` MCP 读写项目内容与管线，不必切到外部终端。
 - **后端**：`tools/fw_terminal.py`（会话层，纯 stdlib）+ `tools/fw_pty_exec.py`（子进程 shim）。Bridge 用 `pty.openpty()` + `Popen(..., start_new_session=True)` 起登录 shell，shim 里 `TIOCSCTTY` 后 `execvpe`。**不起 `pty.fork()`**：Bridge 是多线程进程，不能让子进程继续跑 Python。读线程独占 master 句柄（含关闭），跨线程 close 在 macOS 上会与阻塞的 `os.read` 互锁。
+- **分层**：`tools/fw_terminal_core.py` 放跨平台部分（历史、广播、退出与回收判定），`fw_terminal.py` 是 POSIX 实现与会话管理，`fw_pty_win.py` 是 Windows 实现。
+- **Windows**：ConPTY 由 pywinpty 提供（`pip install pywinpty`，Windows 上唯一需要额外安装的依赖）。shell 依次尝试 `pwsh` → `powershell` → `%COMSPEC%`；关闭终端时先 `taskkill /F /T` 杀掉整棵进程树（ConPTY 不会让子进程随 shell 退出）。「启动 Claude」在 Windows 上把 MCP 配置写到 `%TEMP%\forgeworks-mcp-<port>.json` 再传路径，避开 cmd 与 PowerShell 各自的内联 JSON 引号规则。pywinpty 缺失时 `/api/terminal/status` 返回 `available:false` 并提示安装命令，Bridge 其它功能不受影响。
 - **cwd**：固定为当前绑定项目的数据根（`fw_dir()`），不是 Bridge 安装目录；未绑定项目时启动返回 409。
 - **启动 Claude**：`claude_command(port)` 生成 `claude --mcp-config '<json>'`，JSON 内用当前解释器、`tools/mcp_forgeworks.py` 绝对路径与 `FORGEWORKS_BRIDGE=http://127.0.0.1:<port>`，整体 `shlex.quote`。后端生成、前端原样写入 PTY，因此按钮点下去 MCP 一定可用；未装 `claude` 时按钮禁用并给出原因。
 - **API**（全部只允许 loopback，且 **不发送 `Access-Control-Allow-Origin`**，防止任意网页借 `EventSource` 连本机）：
@@ -678,6 +680,6 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
   - `POST /api/terminal/input` `{sessionId,token,data:<base64>}`（单次 ≤64KB，超限 413）；`POST /api/terminal/resize` `{sessionId,token,cols,rows}`；`POST /api/terminal/stop`。
 - **鉴权**：session id `secrets.token_hex(8)`，token `secrets.token_urlsafe(32)`，`hmac.compare_digest` 比较；缺少会话或 token 一律 403。POST 额外校验 `Origin` 为本机；所有终端路由校验 `Host` 为 `127.0.0.1:<port>` / `localhost:<port>`，防 DNS rebinding。日志中 `token=` 脱敏。
 - **前端**：`js/terminal.js` + `css/terminal.css`；xterm 5.5.0 / addon-fit 0.10.0 本地 vendor 在 `js/vendor/`。dock 挂在 `.main` 内、`#view` 外，管线重渲染不销毁；离开管线视图自动关闭；项目切换时比对 cwd 不一致则关闭。输入 8ms 微批、resize 120ms 去抖，EventSource 连续失败 3 次停止重连并提示重开。
-- **限制**：仅 macOS / Linux。Windows 无 ConPTY 适配，`/api/terminal/status` 返回 `available:false` 并说明原因。这是真终端，能拿到 token 的本机进程即可执行命令，不做命令白名单或沙箱。
-- **验证**：`tests/test_fw_terminal.py` 覆盖 shell 往返、resize、停止回收、历史重放、错误 token、会话上限、`shutdown_all`、Windows 守卫、claude 命令内容，以及 HTTP 层 Origin/Host/token 拒绝与 SSE 端到端；`tests/smoke.html` 覆盖 vendor 全局、工具条按钮与 base64 中文往返。
+- **限制**：这是真终端，能拿到 token 的本机进程即可执行命令，不做命令白名单或沙箱。Windows 路径尚未在真机验证（开发机是 macOS），首次在 Windows 上使用后请回报问题。
+- **验证**：`tests/test_fw_terminal.py` 覆盖 POSIX shell 往返、resize、停止回收、历史重放、错误 token、会话上限、`shutdown_all`、claude 命令内容，以及 HTTP 层 Origin/Host/token 拒绝与 SSE 端到端；`tests/test_fw_terminal_win.py` 用假 `winpty` 模块覆盖 Windows 会话的 spawn/write/resize/退出/停树、shell 选择与 MCP 配置文件；`tests/smoke.html` 覆盖 vendor 全局、工具条按钮与 base64 中文往返。
 - **手工验收**：管线视图点「终端」→ dock 出现并显示提示符 → 输入 `echo FW_TERM_OK` 有回显 → 点「启动 Claude」进入 TUI（确认中文输入）→ `/mcp` 能看到 `forgeworks` → 关闭后 `pgrep -f fw_pty_exec` 无残留。
