@@ -76,8 +76,8 @@
 .pipeline-port-out{right:-7px;background:var(--accent)}
 .pipeline-port:hover{transform:scale(1.3)}
 .pipeline-port-out:hover{box-shadow:0 0 0 4px rgba(194,65,12,.18)}
-.pipeline-port-contract{border-color:var(--blue)}
-.pipeline-port-out.pipeline-port-contract{background:var(--blue)}
+.pipeline-port-part{border-color:var(--blue)}
+.pipeline-port-out.pipeline-port-part{background:var(--blue)}
 .pipeline-port.compatible{border-color:var(--brand);background:var(--brand-soft);transform:scale(1.2)}
 .pipeline-port.compatible-hover{border-color:var(--brand);background:var(--brand);transform:scale(1.55);
   box-shadow:0 0 0 5px rgba(194,65,12,.2)}

@@ -1,30 +1,19 @@
 #!/usr/bin/env python3
-"""分件契约与装配：按三视图包围盒把部件摆回一台整机。"""
+"""部件布局与本地装配：Blender 按布局移动、缩放、旋转各部件并合并成整机。"""
 
 import argparse
 import glob
 import json
-import math
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
-SCHEMA_VERSION = 1
-DEFAULT_OVERLAP = 0.02
-MAX_OVERLAP = 0.2
-ASPECT_TOLERANCE = 0.25
-HEIGHT_MISMATCH = 0.15
-SCALE_RANGE = (0.05, 20.0)
+LAYOUT_SCHEMA_VERSION = 1
 BLENDER_TIMEOUT = 600
-FITS = ('contain', 'height')
-PART_ID_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
-PART_SECTION = '【必须包含的部件】'
-_PART_LINE_RE = re.compile(r'^\s*(?:[·•\-*]|\d+\s*[.、)]|[（(]\d+[）)])\s*(.+?)\s*$')
-_PART_SPLIT_RE = re.compile(r'[、；;]')
-_PART_DESC_RE = re.compile(r'^(.+?)\s+[—–－]+\s+(.+)$')
+DEFAULT_GAP = 0.02
 
 
 def _number(value, label):
@@ -33,257 +22,121 @@ def _number(value, label):
     return float(value)
 
 
-def _box(value, label):
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        raise ValueError('%s 必须是 [x, y, w, h]' % label)
-    x, y, w, h = (_number(item, label) for item in value)
-    if w <= 0 or h <= 0:
-        raise ValueError('%s 的宽高必须为正' % label)
-    return [x, y, w, h]
+def _vector(value, label):
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError('%s 必须是三维数组' % label)
+    return [_number(item, label) for item in value]
 
 
-def _view(value, label):
+def _bbox(value, label):
     if not isinstance(value, dict):
         raise ValueError('%s 必须是对象' % label)
-    width = _number(value.get('width'), label + '.width')
-    height = _number(value.get('height'), label + '.height')
-    ground = _number(value.get('ground'), label + '.ground')
-    ppm = _number(value.get('pxPerMeter'), label + '.pxPerMeter')
-    if width <= 0 or height <= 0 or ppm <= 0:
-        raise ValueError('%s 的 width/height/pxPerMeter 必须为正' % label)
-    if not 0 <= ground <= height:
-        raise ValueError('%s.ground 必须落在图内' % label)
-    return {'width': width, 'height': height, 'ground': ground,
-            'pxPerMeter': ppm, 'flipX': bool(value.get('flipX'))}
+    low = _vector(value.get('min'), label + '.min')
+    high = _vector(value.get('max'), label + '.max')
+    if any(high[i] < low[i] for i in range(3)) or all(high[i] == low[i] for i in range(3)):
+        raise ValueError('%s 的包围盒无效' % label)
+    return {'min': low, 'max': high}
 
 
-def normalize_contract(data):
-    if not isinstance(data, dict):
-        raise ValueError('契约必须是 JSON 对象')
-    if data.get('schemaVersion') != SCHEMA_VERSION:
-        raise ValueError('契约 schemaVersion 必须为 %d' % SCHEMA_VERSION)
-    asset_id = str(data.get('assetId') or '').strip()
-    if not PART_ID_RE.fullmatch(asset_id):
-        raise ValueError('assetId 非法')
-    views_in = data.get('views')
-    if not isinstance(views_in, dict):
-        raise ValueError('缺少 views')
-    views = {'front': _view(views_in.get('front'), 'views.front'),
-             'side': _view(views_in.get('side'), 'views.side')}
-    parts_in = data.get('parts')
-    if not isinstance(parts_in, list) or not parts_in:
-        raise ValueError('parts 不能为空')
-    parts = []
-    seen = set()
-    for index, item in enumerate(parts_in):
-        label = 'parts[%d]' % index
-        if not isinstance(item, dict):
-            raise ValueError(label + ' 必须是对象')
-        part_id = str(item.get('id') or '').strip()
-        if not PART_ID_RE.fullmatch(part_id):
-            raise ValueError(label + '.id 非法')
-        if part_id in seen:
-            raise ValueError('部件 id 重复：' + part_id)
-        seen.add(part_id)
-        mesh = item.get('mesh')
-        if not isinstance(mesh, str) or not mesh.strip():
-            raise ValueError(label + '.mesh 不能为空')
-        if os.path.isabs(mesh) or '..' in mesh.replace('\\', '/').split('/'):
-            raise ValueError(label + '.mesh 必须是契约目录内的相对路径')
-        fit = str(item.get('fit') or 'contain').strip().lower()
-        if fit not in FITS:
-            raise ValueError(label + '.fit 只支持 ' + ' / '.join(FITS))
-        overlap = item.get('overlap')
-        overlap = DEFAULT_OVERLAP if overlap is None else _number(overlap, label + '.overlap')
-        if not 0 <= overlap <= MAX_OVERLAP:
-            raise ValueError('%s.overlap 必须在 0–%.2f' % (label, MAX_OVERLAP))
-        rotation = item.get('rotationZ')
-        rotation = 0.0 if rotation is None else _number(rotation, label + '.rotationZ')
-        scale = item.get('scale')
-        if scale is not None:
-            scale = _number(scale, label + '.scale')
-            if scale <= 0:
-                raise ValueError(label + '.scale 必须为正')
-        parts.append({
-            'id': part_id,
-            'name': str(item.get('name') or part_id),
-            'description': str(item.get('description') or ''),
-            'mesh': mesh.strip(),
-            'front': _box(item.get('front'), label + '.front'),
-            'side': _box(item.get('side'), label + '.side'),
-            'fit': fit,
-            'overlap': overlap,
-            'rotationZ': rotation,
-            'scale': scale,
-            'regenerate': bool(item.get('regenerate')),
-        })
-    return {'schemaVersion': SCHEMA_VERSION, 'assetId': asset_id,
-            'views': views, 'parts': parts}
+def _relative_mesh(root, mesh):
+    text = str(mesh or '').strip().replace('\\', '/')
+    if not text:
+        raise ValueError('部件缺少模型路径')
+    if not os.path.isabs(text):
+        return text
+    root_real = os.path.realpath(root)
+    absolute = os.path.realpath(text)
+    if os.path.commonpath((root_real, absolute)) != root_real:
+        raise ValueError('部件模型越出管线目录：' + text)
+    return os.path.relpath(absolute, root_real).replace(os.sep, '/')
 
 
-def view_world_range(view, box):
-    """正视图 x→世界 X，侧视图 x→世界 Y；两图 y 都从地面往上量。"""
-    x, y, width, height = box
-    left = (x - view['width'] / 2) / view['pxPerMeter']
-    right = (x + width - view['width'] / 2) / view['pxPerMeter']
-    bottom = (view['ground'] - (y + height)) / view['pxPerMeter']
-    top = (view['ground'] - y) / view['pxPerMeter']
-    if view['flipX']:
-        left, right = -right, -left
-    return (left, right), (bottom, top)
+def resolve_layout_mesh(root, mesh):
+    text = str(mesh or '').strip().replace('\\', '/')
+    if not text or os.path.isabs(text):
+        raise ValueError('布局里的 mesh 必须是管线目录内的相对路径：' + (text or '(空)'))
+    segments = [segment for segment in text.split('/') if segment not in ('', '.')]
+    if '..' in segments:
+        raise ValueError('布局里的 mesh 不能越出管线目录：' + text)
+    root_real = os.path.realpath(root)
+    absolute = os.path.realpath(os.path.join(root_real, *segments))
+    if os.path.commonpath((root_real, absolute)) != root_real or not os.path.isfile(absolute):
+        raise ValueError('部件模型不存在或越界：' + text)
+    return absolute
 
 
-def target_box(views, part):
-    (fx0, fx1), (fz0, fz1) = view_world_range(views['front'], part['front'])
-    (sy0, sy1), (sz0, sz1) = view_world_range(views['side'], part['side'])
-    warnings = []
-    front_height, side_height = fz1 - fz0, sz1 - sz0
-    if front_height > 0 and side_height > 0:
-        drift = abs(front_height - side_height) / max(front_height, side_height)
-        if drift > HEIGHT_MISMATCH:
-            warnings.append('正/侧视图高度差 %d%%' % round(drift * 100))
-    return {'min': [fx0, sy0, fz0], 'max': [fx1, sy1, fz1]}, warnings
-
-
-def plan_part(part, target, measured):
-    pmin = [float(value) for value in measured['min']]
-    pmax = [float(value) for value in measured['max']]
-    psize = [pmax[i] - pmin[i] for i in range(3)]
-    if any(size <= 1e-9 for size in psize):
-        raise ValueError('部件 %s 的包围盒无效' % part['id'])
-    tmin, tmax = target['min'], target['max']
-    tsize = [tmax[i] - tmin[i] for i in range(3)]
-    ratios = [tsize[i] / psize[i] for i in range(3)]
-    scale = min(ratios) if part['fit'] == 'contain' else ratios[2]
-    scale *= 1 + part['overlap']
-    manual = part['scale'] is not None
-    if manual:
-        scale = part['scale']
-    rotation = math.radians(part['rotationZ'])
-    center = [(pmin[i] + pmax[i]) / 2 for i in range(3)]
-    scaled_x, scaled_y = center[0] * scale, center[1] * scale
-    rotated_x = scaled_x * math.cos(rotation) - scaled_y * math.sin(rotation)
-    rotated_y = scaled_x * math.sin(rotation) + scaled_y * math.cos(rotation)
-    target_center = [(tmin[i] + tmax[i]) / 2 for i in range(3)]
-    translate = [target_center[0] - rotated_x,
-                 target_center[1] - rotated_y,
-                 tmin[2] - pmin[2] * scale]
-    flags = []
-    if manual:
-        flags.append('manual_scale')
-    elif any(abs(ratio / scale - 1) > ASPECT_TOLERANCE for ratio in ratios):
-        flags.append('aspect_mismatch')
-    if not SCALE_RANGE[0] <= scale <= SCALE_RANGE[1]:
-        flags.append('scale_outlier')
-    return {'scale': round(scale, 6),
-            'translate': [round(value, 6) for value in translate],
-            'rotationZ': part['rotationZ'],
-            'flags': flags,
-            'targetSize': [round(size, 6) for size in tsize],
-            'sourceSize': [round(size, 6) for size in psize]}
-
-
-def _view_for_axis(height_size, axis_min, axis_max, px_per_meter, margin, ground):
-    half = max(abs(axis_min), abs(axis_max)) * px_per_meter + margin
-    return {'width': max(int(math.ceil(half * 2)), 1),
-            'height': max(int(math.ceil(height_size * px_per_meter)) + margin * 2, 1),
-            'ground': ground,
-            'pxPerMeter': px_per_meter,
-            'flipX': False}
-
-
-def _box_in_view(bbox, axis, view):
-    low = bbox['min'][axis] * view['pxPerMeter'] + view['width'] / 2
-    high = bbox['max'][axis] * view['pxPerMeter'] + view['width'] / 2
-    top = view['ground'] - bbox['max'][2] * view['pxPerMeter']
-    bottom = view['ground'] - bbox['min'][2] * view['pxPerMeter']
-    return [round(low, 3), round(top, 3), round(high - low, 3), round(bottom - top, 3)]
-
-
-def contract_from_bboxes(asset_id, entries, px_per_meter=400, margin=20):
-    """把一批世界包围盒反推成三视图契约，供粗切产物做往返验证。"""
-    if not entries:
-        raise ValueError('至少需要一个部件')
-    mins = [min(item['bbox']['min'][i] for item in entries) for i in range(3)]
-    maxs = [max(item['bbox']['max'][i] for item in entries) for i in range(3)]
-    size = [maxs[i] - mins[i] for i in range(3)]
-    ground = margin + maxs[2] * px_per_meter
-    views = {
-        'front': _view_for_axis(size[2], mins[0], maxs[0], px_per_meter, margin, ground),
-        'side': _view_for_axis(size[2], mins[1], maxs[1], px_per_meter, margin, ground),
+def _layout_part(item, index):
+    label = 'parts[%d]' % index
+    if not isinstance(item, dict):
+        raise ValueError(label + ' 必须是对象')
+    part_id = str(item.get('id') or '').strip()
+    if not part_id:
+        raise ValueError(label + '.id 不能为空')
+    mesh = str(item.get('mesh') or '').strip().replace('\\', '/')
+    if not mesh or os.path.isabs(mesh) or '..' in mesh.split('/'):
+        raise ValueError(label + '.mesh 必须是管线目录内的相对路径')
+    scale = _number(item.get('scale', 1.0), label + '.scale')
+    if scale <= 0:
+        raise ValueError(label + '.scale 必须为正数')
+    ground = item.get('ground', True)
+    if not isinstance(ground, bool):
+        raise ValueError(label + '.ground 必须是布尔值')
+    return {
+        'id': part_id,
+        'name': str(item.get('name') or part_id),
+        'mesh': mesh,
+        'description': str(item.get('description') or ''),
+        'sourceBbox': _bbox(item.get('sourceBbox'), label + '.sourceBbox'),
+        'scale': scale,
+        'translate': _vector(item.get('translate', [0, 0, 0]), label + '.translate'),
+        'rotationZ': _number(item.get('rotationZ', 0), label + '.rotationZ'),
+        'ground': ground,
     }
-    parts = []
-    for item in entries:
-        parts.append({
-            'id': item['id'],
-            'name': item.get('name') or item['id'],
-            'description': item.get('description') or '',
-            'mesh': item['mesh'],
-            'front': _box_in_view(item['bbox'], 0, views['front']),
-            'side': _box_in_view(item['bbox'], 1, views['side']),
-            'fit': 'contain',
-            'overlap': 0,
-            'rotationZ': 0,
-        })
-    return {'schemaVersion': SCHEMA_VERSION, 'assetId': asset_id,
-            'views': views, 'parts': parts}
 
 
-def part_names_from_prompt(text):
-    """从描述词的【必须包含的部件】清单里取部件名与说明，用于改写粗切件名。"""
-    if not isinstance(text, str) or PART_SECTION not in text:
-        return []
-    section = text.split(PART_SECTION, 1)[1]
-    stop = re.search(r'\n\s*【', section)
-    if stop:
-        section = section[:stop.start()]
-    names, seen = [], set()
-    for raw in section.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        match = _PART_LINE_RE.match(line)
-        body = (match.group(1) if match else line).strip().strip('·•-*').strip()
-        if not body:
-            continue
-        name, description = body, ''
-        if '：' in body or ':' in body:
-            separator = '：' if '：' in body else ':'
-            left, right = body.split(separator, 1)
-            if left.strip():
-                name, description = left.strip(), right.strip()
-        elif _PART_DESC_RE.match(body):
-            left, right = _PART_DESC_RE.match(body).groups()
-            name, description = left.strip(), right.strip()
-        else:
-            segments = [segment.strip() for segment in _PART_SPLIT_RE.split(body) if segment.strip()]
-            if len(segments) > 1:
-                for segment in segments:
-                    if segment not in seen:
-                        seen.add(segment)
-                        names.append({'name': segment[:64], 'description': ''})
-                continue
-        name = re.sub(r'\s+', ' ', name)[:64]
-        if name and name not in seen:
-            seen.add(name)
-            names.append({'name': name, 'description': description[:300]})
-    return names
+def normalize_layout(data):
+    if not isinstance(data, dict):
+        raise ValueError('布局必须是 JSON 对象')
+    if data.get('schemaVersion') != LAYOUT_SCHEMA_VERSION:
+        raise ValueError('布局 schemaVersion 必须为 %d' % LAYOUT_SCHEMA_VERSION)
+    parts_in = data.get('parts')
+    if not isinstance(parts_in, list):
+        raise ValueError('布局缺少 parts')
+    parts, seen = [], set()
+    for index, item in enumerate(parts_in):
+        part = _layout_part(item, index)
+        if part['mesh'] in seen:
+            raise ValueError('布局里 mesh 重复：' + part['mesh'])
+        seen.add(part['mesh'])
+        parts.append(part)
+    return {
+        'schemaVersion': LAYOUT_SCHEMA_VERSION,
+        'assetId': str(data.get('assetId') or ''),
+        'nodeId': str(data.get('nodeId') or ''),
+        'assemblyPrompt': str(data.get('assemblyPrompt') or ''),
+        'updatedAt': data.get('updatedAt') if isinstance(data.get('updatedAt'), str) else None,
+        'parts': parts,
+    }
 
 
-def rename_contract_parts(contract, names):
-    """只改显示名与说明，id 保持粗切编号，避免中文进入文件名。"""
-    parts = contract.get('parts') or []
-    if not names:
-        return {'parts': len(parts), 'renamed': 0,
-                'warnings': ['描述词没有【必须包含的部件】清单，沿用粗切命名']}
-    for part, entry in zip(parts, names):
-        part['name'] = entry['name']
-        part['description'] = entry.get('description') or ''
-    warnings = []
-    if len(names) != len(parts):
-        warnings.append('描述词列了 %d 个部件，粗切得到 %d 块，按顺序命名前 %d 个'
-                        % (len(names), len(parts), min(len(names), len(parts))))
-    return {'parts': len(parts), 'renamed': min(len(parts), len(names)), 'warnings': warnings}
+def load_layout(path):
+    try:
+        with open(path, encoding='utf-8') as stream:
+            data = json.load(stream)
+    except FileNotFoundError:
+        return None
+    except ValueError as error:
+        raise ValueError('布局文件不是合法 JSON：%s' % error)
+    return normalize_layout(data)
+
+
+def save_layout(path, layout):
+    absolute = os.path.abspath(path)
+    os.makedirs(os.path.dirname(absolute), exist_ok=True)
+    tmp = absolute + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as stream:
+        json.dump(layout, stream, ensure_ascii=False, indent=2)
+    os.replace(tmp, absolute)
 
 
 def find_blender():
@@ -333,147 +186,214 @@ def _run_blender(blender_path, arguments, label):
         return report
 
 
-def load_contract(path):
-    with open(path, encoding='utf-8') as stream:
-        return normalize_contract(json.load(stream))
+def measure_parts(blender_path, mesh_paths):
+    paths = [os.path.realpath(path) for path in mesh_paths]
+    if not paths:
+        raise ValueError('没有可测量的部件模型')
+    report = _run_blender(blender_path, ['--mode', 'measure', '--inputs'] + paths, '部件测量')
+    measured = {}
+    for item in report.get('files') or []:
+        path = os.path.realpath(str(item.get('path') or ''))
+        measured[path] = {
+            'min': [float(value) for value in item['min']],
+            'max': [float(value) for value in item['max']],
+            'triangles': int(item.get('triangles') or 0),
+        }
+    missing = [path for path in paths if path not in measured]
+    if missing:
+        raise ValueError('Blender 未测量到部件：' + '、'.join(os.path.basename(path) for path in missing))
+    return measured
 
 
-def _resolve_meshes(contract, base_dir):
-    root = os.path.realpath(base_dir)
-    resolved = []
-    for part in contract['parts']:
-        path = os.path.realpath(os.path.join(root, part['mesh']))
-        if os.path.commonpath((root, path)) != root or not os.path.isfile(path):
-            raise ValueError('部件文件不存在或越界：' + part['mesh'])
-        resolved.append(path)
-    return resolved
+def auto_layout(entries, gap=DEFAULT_GAP):
+    """把部件按接入顺序沿 X 轴并排、底面贴地；尺寸与朝向仍需人工或 AI 调整。"""
+    laid_out, cursor = [], 0.0
+    for index, entry in enumerate(entries):
+        bbox = entry.get('sourceBbox')
+        if not isinstance(bbox, dict):
+            raise ValueError('自动布局需要部件的 sourceBbox')
+        low = [_number(value, 'sourceBbox.min') for value in bbox.get('min') or []]
+        high = [_number(value, 'sourceBbox.max') for value in bbox.get('max') or []]
+        invalid = (len(low) != 3 or len(high) != 3
+                   or any(high[i] < low[i] for i in range(3))
+                   or all(high[i] == low[i] for i in range(3)))
+        if invalid:
+            raise ValueError('部件 %s 的包围盒无效' % (entry.get('id') or index))
+        if index:
+            cursor += gap
+        translate = [round(cursor - low[0], 6),
+                     round(-(low[1] + high[1]) / 2, 6),
+                     round(-low[2], 6)]
+        cursor += high[0] - low[0]
+        laid_out.append({
+            'id': str(entry.get('id') or 'part_%d' % index),
+            'name': str(entry.get('name') or entry.get('id') or '部件 %d' % (index + 1)),
+            'mesh': entry['mesh'],
+            'description': str(entry.get('description') or ''),
+            'sourceBbox': {'min': [round(value, 6) for value in low],
+                           'max': [round(value, 6) for value in high]},
+            'scale': 1.0,
+            'translate': translate,
+            'rotationZ': 0.0,
+            'ground': True,
+        })
+    return laid_out
 
 
-def assemble(contract_path, output_path, blender_path=None, report_path=None,
-             parts_json_path=None):
-    base_dir = os.path.dirname(os.path.abspath(contract_path))
-    contract = load_contract(contract_path)
+def _plan_part(entry, mesh_path=None):
+    scale = float(entry['scale'])
+    translate = [float(value) for value in entry['translate']]
+    if entry['ground']:
+        translate[2] = round(-entry['sourceBbox']['min'][2] * scale, 6)
+    return {
+        'id': entry['id'],
+        'name': entry['name'],
+        'mesh': mesh_path or entry['mesh'],
+        'scale': round(scale, 6),
+        'translate': [round(value, 6) for value in translate],
+        'rotationZ': round(float(entry['rotationZ']), 6),
+    }, translate
+
+
+def assemble_parts(parts, output_path, layout_path, root, assembly_prompt='',
+                   reset=False, blender_path=None, asset_id='', node_id=''):
+    """按布局合并部件；布局缺失或 reset 时自动生成，已有布局里的变换优先于自动布局。"""
+    if not parts:
+        raise ValueError('没有可组装的部件模型')
     blender = blender_path or find_blender()
     if not blender:
         raise ValueError('未找到 Blender：请用 --blender 指定，或配置 tools/bridge_config.json')
-    meshes = _resolve_meshes(contract, base_dir)
-    measured = _run_blender(blender, ['--mode', 'measure', '--inputs'] + meshes, '部件测量')
-    by_path = {os.path.realpath(item['path']): item for item in measured['files']}
+    root = os.path.realpath(root)
 
-    plan_parts = []
-    records = []
+    entries, seen = [], set()
+    for index, part in enumerate(parts):
+        if not isinstance(part, dict):
+            raise ValueError('部件参数必须是对象')
+        mesh = _relative_mesh(root, part.get('mesh'))
+        if mesh in seen:
+            raise ValueError('同一个部件模型被重复接入：' + mesh)
+        seen.add(mesh)
+        entries.append({
+            'id': str(part.get('id') or 'part_%d' % index),
+            'name': str(part.get('name') or part.get('id') or '部件 %d' % (index + 1)),
+            'description': str(part.get('description') or ''),
+            'mesh': mesh,
+            'absolute': resolve_layout_mesh(root, mesh),
+        })
+
+    measured = measure_parts(blender, [entry['absolute'] for entry in entries])
+    for entry in entries:
+        measurement = measured[entry['absolute']]
+        entry['sourceBbox'] = {'min': [round(value, 6) for value in measurement['min']],
+                               'max': [round(value, 6) for value in measurement['max']]}
+        entry['sourceTriangles'] = measurement['triangles']
+
     warnings = []
-    for part, path in zip(contract['parts'], meshes):
-        box, box_warnings = target_box(contract['views'], part)
-        warnings.extend('%s：%s' % (part['name'], item) for item in box_warnings)
-        measurement = by_path.get(path)
-        if not measurement:
-            raise ValueError('Blender 未测量到部件 ' + part['id'])
-        computed = plan_part(part, box, measurement)
-        plan_parts.append({'id': part['id'], 'name': part['name'], 'mesh': path,
-                           'scale': computed['scale'],
-                           'translate': computed['translate'],
-                           'rotationZ': part['rotationZ']})
-        records.append({'id': part['id'], 'name': part['name'], 'mesh': part['mesh'],
-                        'sourceBbox': {'min': measurement['min'], 'max': measurement['max']},
-                        'targetBbox': box, 'scale': computed['scale'],
-                        'translate': computed['translate'],
-                        'rotationZ': part['rotationZ'],
-                        'flags': computed['flags'], 'warnings': box_warnings})
+    existing = None if reset else load_layout(layout_path)
+    existing_by_mesh = {}
+    if existing:
+        existing_by_mesh = {entry['mesh']: entry for entry in existing['parts']}
+        dropped = [mesh for mesh in existing_by_mesh if mesh not in seen]
+        if dropped:
+            warnings.append('布局里有 %d 个部件已不再接入，已丢弃：%s'
+                            % (len(dropped), '、'.join(os.path.basename(mesh) for mesh in dropped)))
+        added = [entry['mesh'] for entry in entries if entry['mesh'] not in existing_by_mesh]
+        if added:
+            warnings.append('%d 个新部件已自动补位，可在布局文件里调整' % len(added))
+    else:
+        warnings.append('已自动生成布局：沿 X 轴并排贴地，可在布局文件里调整后重跑')
+    auto_by_mesh = {entry['mesh']: entry for entry in auto_layout(entries)}
+
+    layout_parts, plan_parts, records = [], [], []
+    for entry in entries:
+        existing_entry = existing_by_mesh.get(entry['mesh'])
+        base = existing_entry or auto_by_mesh[entry['mesh']]
+        layout_entry = {
+            'id': entry['id'],
+            'name': (existing_entry or {}).get('name') or entry['name'] or base['name'],
+            'mesh': entry['mesh'],
+            'description': entry['description'] or base['description'],
+            'sourceBbox': entry['sourceBbox'],
+            'scale': float(base['scale']),
+            'translate': [float(value) for value in base['translate']],
+            'rotationZ': float(base['rotationZ']),
+            'ground': bool(base['ground']),
+        }
+        plan_part, effective = _plan_part(layout_entry, entry['absolute'])
+        plan_parts.append(plan_part)
+        # 写回实际落地的 translate，AI 关掉 ground 时仍保留贴地位置
+        layout_entry['translate'] = effective
+        layout_parts.append(layout_entry)
+        records.append({'id': entry['id'], 'name': entry['name'], 'mesh': entry['mesh'],
+                        'sourceTriangles': entry['sourceTriangles']})
 
     absolute_output = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(absolute_output), exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='forgeworks-assemble-') as temp_dir:
         plan_path = os.path.join(temp_dir, 'plan.json')
         with open(plan_path, 'w', encoding='utf-8') as stream:
-            json.dump({'schemaVersion': SCHEMA_VERSION, 'parts': plan_parts},
+            json.dump({'schemaVersion': LAYOUT_SCHEMA_VERSION, 'parts': plan_parts},
                       stream, ensure_ascii=False)
         assembled = _run_blender(blender, ['--mode', 'assemble', '--plan', plan_path,
                                            '--output', absolute_output], '部件装配')
 
-    world = {item['id']: item for item in assembled['parts']}
+    world = {str(item.get('id')): item for item in assembled.get('parts') or []}
     for record in records:
         final = world.get(record['id'])
         record['worldBbox'] = ({'min': final['min'], 'max': final['max']} if final else None)
         record['triangles'] = int(final.get('triangles') or 0) if final else 0
-        if final and final.get('triangles') == 0:
-            record['flags'].append('empty_mesh')
+        if final is not None and record['triangles'] == 0:
+            warnings.append('部件 %s 装配后没有面' % record['name'])
 
-    report = {'valid': not any('empty_mesh' in record['flags'] for record in records),
-              'assetId': contract['assetId'], 'output': absolute_output,
-              'blender': blender, 'parts': records, 'warnings': warnings}
-    target = report_path or os.path.splitext(absolute_output)[0] + '.report.json'
-    with open(target, 'w', encoding='utf-8') as stream:
+    stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    layout = {'schemaVersion': LAYOUT_SCHEMA_VERSION, 'assetId': asset_id,
+              'nodeId': node_id or '', 'assemblyPrompt': assembly_prompt,
+              'updatedAt': stamp, 'parts': layout_parts}
+    save_layout(layout_path, layout)
+
+    report = {'valid': True, 'assetId': asset_id, 'nodeId': node_id or '',
+              'output': absolute_output, 'layout': os.path.abspath(layout_path),
+              'blender': blender, 'assemblyPrompt': assembly_prompt,
+              'parts': records, 'warnings': warnings}
+    with open(os.path.splitext(absolute_output)[0] + '.report.json', 'w', encoding='utf-8') as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
-    payload = {'schemaVersion': SCHEMA_VERSION, 'assetId': contract['assetId'],
-               'parts': [{key: record[key] for key in
-                          ('id', 'name', 'mesh', 'worldBbox', 'scale', 'translate',
-                           'rotationZ', 'flags')} for record in records]}
-    with open(parts_json_path or os.path.join(os.path.dirname(absolute_output), 'parts.json'),
-              'w', encoding='utf-8') as stream:
-        json.dump(payload, stream, ensure_ascii=False, indent=2)
-    return report
 
-
-def bootstrap(source_path, out_dir, parts=3, axis='z', blender_path=None, asset_id=None):
-    blender = blender_path or find_blender()
-    if not blender:
-        raise ValueError('未找到 Blender：请用 --blender 指定，或配置 tools/bridge_config.json')
-    if not os.path.isfile(source_path):
-        raise ValueError('源 GLB 不存在')
-    os.makedirs(out_dir, exist_ok=True)
-    cut = _run_blender(blender, ['--mode', 'cut', '--input', os.path.abspath(source_path),
-                                 '--out-dir', os.path.abspath(out_dir),
-                                 '--parts', str(parts), '--axis', axis], '部件粗切')
-    entries = [{'id': 'part_%d' % item['index'],
-                'name': '部件 %d' % (item['index'] + 1),
-                'mesh': os.path.basename(item['file']),
-                'bbox': {'min': item['min'], 'max': item['max']}}
-               for item in cut['files']]
-    contract = contract_from_bboxes(asset_id or 'CUT_DEMO', entries)
-    contract_path = os.path.join(out_dir, 'partspec.json')
-    with open(contract_path, 'w', encoding='utf-8') as stream:
-        json.dump(contract, stream, ensure_ascii=False, indent=2)
-    return {'contract': contract_path, 'parts': entries}
+    return {
+        'meshPath': os.path.basename(absolute_output),
+        'outputPath': absolute_output,
+        'layoutPath': os.path.abspath(layout_path),
+        'parts': [{'id': record['id'], 'name': record['name'],
+                   'triangles': record['triangles']} for record in records],
+        'triangles': sum(record['triangles'] for record in records),
+        'warnings': warnings,
+        'engine': 'blender',
+        'updatedAt': stamp,
+    }
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Forgeworks 分件契约与装配')
+    parser = argparse.ArgumentParser(description='Forgeworks 部件布局与本地装配')
     sub = parser.add_subparsers(dest='command', required=True)
-
-    assemble_cmd = sub.add_parser('assemble', help='按契约装配部件')
-    assemble_cmd.add_argument('--contract', required=True)
+    assemble_cmd = sub.add_parser('assemble', help='按已有布局文件重新装配')
+    assemble_cmd.add_argument('--layout', required=True)
+    assemble_cmd.add_argument('--root', required=True)
     assemble_cmd.add_argument('--out', required=True)
-    assemble_cmd.add_argument('--report')
-    assemble_cmd.add_argument('--parts-json')
     assemble_cmd.add_argument('--blender')
-
-    bootstrap_cmd = sub.add_parser('bootstrap', help='粗切一个 GLB 并生成契约')
-    bootstrap_cmd.add_argument('--source', required=True)
-    bootstrap_cmd.add_argument('--out-dir', required=True)
-    bootstrap_cmd.add_argument('--parts', type=int, default=3)
-    bootstrap_cmd.add_argument('--axis', choices=('x', 'y', 'z'), default='z')
-    bootstrap_cmd.add_argument('--asset-id')
-    bootstrap_cmd.add_argument('--blender')
-
-    validate_cmd = sub.add_parser('validate', help='校验并输出规范化契约')
-    validate_cmd.add_argument('--contract', required=True)
-
     args = parser.parse_args()
     try:
-        if args.command == 'assemble':
-            result = assemble(args.contract, args.out, args.blender, args.report, args.parts_json)
-            print(json.dumps({'valid': result['valid'], 'output': result['output'],
-                              'parts': len(result['parts']), 'warnings': result['warnings']},
-                             ensure_ascii=False))
-            return 0 if result['valid'] else 1
-        if args.command == 'bootstrap':
-            result = bootstrap(args.source, args.out_dir, args.parts, args.axis,
-                               args.blender, args.asset_id)
-            print(json.dumps({'contract': result['contract'], 'parts': len(result['parts'])},
-                             ensure_ascii=False))
-            return 0
-        print(json.dumps(load_contract(args.contract), ensure_ascii=False, indent=2))
+        if not os.path.isfile(args.layout):
+            raise ValueError('布局文件不存在：' + args.layout)
+        layout = load_layout(args.layout)
+        result = assemble_parts(
+            [{'id': part['id'], 'name': part['name'], 'mesh': part['mesh'],
+              'description': part['description']} for part in layout['parts']],
+            args.out, args.layout, args.root,
+            assembly_prompt=layout['assemblyPrompt'],
+            blender_path=args.blender,
+            asset_id=layout['assetId'], node_id=layout['nodeId'])
+        print(json.dumps({'output': result['outputPath'], 'parts': len(result['parts']),
+                          'triangles': result['triangles'], 'warnings': result['warnings']},
+                         ensure_ascii=False))
         return 0
     except (ValueError, OSError) as error:
         print(str(error), file=sys.stderr)

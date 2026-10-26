@@ -24,10 +24,9 @@ NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
     'textToImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
-    'partSpec': {'in': {'text': 'text', 'mesh': 'mesh'}, 'out': {'contract': 'contract'}},
-    'partImage': {'in': {'text': 'text', 'contract': 'contract'}, 'out': {'contract': 'contract'}},
-    'partModel': {'in': {'contract': 'contract'}, 'out': {'contract': 'contract'}},
-    'assemble': {'in': {'contract': 'contract'}, 'out': {'mesh': 'mesh'}},
+    'partImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
+    'partModel': {'in': {'image': 'image'}, 'out': {'part': 'part'}},
+    'assemble': {'in': {'text': 'text', 'part': 'part'}, 'out': {'mesh': 'mesh'}},
     'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'styleApply': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'uv': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
@@ -44,8 +43,9 @@ NODE_TYPES = {
 
 
 LOCAL_STAGE_TYPES = ('uv', 'lod', 'collision', 'animation', 'metadata')
-PART_STATE_TYPES = ('partImage', 'partModel')
-PART_STATES_RUNNING = ('queued', 'running', 'submitting')
+PROVIDER_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel')
+# 组装要接多件单件模型；其余输入口仍只允许一条连线
+MULTI_INPUTS = {('assemble', 'part')}
 
 
 def _digest(value):
@@ -73,7 +73,7 @@ def validate_graph(graph):
             raise ValueError('节点参数超过 256 KB 限制')
         by_id[node['id']] = node
     adjacency = {key: [] for key in by_id}
-    incoming = set()
+    incoming, identities = set(), set()
     for edge in edges:
         if not isinstance(edge, dict):
             raise ValueError('连线格式非法')
@@ -84,8 +84,12 @@ def validate_graph(graph):
         in_type = NODE_TYPES[target['type']]['in'].get(edge.get('in'))
         if not out_type or out_type != in_type:
             raise ValueError('连线端口类型不匹配')
+        identity = (source['id'], edge['out'], target['id'], edge['in'])
+        if identity in identities:
+            raise ValueError('连线重复')
+        identities.add(identity)
         key = (target['id'], edge['in'])
-        if key in incoming:
+        if key in incoming and (target['type'], edge['in']) not in MULTI_INPUTS:
             raise ValueError('输入端口只能有一条连线')
         incoming.add(key)
         adjacency[source['id']].append(target['id'])
@@ -238,8 +242,7 @@ def save_graph(forgeworks_root, asset_id, graph, kind='machine'):
         old = node.get('result') or {}
         # 本地阶段由浏览器端推导，签名无法在 Python 侧复算，按来源标记保留
         ui_derived = old.get('source') == 'forgeworks-ui' and old.get('state') == 'done'
-        # 逐件任务的真实状态在 result.parts 里，不能被签名重算打回 dirty
-        preserved = ('done',) + (('queued', 'running', 'failed', 'blocked') if old.get('parts') else ())
+        preserved = ('done', 'queued', 'running', 'failed')
         matching = old.get('signature') == signature and old.get('state') in preserved
         state = 'done' if ui_derived else (old.get('state') if matching else 'dirty')
         node['result'] = dict(old, state=state, signature=signature, inputHash=input_hash, paramHash=param_hash)
@@ -301,106 +304,60 @@ def _mesh_input(forgeworks_root, asset_id, kind, graph, by_id, node_id, label='�
     raise ValueError('%s没有可用的上游 GLB：请先生成模型或导出资产网格' % label)
 
 
-def _node_text_input(graph, by_id, node_id):
-    """逐件出图要复用整机描述词；优先走 text 连线，其次读节点参数和任一 prompt 节点。"""
+def _upstream_text(graph, by_id, node_id):
     edge = next((edge for edge in graph['edges']
                  if edge.get('to') == node_id and edge.get('in') == 'text'), None)
     source = by_id.get(edge.get('from')) if edge else None
-    if source:
-        result = source.get('result') or {}
-        text = (result.get('output') or {}).get('text') or (source.get('params') or {}).get('text')
-        if text:
-            return str(text)
-    prompt = next((node for node in by_id.values() if node.get('type') == 'prompt'), None)
-    if prompt:
-        result = prompt.get('result') or {}
-        text = (result.get('output') or {}).get('text') or (prompt.get('params') or {}).get('text')
-        if text:
-            return str(text)
-    return ''
+    if not source:
+        return ''
+    text = ((source.get('result') or {}).get('output') or {}).get('text')
+    if not text:
+        text = (source.get('params') or {}).get('text')
+    return str(text or '').strip()
 
 
-def _contract_source(graph, by_id, node_id):
+def _part_display_name(graph, by_id, node_id, output):
     edge = next((edge for edge in graph['edges']
-                 if edge.get('to') == node_id and edge.get('in') == 'contract'), None)
-    return by_id.get(edge.get('from')) if edge else None
+                 if edge.get('to') == node_id and edge.get('in') == 'image'), None)
+    source = by_id.get(edge.get('from')) if edge else None
+    image_output = ((source or {}).get('result') or {}).get('output') or {}
+    for candidate in (image_output.get('partName'), output.get('partName')):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return str((source or {}).get('id') or node_id)
 
 
-def _contract_path_of(*nodes):
-    for node in nodes:
-        output = ((node or {}).get('result') or {}).get('output') or {}
-        path = output.get('contractPath')
-        if isinstance(path, str) and path.strip():
-            return path.strip()
-    return None
-
-
-def _contract_chain_path(graph, by_id, node_id):
-    seen = set()
-    while node_id and node_id not in seen:
-        seen.add(node_id)
-        path = _contract_path_of(by_id.get(node_id))
-        if path:
-            return path
-        edge = next((edge for edge in graph['edges']
-                     if edge.get('to') == node_id and edge.get('in') == 'contract'), None)
-        node_id = edge.get('from') if edge else None
-    return None
-
-
-def _apply_assemble_params(contract_path, params):
-    fit = params.get('fit')
-    overlap = params.get('overlap')
-    if fit is None and overlap is None:
-        return
-    with open(contract_path, encoding='utf-8') as stream:
-        contract = json.load(stream)
-    changed = False
-    for part in contract.get('parts') or []:
-        if fit in ('contain', 'height') and part.get('fit') != fit:
-            part['fit'] = fit
-            changed = True
-        if isinstance(overlap, (int, float)) and part.get('overlap') != overlap:
-            part['overlap'] = float(overlap)
-            changed = True
-    if changed:
-        with open(contract_path, 'w', encoding='utf-8') as stream:
-            json.dump(contract, stream, ensure_ascii=False, indent=2)
-
-
-def _parts_skeleton(node):
-    result = (node or {}).get('result') or {}
-    existing = result.get('parts')
-    if isinstance(existing, dict):
-        return {str(key): dict(value) for key, value in existing.items() if isinstance(value, dict)}
-    plan = (result.get('output') or {}).get('parts')
-    if isinstance(plan, list):
-        return {str(item.get('id')): {'name': item.get('name') or str(item.get('id')),
-                                      'description': item.get('description') or '',
-                                      'state': 'pending'}
-                for item in plan if isinstance(item, dict) and item.get('id')}
-    return {}
-
-
-def _part_count(value):
-    try:
-        count = int(value)
-    except (TypeError, ValueError):
-        count = 3
-    return max(2, min(12, count))
-
-
-def _aggregate_part_state(parts):
-    states = [entry.get('state') or 'pending' for entry in parts.values()]
-    if not states:
-        return 'blocked', '还没有可执行的部件：请先运行分件规划'
-    if any(state in PART_STATES_RUNNING for state in states):
-        return ('running' if 'running' in states else 'queued'), None
-    if all(state == 'success' for state in states):
-        return 'done', None
-    if any(state == 'failed' for state in states):
-        return 'failed', '有部件生成失败：可在节点上单独重试'
-    return 'blocked', '逐件生成尚未完成：请在节点上逐个运行'
+def _assemble_part_inputs(graph, by_id, node_id):
+    edges = [edge for edge in graph['edges']
+             if edge.get('to') == node_id and edge.get('in') == 'part']
+    if not edges:
+        raise ValueError('组装节点没有接入任何单件模型')
+    parts, missing = [], []
+    for edge in edges:
+        source = by_id.get(edge.get('from')) or {}
+        result = source.get('result') or {}
+        task = result.get('providerTask') or {}
+        output = task.get('output') if isinstance(task.get('output'), dict) else {}
+        model_path = output.get('modelPath')
+        if task.get('state') != 'success':
+            missing.append('%s（%s）' % (source.get('id'), task.get('state') or '未运行'))
+            continue
+        if not model_path:
+            missing.append('%s（缺少模型路径）' % source.get('id'))
+            continue
+        # 上游单件图变了会把模型节点打回 dirty；旧模型不能继续装
+        if result.get('state') not in ('done', None):
+            missing.append('%s（上游已变更，需重新运行）' % source.get('id'))
+            continue
+        parts.append({
+            'id': source.get('id'),
+            'name': _part_display_name(graph, by_id, source.get('id'), output),
+            'description': str((result.get('output') or {}).get('description') or ''),
+            'mesh': str(model_path),
+        })
+    if missing:
+        raise ValueError('组装缺少单件模型：' + '、'.join(missing) + '；请先运行这些单件模型节点')
+    return parts
 
 
 def _decimate_with_blender(blender_path, source, output, target_faces):
@@ -443,11 +400,13 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
     outputs = {}
     for node_id in order:
         node = by_id[node_id]
-        if node['type'] in ('textToImage', 'imageTo3D'):
+        if node['type'] in PROVIDER_TYPES:
             node.setdefault('result', {})
             task = node['result'].get('providerTask') or {}
             if task.get('state') == 'success':
-                node['result']['state'] = 'done'
+                # 保留 dirty：上游或参数变了，旧产物不能当作现成结果
+                if node['result'].get('state') != 'dirty':
+                    node['result']['state'] = 'done'
             elif task.get('state') in ('queued', 'running'):
                 node['result']['state'] = task['state']
             else:
@@ -463,97 +422,31 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             if not (result.get('source') == 'forgeworks-ui' and result.get('state') == 'done'):
                 result['state'] = 'blocked'
                 result['error'] = '该阶段由 Forgeworks 浏览器端资产图层推导；请在工具里运行此节点'
-        elif node['type'] == 'partSpec':
-            result = node.setdefault('result', {})
-            try:
-                source_path = _mesh_input(forgeworks_root, asset_id, kind, graph, by_id, node_id, '分件节点')
-                if not blender_path:
-                    raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
-                axis = str(node.get('params', {}).get('axis') or 'x').lower()
-                if axis not in ('x', 'y', 'z'):
-                    axis = 'x'
-                root = pipeline_root(forgeworks_root, asset_id, kind)
-                parts_dir = os.path.join(root, 'parts')
-                info = fw_parts.bootstrap(source_path, parts_dir, parts=_part_count(node.get('params', {}).get('parts')),
-                                          axis=axis, blender_path=blender_path, asset_id=asset_id)
-                contract = fw_parts.load_contract(info['contract'])
-                names = fw_parts.part_names_from_prompt(_node_text_input(graph, by_id, node_id))
-                renamed = fw_parts.rename_contract_parts(contract, names)
-                with open(info['contract'], 'w', encoding='utf-8') as stream:
-                    json.dump(contract, stream, ensure_ascii=False, indent=2)
-                relative = os.path.relpath(info['contract'], root).replace(os.sep, '/')
-                result['parts'] = {part['id']: {'name': part['name'],
-                                                'description': part.get('description') or '',
-                                                'state': 'pending'} for part in contract['parts']}
-                result['state'] = 'done'
-                result['output'] = {
-                    'contractPath': relative,
-                    'parts': [{'id': part['id'], 'name': part['name'],
-                               'description': part.get('description') or ''} for part in contract['parts']],
-                    'axis': axis,
-                    'warnings': renamed['warnings'],
-                }
-                result.pop('error', None)
-            except (ValueError, OSError) as error:
-                result['state'] = 'blocked'
-                result['error'] = str(error)
-        elif node['type'] in PART_STATE_TYPES:
-            result = node.setdefault('result', {})
-            upstream = _contract_source(graph, by_id, node_id)
-            skeleton = _parts_skeleton(upstream)
-            existing = result.get('parts') if isinstance(result.get('parts'), dict) else {}
-            merged = {}
-            for part_id, spec in skeleton.items():
-                entry = dict(existing.get(part_id) or {})
-                entry.setdefault('name', spec.get('name') or part_id)
-                entry.setdefault('description', spec.get('description') or '')
-                entry.setdefault('state', 'pending')
-                merged[part_id] = entry
-            for part_id, entry in existing.items():
-                merged.setdefault(part_id, entry)
-            result['parts'] = merged
-            state, error = _aggregate_part_state(merged)
-            result['state'] = state
-            if error:
-                result['error'] = error
-            else:
-                result.pop('error', None)
-            contract_path = _contract_path_of(upstream, node)
-            result['output'] = {
-                'contractPath': contract_path,
-                'parts': [{'id': part_id, 'name': entry.get('name'), 'state': entry.get('state'),
-                           'imagePath': (entry.get('output') or {}).get('imagePath'),
-                           'modelPath': (entry.get('output') or {}).get('modelPath')}
-                          for part_id, entry in merged.items()],
-                'total': len(merged),
-                'done': sum(1 for entry in merged.values() if entry.get('state') == 'success'),
-            }
         elif node['type'] == 'assemble':
             result = node.setdefault('result', {})
             try:
-                contract_path = _contract_chain_path(graph, by_id, node_id)
-                if not contract_path:
-                    raise ValueError('装配节点没有分件契约：请先运行分件规划')
                 if not blender_path:
                     raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
+                parts = _assemble_part_inputs(graph, by_id, node_id)
                 root = os.path.realpath(pipeline_root(forgeworks_root, asset_id, kind))
-                absolute = os.path.realpath(os.path.join(root, contract_path))
-                if not absolute.startswith(root + os.sep) or not os.path.isfile(absolute):
-                    raise ValueError('分件契约不存在或越界：' + contract_path)
-                _apply_assemble_params(absolute, node.get('params') or {})
                 outputs_dir = os.path.join(root, 'outputs')
                 os.makedirs(outputs_dir, exist_ok=True)
                 filename = 'model_assembly_%s.glb' % node_id
-                report = fw_parts.assemble(absolute, os.path.join(outputs_dir, filename),
-                                           blender_path=blender_path)
+                assembled = fw_parts.assemble_parts(
+                    parts, os.path.join(outputs_dir, filename),
+                    os.path.join(root, 'parts', 'layout_%s.json' % node_id), root,
+                    assembly_prompt=_upstream_text(graph, by_id, node_id),
+                    reset=bool((node.get('params') or {}).get('resetLayout')),
+                    blender_path=blender_path, asset_id=asset_id, node_id=node_id)
                 result['state'] = 'done'
                 result['output'] = {
-                    'meshPath': filename,
-                    'parts': len(report['parts']),
-                    'triangles': sum(int(part.get('triangles') or 0) for part in report['parts']),
-                    'warnings': report.get('warnings') or [],
+                    'meshPath': assembled['meshPath'],
+                    'parts': assembled['parts'],
+                    'triangles': assembled['triangles'],
+                    'layoutPath': os.path.relpath(assembled['layoutPath'], root).replace(os.sep, '/'),
+                    'warnings': assembled['warnings'],
                     'engine': 'blender',
-                    'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                    'updatedAt': assembled['updatedAt'],
                 }
                 result.pop('error', None)
             except (ValueError, OSError) as error:
@@ -656,35 +549,38 @@ def starter_graph(asset_id, template='machine'):
              {'from': 'metadata', 'out': 'mesh', 'to': 'export', 'in': 'mesh'}]
     if template == 'parts':
         nodes = [
-            nodes[0], nodes[1], nodes[2],
-            {'id': 'partSpec', 'type': 'partSpec', 'x': 780, 'y': 100, 'params': {'parts': 3, 'axis': 'x'}},
-            {'id': 'partImage', 'type': 'partImage', 'x': 1020, 'y': 100,
+            {'id': 'prompt_body', 'type': 'prompt', 'x': 60, 'y': 80, 'params': {'text': ''}},
+            {'id': 'partImage_body', 'type': 'partImage', 'x': 300, 'y': 80,
              'params': {'provider': 'tripo', 'size': '1K', 'outputFormat': 'png'}},
-            {'id': 'partModel', 'type': 'partModel', 'x': 1260, 'y': 100,
+            {'id': 'partModel_body', 'type': 'partModel', 'x': 540, 'y': 80,
              'params': {'provider': 'tripo', 'texture': False, 'faceLimit': 3000}},
-            {'id': 'assemble', 'type': 'assemble', 'x': 1500, 'y': 100,
-             'params': {'fit': 'contain', 'overlap': 0.02}},
+            {'id': 'prompt_roof', 'type': 'prompt', 'x': 60, 'y': 300, 'params': {'text': ''}},
+            {'id': 'partImage_roof', 'type': 'partImage', 'x': 300, 'y': 300,
+             'params': {'provider': 'tripo', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_roof', 'type': 'partModel', 'x': 540, 'y': 300,
+             'params': {'provider': 'tripo', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_assemble', 'type': 'prompt', 'x': 60, 'y': 520, 'params': {'text': ''}},
+            {'id': 'assemble', 'type': 'assemble', 'x': 780, 'y': 260, 'params': {'resetLayout': False}},
         ]
-        for index, (node_id, node_type) in enumerate([
-                ('style', 'styleApply'), ('uv', 'uv'), ('lod', 'lod'), ('collision', 'collision'),
-                ('animation', 'animation'), ('metadata', 'metadata'), ('validate', 'validate'),
-                ('export', 'export')]):
-            source = next(item for item in [
-                {'style': {'mode': 'primitive'}}, {'uv': {'mode': 'primitive'}},
-                {'lod': {'levels': 3}}, {'collision': {'type': 'box'}},
-                {'animation': {'mode': 'ue-rebuild'}}, {'metadata': {'formats': ['csv', 'json']}},
-                {'validate': {'maxTriangles': 20000}}, {'export': {}},
-            ] if node_id in item)
-            nodes.append({'id': node_id, 'type': node_type, 'x': 1740 + index * 240, 'y': 100,
-                          'params': source[node_id]})
+        for index, (node_id, node_type, params) in enumerate([
+                ('style', 'styleApply', {'mode': 'primitive'}),
+                ('uv', 'uv', {'mode': 'primitive'}),
+                ('lod', 'lod', {'levels': 3}),
+                ('collision', 'collision', {'type': 'box'}),
+                ('animation', 'animation', {'mode': 'ue-rebuild'}),
+                ('metadata', 'metadata', {'formats': ['csv', 'json']}),
+                ('validate', 'validate', {'maxTriangles': 20000}),
+                ('export', 'export', {})]):
+            nodes.append({'id': node_id, 'type': node_type, 'x': 1020 + index * 240, 'y': 260,
+                          'params': params})
         edges = [
-            {'from': 'prompt', 'out': 'text', 'to': 'image', 'in': 'text'},
-            {'from': 'image', 'out': 'image', 'to': 'model', 'in': 'image'},
-            {'from': 'model', 'out': 'mesh', 'to': 'partSpec', 'in': 'mesh'},
-            {'from': 'prompt', 'out': 'text', 'to': 'partSpec', 'in': 'text'},
-            {'from': 'partSpec', 'out': 'contract', 'to': 'partImage', 'in': 'contract'},
-            {'from': 'partImage', 'out': 'contract', 'to': 'partModel', 'in': 'contract'},
-            {'from': 'partModel', 'out': 'contract', 'to': 'assemble', 'in': 'contract'},
+            {'from': 'prompt_body', 'out': 'text', 'to': 'partImage_body', 'in': 'text'},
+            {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
+            {'from': 'partModel_body', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'prompt_roof', 'out': 'text', 'to': 'partImage_roof', 'in': 'text'},
+            {'from': 'partImage_roof', 'out': 'image', 'to': 'partModel_roof', 'in': 'image'},
+            {'from': 'partModel_roof', 'out': 'part', 'to': 'assemble', 'in': 'part'},
+            {'from': 'prompt_assemble', 'out': 'text', 'to': 'assemble', 'in': 'text'},
             {'from': 'assemble', 'out': 'mesh', 'to': 'style', 'in': 'mesh'},
             {'from': 'style', 'out': 'mesh', 'to': 'uv', 'in': 'mesh'},
             {'from': 'uv', 'out': 'mesh', 'to': 'lod', 'in': 'mesh'},

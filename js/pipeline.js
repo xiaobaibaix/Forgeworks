@@ -1,16 +1,19 @@
-const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}, partsRunning:{}, applyQueue:{}, applyStatus:{}, applyErrors:{}, applyNodes:{}};
+const PIPELINE = {assetId:null, kind:'machine', graph:null, providers:{}, selected:null, busy:false, source:'local', archive:null, zoom:1, pan:{x:0,y:0}, returnTo:null, remote:{}, pollers:{}, applyQueue:{}, applyStatus:{}, applyErrors:{}, applyNodes:{}};
 const PIPELINE_STORE_PREFIX = 'fw.pipeline.';
 const PIPELINE_LAST_ASSET_KEY = 'fw.pipeline.lastAsset';
 
 const PIPELINE_NODE_LABELS = {
   prompt:'描述词', textToImage:'概念图生成', imageTo3D:'图生 3D', decimate:'减面',
-  partSpec:'分件规划', partImage:'逐件效果图', partModel:'逐件模型', assemble:'装配',
+  partImage:'单件效果图', partModel:'单件模型', assemble:'组装',
   styleApply:'风格对齐', uv:'UV 展开', lod:'LOD 分级', collision:'碰撞体',
   animation:'动画', metadata:'元数据', validate:'质量门禁', manualEdit:'人工精修',
   variant:'变体', export:'导出', imageExport:'图标导出'
 };
 
 const PIPELINE_LOCAL_STAGES = ['uv', 'lod', 'collision', 'animation', 'metadata'];
+
+// 组装要接多件单件模型；其余输入口仍只允许一条连线
+const PIPELINE_MULTI_INPUTS = [['assemble', 'part']];
 
 const PIPELINE_NODE_WIDTH = 230;
 const PIPELINE_PORT_BASE = 46;
@@ -22,8 +25,8 @@ const PIPELINE_ZOOM_MAX = 1.8;
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
   decimate:{in:['mesh'],out:['mesh']},
-  partSpec:{in:['text','mesh'],out:['contract']}, partImage:{in:['text','contract'],out:['contract']},
-  partModel:{in:['contract'],out:['contract']}, assemble:{in:['contract'],out:['mesh']},
+  partImage:{in:['text'],out:['image']}, partModel:{in:['image'],out:['part']},
+  assemble:{in:['text','part'],out:['mesh']},
   styleApply:{in:['mesh'],out:['mesh']},
   uv:{in:['mesh'],out:['mesh']}, lod:{in:['mesh'],out:['mesh']}, collision:{in:['mesh'],out:['mesh']},
   animation:{in:['mesh'],out:['mesh']}, metadata:{in:['mesh'],out:['mesh']},
@@ -141,26 +144,29 @@ function pipelineStarterGraph(assetId, template){
     nodes[2].params.texture = false;
   }else if(template === 'parts'){
     nodes = [
-      nodes[0], nodes[1], nodes[2],
-      {id:'partSpec', type:'partSpec', x:780, y:100, params:{parts:3, axis:'x'}},
-      {id:'partImage', type:'partImage', x:1020, y:100, params:{provider:'tripo', size:'1K', outputFormat:'png'}},
-      {id:'partModel', type:'partModel', x:1260, y:100, params:{provider:'tripo', texture:false, faceLimit:3000}},
-      {id:'assemble', type:'assemble', x:1500, y:100, params:{fit:'contain', overlap:0.02}},
+      {id:'prompt_body', type:'prompt', x:60, y:80, params:{text:''}},
+      {id:'partImage_body', type:'partImage', x:300, y:80, params:{provider:'tripo', size:'1K', outputFormat:'png'}},
+      {id:'partModel_body', type:'partModel', x:540, y:80, params:{provider:'tripo', texture:false, faceLimit:3000}},
+      {id:'prompt_roof', type:'prompt', x:60, y:300, params:{text:''}},
+      {id:'partImage_roof', type:'partImage', x:300, y:300, params:{provider:'tripo', size:'1K', outputFormat:'png'}},
+      {id:'partModel_roof', type:'partModel', x:540, y:300, params:{provider:'tripo', texture:false, faceLimit:3000}},
+      {id:'prompt_assemble', type:'prompt', x:60, y:520, params:{text:''}},
+      {id:'assemble', type:'assemble', x:780, y:260, params:{resetLayout:false}},
     ];
     [['style','styleApply',{}],['uv','uv',{mode:'primitive'}],['lod','lod',{levels:3}],
      ['collision','collision',{type:'box'}],['animation','animation',{mode:'ue-rebuild'}],
      ['metadata','metadata',{formats:['csv','json']}],['validate','validate',{maxTriangles:20000}],
      ['export','export',{}]].forEach(([id,type,params],index)=>{
-      nodes.push({id, type, x:1740 + index * 240, y:100, params});
+      nodes.push({id, type, x:1020 + index * 240, y:260, params});
     });
     edges = [
-      {from:'prompt', out:'text', to:'image', in:'text'},
-      {from:'image', out:'image', to:'model', in:'image'},
-      {from:'model', out:'mesh', to:'partSpec', in:'mesh'},
-      {from:'prompt', out:'text', to:'partSpec', in:'text'},
-      {from:'partSpec', out:'contract', to:'partImage', in:'contract'},
-      {from:'partImage', out:'contract', to:'partModel', in:'contract'},
-      {from:'partModel', out:'contract', to:'assemble', in:'contract'},
+      {from:'prompt_body', out:'text', to:'partImage_body', in:'text'},
+      {from:'partImage_body', out:'image', to:'partModel_body', in:'image'},
+      {from:'prompt_roof', out:'text', to:'partImage_roof', in:'text'},
+      {from:'partImage_roof', out:'image', to:'partModel_roof', in:'image'},
+      {from:'partModel_body', out:'part', to:'assemble', in:'part'},
+      {from:'partModel_roof', out:'part', to:'assemble', in:'part'},
+      {from:'prompt_assemble', out:'text', to:'assemble', in:'text'},
       {from:'assemble', out:'mesh', to:'style', in:'mesh'},
       {from:'style', out:'mesh', to:'uv', in:'mesh'},
       {from:'uv', out:'mesh', to:'lod', in:'mesh'},
@@ -299,7 +305,7 @@ async function pipelineCreateTemplate(template){
       PIPELINE.graph = result.graph;
       PIPELINE.archive = result.archive || PIPELINE.archive;
       PIPELINE.source = 'bridge';
-      PIPELINE.selected = 'prompt';
+      PIPELINE.selected = (PIPELINE.graph.nodes.find(node=>node.type==='prompt')||PIPELINE.graph.nodes[0]||{}).id || null;
       renderPipelineView();
       return;
     }catch(error){ toast('Bridge 建模板失败，改用本地模板：' + error.message); }
@@ -307,7 +313,7 @@ async function pipelineCreateTemplate(template){
   PIPELINE.graph = pipelineBump(pipelineStarterGraph(PIPELINE.assetId, template));
   PIPELINE.source = 'local';
   if(!pipelineLocalWrite(PIPELINE.assetId, PIPELINE.graph)) toast('浏览器本地存储不可用，改动不会被保存');
-  PIPELINE.selected = 'prompt';
+  PIPELINE.selected = (PIPELINE.graph.nodes.find(node=>node.type==='prompt')||PIPELINE.graph.nodes[0]||{}).id || null;
   renderPipelineView();
 }
 
@@ -377,8 +383,13 @@ function pipelineConnect(sourceId, targetId, inPort){
     : out.find(port => input.includes(port));
   if(!common){toast('两个节点没有兼容的端口');return false;}
   if(pipelineReachable(targetId, sourceId)){toast('这条连线会形成循环');return false;}
-  PIPELINE.graph.edges = PIPELINE.graph.edges.filter(edge => !(edge.to === targetId && edge.in === common));
-  PIPELINE.graph.edges.push({from:sourceId,out:common,to:targetId,in:common});
+  const edge={from:sourceId,out:common,to:targetId,in:common};
+  const exists=node=>node.from===edge.from&&node.out===edge.out&&node.to===edge.to&&node.in===edge.in;
+  const multi=PIPELINE_MULTI_INPUTS.some(([type,port])=>target.type===type&&common===port);
+  PIPELINE.graph.edges = multi
+    ? PIPELINE.graph.edges.filter(item=>!exists(item))
+    : PIPELINE.graph.edges.filter(item=>!(item.to === targetId && item.in === common));
+  PIPELINE.graph.edges.push(edge);
   pipelineSave({quiet:true}).catch(error => toast(error.message));
   return true;
 }
@@ -736,7 +747,10 @@ function pipelineStageSummary(node){
     return output.trianglesBefore + ' → ' + output.trianglesAfter + ' 面';
   }
   if(node.type === 'assemble' && output.parts != null){
-    return output.parts + ' 件' + (output.triangles != null ? ' · ' + output.triangles + ' 面' : '');
+    const layout = output.layoutPath ? output.layoutPath.split('/').pop() : '';
+    return (Array.isArray(output.parts) ? output.parts.length : output.parts) + ' 件'
+      + (output.triangles != null ? ' · ' + output.triangles + ' 面' : '')
+      + (layout ? ' · ' + layout : '');
   }
   return '';
 }
@@ -764,7 +778,8 @@ function pipelineApplyTaskFor(node){
     if(!output || !output.meshPath) return null;
     return {
       state:'success', provider:'blender',
-      taskId:'assemble:' + node.id + ':' + (output.triangles != null ? output.triangles : ''),
+      taskId:'assemble:' + node.id + ':' + (output.triangles != null ? output.triangles : '')
+        + ':' + (output.updatedAt || ''),
       output:{modelPath:output.meshPath},
     };
   }
@@ -798,7 +813,7 @@ function pipelineRunLocal(nodeId, through){
       node.result.updatedAt = new Date().toISOString();
       node.result.output = {text:String((node.params && node.params.text) || '')};
       delete node.result.error;
-    }else if(node.type === 'textToImage' || node.type === 'imageTo3D'){
+    }else if(['textToImage','imageTo3D','partImage','partModel'].includes(node.type)){
       const task = node.result.providerTask || {};
       if(task.state === 'success'){ node.result.state = 'done'; delete node.result.error; }
       else if(task.state === 'queued' || task.state === 'running'){ node.result.state = task.state; }
@@ -806,12 +821,9 @@ function pipelineRunLocal(nodeId, through){
         node.result.state = 'blocked';
         node.result.error = '远程生成未执行：离线状态无法提交 Provider 任务';
       }
-    }else if(node.type === 'partImage' || node.type === 'partModel'){
+    }else if(node.type === 'assemble'){
       node.result.state = 'blocked';
-      node.result.error = '逐件生成需要 Bridge + Provider 在线，逐个部件提交';
-    }else if(node.type === 'partSpec' || node.type === 'assemble'){
-      node.result.state = 'blocked';
-      node.result.error = node.type === 'partSpec' ? '分件规划需要 Bridge 与 Blender' : '装配需要 Bridge 与 Blender';
+      node.result.error = '组装需要 Bridge 与 Blender';
     }else{
       node.result.state = 'blocked';
       node.result.error = '该处理器需要 Bridge 在线执行；当前只完成本地描述词步骤';
@@ -825,122 +837,9 @@ function pipelineRunLocal(nodeId, through){
   renderPipelineView();
 }
 
-function pipelineParts(node){
-  const parts = node && node.result && node.result.parts;
-  if(!parts || typeof parts !== 'object') return [];
-  return Object.entries(parts).map(([id, entry])=>Object.assign({id}, entry || {}));
-}
-
-function pipelinePartEntry(nodeId, partId){
-  const node = PIPELINE.graph && PIPELINE.graph.nodes.find(item=>item.id===nodeId);
-  const parts = node && node.result && node.result.parts;
-  return parts && parts[partId] || null;
-}
-
-function pipelinePartState(entry){
-  return entry && entry.state || 'pending';
-}
-
-function pipelinePartLabel(entry){
-  return entry && (entry.name || entry.id) || '部件';
-}
-
-async function pipelinePartPoll(nodeId, partId, attempt){
-  await new Promise(resolve=>setTimeout(resolve, attempt === 0 ? 1500 : 4000));
-  if(!pipelineBridgeReady()) throw new Error('Bridge 已断开，逐件生成中止');
-  const result = await pipelineApi('pipeline/provider/poll', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, nodeId, partId});
-  PIPELINE.graph = result.graph;
-  pipelineRefreshNode(nodeId);
-  const entry = pipelinePartEntry(nodeId, partId);
-  const state = pipelinePartState(entry);
-  if(state === 'success') return entry;
-  if(['failed','cancelled','banned'].includes(state)){
-    throw new Error((entry && entry.error) || (pipelinePartLabel(entry) + ' 生成失败'));
-  }
-  if(attempt >= 900) throw new Error(pipelinePartLabel(entry) + ' 生成超时');
-  return pipelinePartPoll(nodeId, partId, attempt + 1);
-}
-
-async function pipelineSubmitPart(nodeId, partId){
-  const result = await pipelineApi('pipeline/provider/submit', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, nodeId, partId, confirmRemote:true});
-  PIPELINE.graph = result.graph;
-  pipelineRefreshNode(nodeId);
-  const entry = pipelinePartEntry(nodeId, partId);
-  const state = pipelinePartState(entry);
-  if(state === 'success') return entry;
-  if(state === 'queued' || state === 'running') return pipelinePartPoll(nodeId, partId, 0);
-  throw new Error((entry && entry.error) || (pipelinePartLabel(entry) + ' 提交失败'));
-}
-
-async function pipelineRunPart(nodeId, partId){
-  const node = PIPELINE.graph && PIPELINE.graph.nodes.find(item=>item.id===nodeId);
-  const entry = pipelinePartEntry(nodeId, partId);
-  if(!node || !entry || !['partImage','partModel'].includes(node.type)) return;
-  if(PIPELINE.partsRunning[nodeId]){toast('该节点正在逐件运行，请等当前部件结束');return;}
-  if(!pipelineBridgeReady()){toast('逐件生成需要 Bridge 在线并绑定项目');return;}
-  const waiting = ['queued','running'].includes(pipelinePartState(entry));
-  if(!waiting){
-    const provider = pipelineNodeProvider(node);
-    const info = PIPELINE.providers[provider];
-    if(!info || !info.configured){toast(`先在「项目」页配置 ${provider} API key`);return;}
-    if(!window.confirm(`将对「${pipelinePartLabel(entry)}」调用 ${provider==='ark'?'Ark':'Tripo'} 单独生成，按件计费。现在提交？`)) return;
-  }
-  PIPELINE.partsRunning[nodeId] = true;
-  try{
-    if(waiting) await pipelinePartPoll(nodeId, partId, 0);
-    else await pipelineSubmitPart(nodeId, partId);
-    toast(pipelinePartLabel(entry) + ' 已生成');
-  }catch(error){toast(error.message);}
-  delete PIPELINE.partsRunning[nodeId];
-  renderPipelineView();
-}
-
-async function pipelineRunParts(nodeId){
-  const node = PIPELINE.graph && PIPELINE.graph.nodes.find(item=>item.id===nodeId);
-  if(!node || !['partImage','partModel'].includes(node.type)) return;
-  if(PIPELINE.partsRunning[nodeId]){toast('该节点正在逐件运行，请等当前部件结束');return;}
-  if(!pipelineBridgeReady()){toast('逐件生成需要 Bridge 在线并绑定项目');return;}
-  let entries = pipelineParts(node);
-  if(!entries.length){
-    try{
-      const result = await pipelineApi('pipeline/run', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, nodeId, through:true});
-      PIPELINE.graph = result.graph;
-      entries = pipelineParts(PIPELINE.graph.nodes.find(item=>item.id===nodeId));
-      pipelineRefreshNode(nodeId);
-    }catch(error){toast(error.message);return;}
-  }
-  const pending = entries.filter(entry=>pipelinePartState(entry) !== 'success');
-  if(!pending.length){toast('所有部件都已生成');return;}
-  const provider = pipelineNodeProvider(node);
-  const info = PIPELINE.providers[provider];
-  if(!info || !info.configured){toast(`先在「项目」页配置 ${provider} API key`);return;}
-  const label = provider==='ark'?'Ark':'Tripo';
-  const action = node.type==='partImage' ? '逐件效果图' : '逐件模型';
-  if(!window.confirm(`将逐个对 ${pending.length} 个部件调用 ${label} 生成${action}，每个部件单独计费。现在开始？`)) return;
-  PIPELINE.partsRunning[nodeId] = true;
-  try{
-    await pipelineSave({quiet:true});
-    let done = entries.filter(entry=>pipelinePartState(entry) === 'success').length;
-    for(const item of pending){
-      const state = pipelinePartState(pipelinePartEntry(nodeId, item.id));
-      if(state === 'queued' || state === 'running') await pipelinePartPoll(nodeId, item.id, 0);
-      else await pipelineSubmitPart(nodeId, item.id);
-      done += 1;
-      toast(`${pipelinePartLabel(item)} 完成（${done}/${entries.length}）`);
-    }
-    toast(`${action}已全部生成`);
-  }catch(error){toast(error.message);}
-  delete PIPELINE.partsRunning[nodeId];
-  renderPipelineView();
-}
-
 async function pipelineRun(nodeId, through){
   if(PIPELINE.busy) return;
   if(!pipelineBridgeReady()){ pipelineRunLocal(nodeId, through); return; }
-  if(nodeId && !through){
-    const target = PIPELINE.graph && PIPELINE.graph.nodes.find(node=>node.id===nodeId);
-    if(target && ['partImage','partModel'].includes(target.type)){ pipelineRunParts(nodeId); return; }
-  }
   pipelineDeriveLocalStages();
   try{
     const saved = await pipelineApi('pipeline/graph/save', {assetId:PIPELINE.assetId, kind:PIPELINE.kind, graph:PIPELINE.graph});
@@ -1055,14 +954,15 @@ function pipelineTrackRemote(nodeId){
 
 async function pipelineSubmitRemote(nodeId){
   const node=PIPELINE.graph.nodes.find(item=>item.id===nodeId);
-  if(!node || !['textToImage','imageTo3D'].includes(node.type)) return;
+  if(!node || !['textToImage','imageTo3D','partImage','partModel'].includes(node.type)) return;
   if(!pipelineBridgeReady()){toast('远程提交需要 Bridge 在线并绑定项目');return;}
+  const imageNode=node.type==='textToImage'||node.type==='partImage';
   const provider=pipelineNodeProvider(node);
   const info=PIPELINE.providers[provider];
   if(!info || !info.configured){toast(`先在「项目」页配置 ${provider} API key`);return;}
   const label=provider==='ark'?'火山方舟 Ark':'Tripo';
-  const model=provider==='ark'?(node.type==='textToImage'?'Seedream 5.0 Pro':'Seed3D 2.0'):(node.type==='textToImage'?'Seedream v5':'v3.1');
-  const estimated=provider==='ark'?0:(node.type==='textToImage'?5:
+  const model=provider==='ark'?(imageNode?'Seedream 5.0 Pro':'Seed3D 2.0'):(imageNode?'Seedream v5':'v3.1');
+  const estimated=provider==='ark'?0:(imageNode?5:
     (node.params.texture?(node.params.textureQuality==='detailed'?50:40):30)+(node.params.smartLowPoly===false?0:10));
   const price=estimated?`，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）`:'';
   if(!window.confirm(`此操作会调用 ${label}（${model}）${price}；最终以任务实耗为准。现在提交？`)) return;
@@ -1113,7 +1013,6 @@ function pipelineWireCard(card){
   card.querySelectorAll('[data-through]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRun(button.dataset.through,true);});
   card.querySelectorAll('[data-remote]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineSubmitRemote(button.dataset.remote);});
   card.querySelectorAll('[data-poll]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelinePollRemote(button.dataset.poll);});
-  card.querySelectorAll('[data-part-retry]').forEach(button=>button.onclick=event=>{event.stopPropagation();pipelineRunPart(button.dataset.partRetry,button.dataset.partId);});
   card.querySelectorAll('[data-preview-model]').forEach(button=>button.onclick=event=>{event.stopPropagation();openPipelineModelPreview(button.dataset.previewModel);});
   card.querySelectorAll('[data-apply]').forEach(button=>button.onclick=event=>{
     event.stopPropagation();
@@ -1447,19 +1346,12 @@ function pipelineParamForm(node){
       <small class="pipeline-params-hint">面数/贴图参数仅 Tripo 生效；PBR 需先开启贴图。</small>
     </div>`;
   }
-  if(node.type === 'partSpec'){
-    return `<div class="pipeline-params">
-      ${pipelineParamNumber(node, 'parts', '部件数', 'min="2" max="12" step="1"', '3')}
-      ${pipelineParamSelect(node, 'axis', '粗切轴', [{value:'x',label:'X 横向'},{value:'y',label:'Y 纵向'},{value:'z',label:'Z 深度'}], 'x')}
-      <small class="pipeline-params-hint">由 Blender 把整机模型均分粗切，再按描述词的【必须包含的部件】改名；先跑图生 3D。</small>
-    </div>`;
-  }
   if(node.type === 'partImage'){
     return `<div class="pipeline-params">
       ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
       ${pipelineParamText(node, 'size', '分辨率', '1K / 1.5K / 2K')}
       ${pipelineParamSelect(node, 'outputFormat', '格式', [{value:'png',label:'PNG'},{value:'jpeg',label:'JPEG'}], 'png')}
-      <small class="pipeline-params-hint">逐件文生图：整机描述 + 本件名称/说明 + 单件纯色背景；每个部件单独计费。</small>
+      <small class="pipeline-params-hint">读取上游描述词，只生成这一个部件的单件效果图（纯色背景、单物体居中）。</small>
     </div>`;
   }
   if(node.type === 'partModel'){
@@ -1467,14 +1359,13 @@ function pipelineParamForm(node){
       ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
       ${pipelineParamNumber(node, 'faceLimit', '面数上限', 'min="500" max="150000" step="500"', '3000')}
       ${pipelineParamCheck(node, 'texture', '生成贴图', false)}
-      <small class="pipeline-params-hint">逐件图生 3D：读取上一步该部件的效果图，产物写回分件契约。</small>
+      <small class="pipeline-params-hint">读取上游单件效果图生成单件模型，输出接到组装节点的部件端口。</small>
     </div>`;
   }
   if(node.type === 'assemble'){
     return `<div class="pipeline-params">
-      ${pipelineParamSelect(node, 'fit', '适配方式', [{value:'contain',label:'等比装入'},{value:'height',label:'按高度对齐'}], 'contain')}
-      ${pipelineParamNumber(node, 'overlap', '重叠量', 'min="-0.2" max="0.5" step="0.01"', '0.02')}
-      <small class="pipeline-params-hint">由 Blender 按契约包围盒装配各部件；满意后「应用装配」写入资产模型。</small>
+      ${pipelineParamCheck(node, 'resetLayout', '丢弃旧布局', false)}
+      <small class="pipeline-params-hint">由 Blender 按布局移动/缩放/旋转各部件并合并；布局写入 parts/layout_&lt;节点&gt;.json，可让 AI 调整后重跑。「丢弃旧布局」会丢出手动/自动布局并重新并排贴地。</small>
     </div>`;
   }
   if(node.type === 'decimate'){
@@ -1521,14 +1412,14 @@ function pipelineNodeCard(node){
   const imageURL=pipelineOutputURL(taskOutput.imagePath);
   const modelURL=pipelineOutputURL(taskOutput.modelPath||taskOutput.meshPath);
   let media='';
-  if(node.type==='textToImage'){
+  if(node.type==='textToImage'||node.type==='partImage'){
     media=imageURL
       ? `<figure class="pipeline-node-media"><img src="${pipelineEscape(imageURL)}" alt="生成图" loading="lazy"></figure>`
-      : `<div class="pipeline-node-media empty">${busy?'生成中…':'未生成图像'}</div>`;
-  }else if(node.type==='imageTo3D'||node.type==='decimate'||node.type==='assemble'){
+      : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='partImage'?'未生成单件效果图':'未生成图像')}</div>`;
+  }else if(node.type==='imageTo3D'||node.type==='partModel'||node.type==='decimate'||node.type==='assemble'){
     media=modelURL
       ? `<figure class="pipeline-node-media model" data-node-model="${pipelineEscape(modelURL)}" data-node-model-id="${pipelineEscape(node.id)}" title="点击放大查看"><canvas aria-label="3D 模型预览"></canvas></figure><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
-      : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='decimate'?'未生成减面模型':(node.type==='assemble'?'未生成装配模型':'未生成模型'))}</div>`;
+      : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='partModel'?'未生成单件模型':(node.type==='decimate'?'未生成减面模型':(node.type==='assemble'?'未生成组装模型':'未生成模型')))}</div>`;
   }
   const history=(node.result&&node.result.history||[]).slice().reverse();
   const historyHTML=history.length?`<details class="pipeline-history"><summary>历史版本 ${history.length}</summary><div class="pipeline-history-list">${history.map(item=>{
@@ -1544,29 +1435,14 @@ function pipelineNodeCard(node){
   const showPoll=task&&((['success','failed','cancelled','banned'].indexOf(task.state)<0)
     ||(node.type==='textToImage'&&!(task.output&&task.output.imagePath)));
   const stageSummary=pipelineStageSummary(node);
-  const partEntries=['partImage','partModel'].includes(node.type)?pipelineParts(node):[];
-  const partDone=partEntries.filter(entry=>pipelinePartState(entry)==='success').length;
-  const headerLabel=partEntries.length
-    ? pipelineStateLabel(state, progress) + ' · ' + partDone + '/' + partEntries.length
-    : pipelineStateLabel(state, progress);
-  const partList=partEntries.length?`<div class="pipeline-parts">${partEntries.map(entry=>{
-    const partState=pipelinePartState(entry);
-    const partImage=pipelineOutputURL((entry.output||{}).imagePath);
-    const partModel=pipelineOutputURL((entry.output||{}).modelPath);
-    const thumb=partImage?`<img src="${pipelineEscape(partImage)}" alt="" loading="lazy">`:'';
-    const modelLink=partModel?`<a class="pipeline-part-link" href="${pipelineEscape(partModel)}" download>模型</a>`:'';
-    const retry=['pending','failed','queued','running'].includes(partState)
-      ? `<button data-part-retry="${pipelineEscape(node.id)}" data-part-id="${pipelineEscape(entry.id)}">${partState==='failed'?'重试':(['queued','running'].includes(partState)?'继续':'生成')}</button>`:'';
-    return `<div class="pipeline-part ${pipelineEscape(partState)}">${thumb}<span>${pipelineEscape(pipelinePartLabel(entry))}</span><em>${pipelineEscape(pipelineStateLabel(partState))}</em>${modelLink}${retry}</div>`;
-  }).join('')}</div>`:'';
-  const runLabel=['partImage','partModel'].includes(node.type)?'逐件生成':'运行';
+  const headerLabel=pipelineStateLabel(state, progress);
   const inPorts=pipelinePorts(node.type,'in').map(port=>`<span class="pipeline-port pipeline-port-in pipeline-port-${pipelineEscape(port)}" data-in-node="${pipelineEscape(node.id)}" data-in-port="${pipelineEscape(port)}" title="输入 ${pipelineEscape(port)}" style="top:${pipelinePortTop(node.type,'in',port)}px"></span>`).join('');
   const outPorts=pipelinePorts(node.type,'out').map(port=>`<span class="pipeline-port pipeline-port-out pipeline-port-${pipelineEscape(port)}" data-out-node="${pipelineEscape(node.id)}" data-out-port="${pipelineEscape(port)}" title="输出 ${pipelineEscape(port)} · 拖到下游输入端" style="top:${pipelinePortTop(node.type,'out',port)}px"></span>`).join('');
   return `<article class="pipeline-node ${selected?'selected':''} ${busy?'is-running':''}" data-node="${pipelineEscape(node.id)}" style="left:${Number(node.x)||0}px;top:${Number(node.y)||0}px">
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(headerLabel)}</span></header>
-    <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${partList}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">${runLabel}</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : (node.type === 'assemble' ? '应用装配' : '应用结果'))}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
+    <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D','partImage','partModel'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : (node.type === 'assemble' ? '应用组装' : '应用结果'))}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
     ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir)}</small>` : ''}
     ${applied
       ? `<small class="pipeline-stage">已应用到 ${pipelineEscape((currentAsset && currentAsset.name) || '资产')}${appliedWhen ? ' · ' + pipelineEscape(appliedWhen) : ''}</small>`
@@ -1603,7 +1479,7 @@ function renderPipelineView(){
   const machine= S.machines.find(item=>item.id===PIPELINE.assetId);
   const item= S.items.find(value=>value.id===PIPELINE.assetId);
   const element= (S.elements||[]).find(value=>value.id===PIPELINE.assetId);
-  const promptNode=PIPELINE.graph.nodes.find(node=>node.type==='prompt');
+  const promptNode=PIPELINE.graph.template==='parts'?null:PIPELINE.graph.nodes.find(node=>node.type==='prompt');
   if(promptNode && !promptNode.params.text && machine && typeof machinePrompt==='function') promptNode.params.text=machinePrompt(machine,{withTech:true});
   if(promptNode && !promptNode.params.text && item && typeof itemPrompt==='function') promptNode.params.text=itemPrompt(item,{withTech:true});
   if(promptNode && !promptNode.params.text && element && typeof elementPrompt==='function') promptNode.params.text=elementPrompt(element,{withTech:true});

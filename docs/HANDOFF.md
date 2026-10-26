@@ -653,13 +653,13 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - **输入**：优先取上游节点的 `providerTask.output.modelPath`；没有上游时回退到 manifest 记录的资产网格（`sourceDir/files.mesh`）。输出固定为 `pipeline/outputs/model_decimate_<节点>_<面数>.glb`。
 - **验证**：`tests/test_fw_blender.py` 用 5 面 GLB 实测 5→3；`tests/test_fw_pipeline.py` 覆盖目标钳制、上游/清单回退、缺 Blender、缺输入。
 
-## 21. 分件契约与装配（2026-10-26）
+## 21. 分件组装：一部件一链路 + 本地 Blender 组装（2026-10-26）
 
-- **目的**：让作品不再是「一个整体模型」，可先按提示词部件名拆件再逐件生成；两条路线（三视图直接逐件生成 / 整机生成后粗切重生成）共用一套契约与装配，只在「部件从哪来」分叉。
-- **契约**：`tools/fw_parts.py` 的 `partSpec`（schemaVersion 1）。`views.front/side` 给 `width/height/ground/pxPerMeter/flipX`；`parts[]` 给 `id/name/mesh/front[4]/side[4]/fit/overlap/rotationZ/scale`。世界原点对准图像水平中心，正视图 x→世界 X、侧视图 x→世界 Y，Z 取正/侧高度较小者。
-- **装配**：`contain`（三轴最小比例）或 `height`（仅 Z 比例）统一缩放，`overlap` 放大防缝，Z 底面对齐，`rotationZ` 先转中心再平移；输出 `assembly.glb` + `parts.json` + `*.report.json`。
-- **Blender**：`fw_blender.py` 新增 `--mode measure`（逐文件/逐对象包围盒）、`--mode assemble`（按 plan 摆放导出）、`--mode cut`（按轴等分粗切）。
-- **粗切实现**：`bmesh.ops.bisect_plane` 平面切分，不是布尔求交。EXACT 布尔在真实机器的非流形网格上会产出越界几何（实测某片包围盒达到切刀尺寸），改平面切分后三台真实机器 `bootstrap → assemble` 往返误差均为 0。
-- **入口**：`python3 tools/fw_parts.py assemble --contract <partspec.json> --out <assembly.glb>`、`bootstrap --source <glb> --out-dir <dir> --parts 3 --axis z`、`validate --contract <partspec.json>`。
-- **验证**：`tests/test_fw_parts.py` 21 项（契约校验、视图映射、装配数学、包围盒往返）；`tests/test_fw_blender.py` 7 项（measure / assemble / cut / bootstrap 往返，含开放网格切片边界）；Python 全套 157 项通过。真实资产 `MC_LATHE`、`MC_PRESS`、`MC_EVAP` 各切 3 件后重新装配，包围盒误差 0。
-- **未做**：管线节点接入、前端部件面板、UE 多 StaticMesh 发布。`stamp.py` 未运行（本段未改前端 JS）。
+- **语义**：一个部件 = 描述词 → `partImage`（单件效果图）→ `partModel`（单件模型）；加部件就再加一组节点。多个 `partModel` 的 `part` 口汇入同一个 `assemble`，`assemble` 的 `text` 口接一个描述词节点作为「组装描述词」。
+- **组装不再生成模型**：`assemble` 只调 Blender 按布局移动/缩放/旋转各部件并合并成 `outputs/model_assembly_<节点>.glb`，并写同名 `.report.json`。缺任一部件模型、缺 Blender 都会标 blocked 并列出具体节点。
+- **布局文件** `parts/layout_<节点>.json`（schemaVersion 1）：`assemblyPrompt` + `parts[]{id,name,mesh(相对管线根),description,sourceBbox,scale,translate,rotationZ,ground}`。首次运行自动生成（沿 X 并排、间距 0.02、底面贴地），保存后 AI 可直接改数值，重跑即生效；`ground: true` 时 `translate.z` 按 `-sourceBbox.min.z × scale` 重算。
+- **对账**：按 `mesh` 匹配已有布局，新部件自动补位、移除的部件丢弃并产生警告；节点参数 `resetLayout` 勾选则丢弃旧布局重算。
+- **Provider**：`pipeline/provider/submit|poll` 统一支持 `textToImage/imageTo3D/partImage/partModel`，不再有 `partId` 与逐件任务流。`partImage` 的提示词 = 上游描述词 + 固定单件后缀，首行去【】截 32 字写入 `result.output.partName`；`partModel` 复用 `imageTo3D` 的输入图解析并复制 `partName`。
+- **已删除**：`partSpec` 节点、`contract` 端口、`parts/partspec.json`、粗切 bootstrap、逐件进度/重试 UI 与相关 Bridge 辅助函数。旧图会因未知节点/端口被拒，需要按新模板重建。
+- **入口**：`python3 tools/fw_parts.py assemble --layout <layout.json> --root <pipeline 目录> --out <assembly.glb>`；库函数 `measure_parts / auto_layout / load_layout / save_layout / resolve_layout_mesh / assemble_parts`。
+- **验证**：`tests/test_fw_parts.py` 29 项（布局校验、越界拒绝、自动布局、对账、ground 重算，Blender 全部 mock）；`tests/test_fw_pipeline.py` 覆盖多输入校验、重复边拒绝、新模板结构、组装三种状态；`tests/test_bridge_providers.py` 覆盖单件提示词/命名/落盘与无 `partId` 回归；`tests/smoke.html` 覆盖新标签、多部件汇入、单输入替换与组装应用映射。

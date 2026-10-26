@@ -287,29 +287,43 @@ class BlenderPipelineTest(unittest.TestCase):
             widths = sorted(round(item['max'][0] - item['min'][0], 3) for item in objects)
             self.assertEqual(widths, [1.0, 2.0])
 
-    def test_bootstrap_and_assemble_roundtrip(self):
+    def test_layout_and_assemble_roundtrip(self):
         blender = find_blender()
         if not blender:
             self.skipTest('Blender executable not found')
 
         with tempfile.TemporaryDirectory() as directory:
-            temp = Path(directory)
-            source = temp / 'box.glb'
+            root = Path(directory)
+            source = root / 'box.glb'
             make_box_glb(source, (1.0, 1.0, 2.0))
-            parts_dir = temp / 'parts'
-            bootstrapped = fw_parts.bootstrap(str(source), str(parts_dir), parts=2,
-                                              blender_path=blender)
-            assembly = temp / 'assembly.glb'
-            report = fw_parts.assemble(bootstrapped['contract'], str(assembly),
-                                       blender_path=blender)
+            for name in ('a', 'b'):
+                (root / (name + '.glb')).write_bytes(source.read_bytes())
+            parts = [{'id': 'a', 'name': 'A', 'mesh': 'a.glb'},
+                     {'id': 'b', 'name': 'B', 'mesh': 'b.glb'}]
+            layout_path = root / 'parts' / 'layout_assemble.json'
+            output = root / 'outputs' / 'assembly.glb'
 
-            self.assertTrue(report['valid'], report)
-            self.assertEqual(len(report['parts']), 2)
-            self.assertTrue((parts_dir / 'partspec.json').is_file())
-            self.assertTrue((temp / 'parts.json').is_file())
-            self.assertTrue(assembly.read_bytes().startswith(b'glTF'))
+            first = fw_parts.assemble_parts(parts, str(output), str(layout_path), str(root),
+                                            assembly_prompt='叠在一起', blender_path=blender,
+                                            asset_id='T', node_id='assemble')
+            self.assertTrue(first['warnings'])
+            self.assertEqual(first['engine'], 'blender')
+            layout = fw_parts.load_layout(str(layout_path))
+            self.assertEqual([item['mesh'] for item in layout['parts']], ['a.glb', 'b.glb'])
+            self.assertEqual(layout['assemblyPrompt'], '叠在一起')
+            self.assertAlmostEqual(layout['parts'][1]['translate'][0], 1.52)
+            self.assertTrue(Path(output).with_suffix('.report.json').is_file())
 
-            rebuilt = run_blender(blender, ['--mode', 'measure', '--inputs', str(assembly)])
+            for item in layout['parts']:
+                item['translate'] = [0.0, 0.0, 0.0]
+                item['ground'] = False
+            fw_parts.save_layout(str(layout_path), layout)
+            second = fw_parts.assemble_parts(parts, str(output), str(layout_path), str(root),
+                                             blender_path=blender, asset_id='T', node_id='assemble')
+            self.assertFalse(any('自动' in warning for warning in second['warnings']))
+            self.assertTrue(output.read_bytes().startswith(b'glTF'))
+
+            rebuilt = run_blender(blender, ['--mode', 'measure', '--inputs', str(output)])
             original = run_blender(blender, ['--mode', 'measure', '--inputs', str(source)])
             for axis in range(3):
                 self.assertAlmostEqual(rebuilt['files'][0]['min'][axis],

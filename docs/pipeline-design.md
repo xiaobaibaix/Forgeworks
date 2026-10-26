@@ -203,36 +203,35 @@
 
 生成结果不满意 → 从任一节点**分叉**重试（不同 seed / 不同 provider），保留多版本对比，选一个继续。这是节点图相对"一键流程"的第二个优势：**历史不是线，是树**。
 
-### 3.10 分件：`partSpec` 契约 + `assemble` 装配（离线核心已落地）
+### 3.10 分件组装：一部件一链路 + 本地组装
 
-目标是把「一个整体模型」拆成「按提示词部件名命名的多件」，两条路线共用同一套契约与装配，只在「部件从哪来」分叉：
+语义是「一个部件 = 一条链」，要加部件就再加一组节点：
 
-| 路线 | 流程 | 部件来源 |
-|---|---|---|
-| A 逐件生成 | 三视图 → 部件描述与约束 → 逐件效果图 → 逐件模型 → 装配 | 每件单独调 Provider |
-| B 先整后拆 | 整机效果图 → 整机模型 → 粗切 → 逐件按约束重生成 → 装配 | 粗切出的包围盒先占位 |
+```
+prompt_A ─► partImage_A ─► partModel_A ─┐
+prompt_B ─► partImage_B ─► partModel_B ─┼─► assemble ◄─ prompt_组装描述
+prompt_C ─► partImage_C ─► partModel_C ─┘        │
+                                                 ▼
+                        styleApply → uv → lod → collision → animation → metadata → validate → export
+```
 
-B 的粗切不需要语义分割（逐件都会重生成），这是该路线可成立的关键。
+- `partImage`（单件效果图）：严格读连到 `text` 口的描述词，追加固定后缀「【单件】只生成这一个部件；纯色背景、单个物体居中、无其他部件、无地面投影」，走 Provider 文生图；首行（去【】、截 32 字）写入 `result.output.partName`。
+- `partModel`（单件模型）：读上游 `partImage` 的效果图，走 Provider 图生 3D；`partName` 从上游复制。产物落 `outputs/model_<taskId>.glb`。
+- `assemble`（组装）：`part` 口允许**多条**连线（`MULTI_INPUTS`），`text` 口接一个描述词节点作为组装描述。组装**不调用 Provider**，只调 Blender 移动/缩放/旋转各部件并合并。
 
-**契约 `partSpec`（schemaVersion 1）**
+**布局文件 `parts/layout_<nodeId>.json`（schemaVersion 1）**
 
-- `views.front` / `views.side`：`width`、`height`、`ground`、`pxPerMeter`、`flipX`。
-- `parts[]`：`id`、`name`、`mesh`（相对契约目录、禁止 `..`）、`front [x, y, w, h]`、`side [...]`、`fit`（`contain` / `height`）、`overlap`（0–0.2，默认 0.02）、`rotationZ`、可选 `scale`、`regenerate`。
-- 坐标约定：世界原点对准图像水平中心（`px = world × ppm + width/2`），`y = ground − z × ppm`；正视图 x → 世界 X，侧视图 x → 世界 Y（`flipX` 可镜像）；高度取正视与侧视的较小者，两者相差 >15% 产生警告。
-
-**装配规则**
-
-- `contain` 取三轴缩放比的最小值，`height` 只按 Z 比例，避免变形；`overlap` 以包围盒中心放大防缝。
-- Z 底面对齐目标盒底面；`rotationZ` 先旋转中心再平移。
-- 输出 `assembly.glb`、`parts.json`（每件世界包围盒、缩放、位移、flags）与 `*.report.json`；`aspect_mismatch` / `scale_outlier` / `manual_scale` / `empty_mesh` 记在 flags 里。
+- `assemblyPrompt`：上游组装描述词。
+- `parts[]`：`id`、`name`、`mesh`（相对管线根目录，禁止 `..` 与绝对路径）、`description`、`sourceBbox`、`scale`、`translate`、`rotationZ`（度）、`ground`。
+- `ground: true` 时 `translate.z` 在生成 Blender plan 时按 `-sourceBbox.min.z × scale` 重算，改缩放不会悬空或穿地；要手动控高就置 `false`。
+- 首次运行自动布局（沿 X 并排、间距 0.02、底面贴地），保存后可由 AI 用文件工具直接改 `scale` / `translate` / `rotationZ`，重跑组装即生效。
+- 对账按 `mesh` 匹配：新部件自动补位、移除的部件丢弃并给出警告；节点参数 `resetLayout` 勾选则丢弃旧布局重算。
 
 **工具入口**
 
-- `tools/fw_parts.py`：`assemble --contract --out`、`bootstrap --source --out-dir --parts N --axis z`（粗切后反推契约，用于迁移与往返验证）、`validate --contract`。
-- `tools/fw_blender.py` 新增 `--mode measure`（逐文件包围盒与对象级包围盒）、`--mode assemble`（按 plan 摆放并导出）、`--mode cut`（`bmesh.ops.bisect_plane` 按平面切分）。
-- 粗切用平面切分而非布尔求交：EXACT 布尔在非流形网格上会产出越界几何，实测三台真实机器改用平面切分后往返误差为 0。
-
-**尚未接入**：管线节点、前端部件面板、UE 多 StaticMesh 发布。当前先用 2–3 个真实资产在同一目录下手动跑 `bootstrap → assemble` 验证。
+- `tools/fw_parts.py`：`assemble --layout --root --out`（按已有布局重装）；库函数 `measure_parts` / `auto_layout` / `load_layout` / `save_layout` / `resolve_layout_mesh` / `assemble_parts`。
+- `tools/fw_blender.py`：`--mode measure`（包围盒与面数）、`--mode assemble`（按 plan 摆放并导出）、`--mode decimate`、`--mode cut`。
+- 输出 `outputs/model_assembly_<nodeId>.glb` 与同名 `.report.json`（逐件世界包围盒、面数、警告）。
 
 ---
 
@@ -569,8 +568,9 @@ graph.json 的状态                      ─▶ manifest.pipeline（§7）
 | textToImage | 远程 | text | image×1~4 | $0.05~0.10 |
 | imageTo3D | 远程 | image×1~4 | mesh | $0.20~0.40 |
 | decimate | Bridge/前端 | mesh | mesh | ✕ |
-| partSpec | 前端/Bridge | 三视图+部件 | contract | ✕ |
-| assemble | Bridge | contract+mesh×N | mesh | ✕ |
+| partImage | 远程 | text | image | $0.05~0.10 |
+| partModel | 远程 | image | part | $0.20~0.40 |
+| assemble | Bridge | text + part×N | mesh | ✕ |
 | styleApply | 前端 | mesh | mesh | ✕ |
 | validate | 前端 | mesh | report | ✕ |
 | manualEdit | 人工 | mesh | mesh | ✕ |

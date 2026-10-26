@@ -201,112 +201,50 @@ class PipelineTaskOutputTest(unittest.TestCase):
         self.assertEqual(task, self.task)
 
 
-class PipelinePartTaskTest(unittest.TestCase):
+class PipelinePartNodeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
-        self.pipeline = Path(self.root) / '_Source' / '元素' / 'Fe' / 'pipeline'
-        self.parts = self.pipeline / 'parts'
-        self.outputs = self.pipeline / 'outputs'
-        self.parts.mkdir(parents=True)
+        self.outputs = Path(self.root) / '_Source' / '元素' / 'Fe' / 'pipeline' / 'outputs'
         self.outputs.mkdir(parents=True)
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _contract(self, parts):
-        view = {'width': 1000, 'height': 1000, 'ground': 900, 'pxPerMeter': 100}
-        return {'schemaVersion': 1, 'assetId': 'Fe',
-                'views': {'front': dict(view), 'side': dict(view)}, 'parts': parts}
+    def test_part_image_prompt_keeps_text_and_adds_single_part_suffix(self):
+        prompt = bridge._part_image_prompt('一辆方正的车身，深蓝色')
+        self.assertTrue(prompt.startswith('一辆方正的车身，深蓝色'))
+        self.assertIn(bridge.PART_IMAGE_SUFFIX, prompt)
 
-    def _write_contract(self, relative='parts/partspec.json'):
-        path = self.pipeline / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._contract([
-            {'id': 'part_0', 'name': '车身', 'description': '方正外壳', 'mesh': 'part_0.glb',
-             'front': [100, 100, 100, 100], 'side': [100, 100, 100, 100]},
-            {'id': 'part_1', 'name': '车顶', 'mesh': 'part_1.glb',
-             'front': [100, 100, 100, 100], 'side': [100, 100, 100, 100]},
-        ]), ensure_ascii=False), encoding='utf-8')
-        return path
+    def test_empty_part_image_prompt_is_only_suffix(self):
+        self.assertEqual(bridge._part_image_prompt('  '), bridge.PART_IMAGE_SUFFIX)
 
-    def test_part_prompt_repeats_name_description_and_base(self):
-        prompt = bridge._part_prompt('整机是方正 SUV', {'id': 'part_0', 'name': '车身',
-                                                      'description': '方正外壳'})
-        self.assertIn('整机是方正 SUV', prompt)
-        self.assertIn('【只生成这个部件】车身 — 方正外壳', prompt)
-        self.assertIn('纯色', prompt)
+    def test_part_name_uses_first_line_without_markers(self):
+        self.assertEqual(bridge._part_name_from_prompt('【车身】\n深蓝色外壳'), '车身')
+        self.assertEqual(bridge._part_name_from_prompt('\n\n车顶'), '车顶')
+        self.assertEqual(bridge._part_name_from_prompt(''), '')
 
-    def test_contract_path_walks_upstream_edges(self):
-        graph = {'edges': [{'from': 'spec', 'to': 'image', 'in': 'contract'}]}
-        nodes = {'spec': {'id': 'spec', 'result': {'output': {'contractPath': 'parts/partspec.json'}}},
-                 'image': {'id': 'image'}}
-        self.assertEqual(bridge._contract_path_upstream(graph, nodes, nodes['image']),
-                         'parts/partspec.json')
-        self.assertIsNone(bridge._contract_path_upstream({'edges': []}, nodes, nodes['image']))
+    def test_part_name_is_truncated_to_32_characters(self):
+        self.assertEqual(len(bridge._part_name_from_prompt('车' * 40)), 32)
 
-    def test_load_contract_part_rejects_traversal_and_missing(self):
-        self._write_contract()
-        absolute, part = bridge._load_contract_part(self.root, 'Fe', 'element',
-                                                    'parts/partspec.json', 'part_1')
-        self.assertTrue(absolute.endswith('partspec.json'))
-        self.assertEqual(part['name'], '车顶')
-        with self.assertRaises(ValueError):
-            bridge._load_contract_part(self.root, 'Fe', 'element', '../partspec.json', 'part_0')
-        with self.assertRaises(ValueError):
-            bridge._load_contract_part(self.root, 'Fe', 'element', 'parts/partspec.json', 'part_9')
-
-    def test_part_entries_keeps_existing_state_and_adds_skeleton(self):
-        upstream = {'result': {'output': {'parts': [{'id': 'part_0', 'name': '车身'},
-                                                    {'id': 'part_1', 'name': '车顶'}]}}}
-        node = {'result': {'parts': {'part_0': {'state': 'success',
-                                                'output': {'imagePath': 'outputs/image_a.png'}}}}}
-        entries = bridge._part_entries(node, upstream)
-        self.assertEqual(entries['part_0']['state'], 'success')
-        self.assertEqual(entries['part_0']['output']['imagePath'], 'outputs/image_a.png')
-        self.assertEqual(entries['part_1']['state'], 'pending')
-        self.assertEqual(entries['part_1']['name'], '车顶')
-
-    def test_sync_part_node_aggregates_progress(self):
-        node = {'result': {'parts': {'part_0': {'name': '车身', 'state': 'success'},
-                                     'part_1': {'name': '车顶', 'state': 'queued'}}}}
-        bridge._sync_part_node(node)
-        self.assertEqual(node['result']['state'], 'queued')
-        self.assertEqual(node['result']['output']['done'], 1)
-        self.assertEqual(node['result']['output']['total'], 2)
-        self.assertEqual(node['result']['output']['parts'][0]['name'], '车身')
-
-    def test_store_part_image_writes_outputs_and_entry(self):
-        entry = {}
+    def test_part_image_is_stored_immediately(self):
         task = {'taskId': 'task_img', 'state': 'success', 'provider': 'tripo',
                 'output': {'generated_image_url': 'https://example.com/a.png'}}
         with mock.patch.object(bridge.fw_providers, 'download_image',
                                return_value=(b'\x89PNG\r\n\x1a\n', 'png')):
-            bridge._store_part_image(self.root, 'Fe', 'element', entry, task)
+            bridge.store_task_output(self.root, 'Fe', 'element', 'partImage', task)
         self.assertTrue((self.outputs / 'image_task_img.png').is_file())
-        self.assertEqual(entry['output']['imagePath'], 'outputs/image_task_img.png')
+        self.assertEqual(task['output']['imagePath'], 'outputs/image_task_img.png')
 
-    def test_store_part_model_writes_glb_and_patches_contract(self):
-        contract_path = self._write_contract()
-        part = {'id': 'part_1', 'name': '车顶'}
-        entry = {'output': {'imagePath': 'outputs/image_a.png'}}
-        task = {'taskId': 'task_model', 'state': 'success'}
-        with mock.patch.object(bridge.fw_providers, 'download_model', return_value=b'glb'):
-            bridge._store_part_model(self.root, 'Fe', 'element', str(contract_path), part, entry,
-                                     task, {'model_url': 'https://example.com/a.glb'})
-        self.assertTrue((self.parts / 'model_task_model.glb').is_file())
-        self.assertEqual(entry['output']['modelPath'], 'parts/model_task_model.glb')
-        self.assertEqual(entry['output']['imagePath'], 'outputs/image_a.png')
-        contract = json.loads(contract_path.read_text(encoding='utf-8'))
-        self.assertEqual(contract['parts'][1]['mesh'], 'model_task_model.glb')
-        self.assertEqual(contract['parts'][0]['mesh'], 'part_0.glb')
-
-    def test_part_input_image_builds_data_uri(self):
+    def test_image_data_url_builds_data_uri(self):
         (self.outputs / 'image_a.png').write_bytes(b'png')
-        data = bridge._part_input_image(self.root, 'Fe', 'element',
-                                        {'output': {'imagePath': 'outputs/image_a.png'}})
+        data = bridge._image_data_url(self.root, 'Fe', 'element', 'outputs/image_a.png')
         self.assertTrue(data.startswith('data:image/png;base64,'))
-        self.assertIsNone(bridge._part_input_image(self.root, 'Fe', 'element', {}))
+        self.assertIsNone(bridge._image_data_url(self.root, 'Fe', 'element', None))
+
+    def test_no_part_id_remains_in_provider_routes(self):
+        source = Path(bridge.__file__).read_text(encoding='utf-8')
+        self.assertNotIn('partId', source)
 
 
 class ProviderConnectionTest(unittest.TestCase):
