@@ -191,5 +191,47 @@ class ContractFromBboxesTest(unittest.TestCase):
             fw_parts.contract_from_bboxes('CUT_DEMO', [])
 
 
+class PartNamingTest(unittest.TestCase):
+    def test_prompt_list_parses_names_and_descriptions(self):
+        text = ('整机描述\n【必须包含的部件】\n'
+                '· 车身 — 方正外壳\n'
+                '· 车顶：顶部平台\n'
+                '- 轮胎、轮毂\n'
+                '【其他要求】\n· 不要写进部件\n')
+        names = fw_parts.part_names_from_prompt(text)
+        self.assertEqual([item['name'] for item in names], ['车身', '车顶', '轮胎', '轮毂'])
+        self.assertEqual(names[0]['description'], '方正外壳')
+        self.assertEqual(names[1]['description'], '顶部平台')
+
+    def test_prompt_without_section_returns_empty(self):
+        self.assertEqual(fw_parts.part_names_from_prompt('只有整机描述'), [])
+        self.assertEqual(fw_parts.part_names_from_prompt(None), [])
+
+    def test_prompt_dedupes_repeated_names(self):
+        text = '【必须包含的部件】\n· 车身\n· 车身\n· 车顶'
+        self.assertEqual([item['name'] for item in fw_parts.part_names_from_prompt(text)],
+                         ['车身', '车顶'])
+
+    def test_rename_keeps_ids_and_warns_on_count_mismatch(self):
+        contract = fw_parts.normalize_contract(_contract())
+        contract['parts'][0]['id'] = 'part_0'
+        names = [{'name': '车身', 'description': '外壳'}, {'name': '车轮', 'description': ''}]
+        report = fw_parts.rename_contract_parts(contract, names)
+        self.assertEqual(contract['parts'][0]['id'], 'part_0')
+        self.assertEqual(contract['parts'][0]['name'], '车身')
+        self.assertEqual(contract['parts'][0]['description'], '外壳')
+        self.assertEqual(report['renamed'], 1)
+        self.assertEqual(report['parts'], 1)
+        self.assertTrue(report['warnings'])
+
+    def test_rename_without_names_keeps_cut_names(self):
+        contract = fw_parts.normalize_contract(_contract())
+        before = contract['parts'][0]['name']
+        report = fw_parts.rename_contract_parts(contract, [])
+        self.assertEqual(contract['parts'][0]['name'], before)
+        self.assertEqual(report['renamed'], 0)
+        self.assertTrue(report['warnings'])
+
+
 if __name__ == '__main__':
     unittest.main()

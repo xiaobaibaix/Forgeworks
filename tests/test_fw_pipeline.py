@@ -292,5 +292,141 @@ class PipelineDecimateTest(unittest.TestCase):
             self.assertIn('上游 GLB', node['result']['error'])
 
 
+def _contract_json(parts):
+    view = {'width': 1000, 'height': 1000, 'ground': 900, 'pxPerMeter': 100}
+    return {
+        'schemaVersion': 1, 'assetId': 'M1',
+        'views': {'front': dict(view), 'side': dict(view)},
+        'parts': parts,
+    }
+
+
+def _part_payload(index):
+    return {'id': 'part_%d' % index, 'name': '切片 %d' % index,
+            'mesh': 'part_%d.glb' % index,
+            'front': [100, 100, 100 + index * 10, 100],
+            'side': [100, 100, 100 + index * 10, 100]}
+
+
+class PipelinePartsTest(unittest.TestCase):
+    def test_parts_template_orders_split_chain(self):
+        graph = fw_pipeline.starter_graph('M1', 'parts')
+        _, order = fw_pipeline.validate_graph(graph)
+        self.assertLess(order.index('model'), order.index('partSpec'))
+        self.assertLess(order.index('partSpec'), order.index('partImage'))
+        self.assertLess(order.index('partImage'), order.index('partModel'))
+        self.assertLess(order.index('partModel'), order.index('assemble'))
+        self.assertLess(order.index('assemble'), order.index('style'))
+
+    def test_part_spec_bootstraps_and_renames_from_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs' / 'model_up.glb'
+            upstream.parent.mkdir(parents=True)
+            upstream.write_bytes(b'glb')
+            graph = fw_pipeline.starter_graph('M1', 'parts')
+            prompt = next(node for node in graph['nodes'] if node['type'] == 'prompt')
+            prompt['params']['text'] = '整机\n【必须包含的部件】\n· 车身 — 外壳\n· 车顶\n· 车轮'
+            model = next(node for node in graph['nodes'] if node['id'] == 'model')
+            model['result'] = {'providerTask': {'state': 'success', 'output': {'modelPath': 'model_up.glb'}}}
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+
+            def fake_bootstrap(source, out_dir, parts=3, axis='z', blender_path=None, asset_id=None):
+                Path(out_dir).mkdir(parents=True, exist_ok=True)
+                path = Path(out_dir) / 'partspec.json'
+                path.write_text(json.dumps(_contract_json([_part_payload(i) for i in range(parts)]),
+                                           ensure_ascii=False), encoding='utf-8')
+                return {'contract': str(path), 'parts': parts}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'bootstrap', side_effect=fake_bootstrap):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine', blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'partSpec')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['contractPath'], 'parts/partspec.json')
+            self.assertEqual([part['name'] for part in node['result']['output']['parts']],
+                             ['车身', '车顶', '车轮'])
+            self.assertIn('part_0', node['result']['parts'])
+            self.assertEqual(node['result']['parts']['part_0']['state'], 'pending')
+
+    def test_part_spec_blocked_without_blender(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs' / 'model_up.glb'
+            upstream.parent.mkdir(parents=True)
+            upstream.write_bytes(b'glb')
+            graph = fw_pipeline.starter_graph('M1', 'parts')
+            model = next(node for node in graph['nodes'] if node['id'] == 'model')
+            model['result'] = {'providerTask': {'state': 'success', 'output': {'modelPath': 'model_up.glb'}}}
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'partSpec')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertIn('Blender', node['result']['error'])
+
+    def test_part_image_aggregates_states_and_keeps_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = fw_pipeline.starter_graph('M1', 'parts')
+            spec = next(node for node in graph['nodes'] if node['type'] == 'partSpec')
+            spec['result'] = {'state': 'done', 'output': {
+                'contractPath': 'parts/partspec.json',
+                'parts': [{'id': 'part_0', 'name': '车身'}, {'id': 'part_1', 'name': '车顶'}]}}
+            image = next(node for node in graph['nodes'] if node['type'] == 'partImage')
+            image['result'] = {'parts': {
+                'part_0': {'state': 'success', 'output': {'imagePath': 'outputs/image_a.png'}},
+                'part_1': {'state': 'running'},
+            }}
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', target_id='partImage', kind='machine')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'partImage')
+            self.assertEqual(node['result']['state'], 'running')
+            self.assertEqual(node['result']['output']['done'], 1)
+            self.assertEqual(node['result']['parts']['part_0']['output']['imagePath'],
+                             'outputs/image_a.png')
+            self.assertEqual(node['result']['parts']['part_1']['name'], '车顶')
+
+            graph = result['graph']
+            image = next(node for node in graph['nodes'] if node['type'] == 'partImage')
+            image['result']['parts']['part_1']['state'] = 'success'
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', target_id='partImage', kind='machine')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'partImage')
+            self.assertEqual(node['result']['state'], 'done')
+
+    def test_queued_part_state_survives_save(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = fw_pipeline.save_graph(directory, 'M1',
+                                           fw_pipeline.starter_graph('M1', 'parts'), kind='machine')
+            image = next(node for node in graph['nodes'] if node['type'] == 'partImage')
+            image['result'] = dict(image.get('result') or {}, state='queued',
+                                   parts={'part_0': {'state': 'queued'}})
+            saved = fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            node = next(item for item in saved['nodes'] if item['type'] == 'partImage')
+            self.assertEqual(node['result']['state'], 'queued')
+
+    def test_assemble_writes_assembly_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parts_dir = root / '_Source' / '机器' / 'M1' / 'pipeline' / 'parts'
+            parts_dir.mkdir(parents=True)
+            (parts_dir / 'partspec.json').write_text('{}', encoding='utf-8')
+            graph = fw_pipeline.starter_graph('M1', 'parts')
+            model = next(node for node in graph['nodes'] if node['type'] == 'partModel')
+            model['result'] = {'state': 'done', 'output': {'contractPath': 'parts/partspec.json'}}
+            fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+
+            def fake_assemble(contract_path, output_path, blender_path=None):
+                Path(output_path).write_bytes(b'glb')
+                return {'parts': [{'triangles': 120}, {'triangles': 80}]}
+
+            with mock.patch.object(fw_pipeline.fw_parts, 'assemble', side_effect=fake_assemble):
+                result = fw_pipeline.execute_local(directory, 'M1', target_id='assemble',
+                                                   kind='machine', blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['type'] == 'assemble')
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(node['result']['output']['meshPath'], 'model_assembly_assemble.glb')
+            self.assertEqual(node['result']['output']['triangles'], 200)
+            self.assertTrue((parts_dir.parent / 'outputs' / 'model_assembly_assemble.glb').is_file())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -21,6 +21,10 @@ SCALE_RANGE = (0.05, 20.0)
 BLENDER_TIMEOUT = 600
 FITS = ('contain', 'height')
 PART_ID_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
+PART_SECTION = '【必须包含的部件】'
+_PART_LINE_RE = re.compile(r'^\s*(?:[·•\-*]|\d+\s*[.、)]|[（(]\d+[）)])\s*(.+?)\s*$')
+_PART_SPLIT_RE = re.compile(r'[、；;]')
+_PART_DESC_RE = re.compile(r'^(.+?)\s+[—–－]+\s+(.+)$')
 
 
 def _number(value, label):
@@ -103,6 +107,7 @@ def normalize_contract(data):
         parts.append({
             'id': part_id,
             'name': str(item.get('name') or part_id),
+            'description': str(item.get('description') or ''),
             'mesh': mesh.strip(),
             'front': _box(item.get('front'), label + '.front'),
             'side': _box(item.get('side'), label + '.side'),
@@ -212,6 +217,7 @@ def contract_from_bboxes(asset_id, entries, px_per_meter=400, margin=20):
         parts.append({
             'id': item['id'],
             'name': item.get('name') or item['id'],
+            'description': item.get('description') or '',
             'mesh': item['mesh'],
             'front': _box_in_view(item['bbox'], 0, views['front']),
             'side': _box_in_view(item['bbox'], 1, views['side']),
@@ -221,6 +227,63 @@ def contract_from_bboxes(asset_id, entries, px_per_meter=400, margin=20):
         })
     return {'schemaVersion': SCHEMA_VERSION, 'assetId': asset_id,
             'views': views, 'parts': parts}
+
+
+def part_names_from_prompt(text):
+    """从描述词的【必须包含的部件】清单里取部件名与说明，用于改写粗切件名。"""
+    if not isinstance(text, str) or PART_SECTION not in text:
+        return []
+    section = text.split(PART_SECTION, 1)[1]
+    stop = re.search(r'\n\s*【', section)
+    if stop:
+        section = section[:stop.start()]
+    names, seen = [], set()
+    for raw in section.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        match = _PART_LINE_RE.match(line)
+        body = (match.group(1) if match else line).strip().strip('·•-*').strip()
+        if not body:
+            continue
+        name, description = body, ''
+        if '：' in body or ':' in body:
+            separator = '：' if '：' in body else ':'
+            left, right = body.split(separator, 1)
+            if left.strip():
+                name, description = left.strip(), right.strip()
+        elif _PART_DESC_RE.match(body):
+            left, right = _PART_DESC_RE.match(body).groups()
+            name, description = left.strip(), right.strip()
+        else:
+            segments = [segment.strip() for segment in _PART_SPLIT_RE.split(body) if segment.strip()]
+            if len(segments) > 1:
+                for segment in segments:
+                    if segment not in seen:
+                        seen.add(segment)
+                        names.append({'name': segment[:64], 'description': ''})
+                continue
+        name = re.sub(r'\s+', ' ', name)[:64]
+        if name and name not in seen:
+            seen.add(name)
+            names.append({'name': name, 'description': description[:300]})
+    return names
+
+
+def rename_contract_parts(contract, names):
+    """只改显示名与说明，id 保持粗切编号，避免中文进入文件名。"""
+    parts = contract.get('parts') or []
+    if not names:
+        return {'parts': len(parts), 'renamed': 0,
+                'warnings': ['描述词没有【必须包含的部件】清单，沿用粗切命名']}
+    for part, entry in zip(parts, names):
+        part['name'] = entry['name']
+        part['description'] = entry.get('description') or ''
+    warnings = []
+    if len(names) != len(parts):
+        warnings.append('描述词列了 %d 个部件，粗切得到 %d 块，按顺序命名前 %d 个'
+                        % (len(names), len(parts), min(len(names), len(parts))))
+    return {'parts': len(parts), 'renamed': min(len(parts), len(names)), 'warnings': warnings}
 
 
 def find_blender():
@@ -332,6 +395,7 @@ def assemble(contract_path, output_path, blender_path=None, report_path=None,
     for record in records:
         final = world.get(record['id'])
         record['worldBbox'] = ({'min': final['min'], 'max': final['max']} if final else None)
+        record['triangles'] = int(final.get('triangles') or 0) if final else 0
         if final and final.get('triangles') == 0:
             record['flags'].append('empty_mesh')
 

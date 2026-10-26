@@ -511,6 +511,153 @@ def store_task_output(root, asset_id, kind, node_type, task):
     return task
 
 
+def _prompt_text(graph, nodes, node):
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node.get('id') and edge.get('in') == 'text'), None)
+    candidates = [nodes.get(edge['from'])] if edge else []
+    candidates += [item for item in nodes.values() if item.get('type') == 'prompt']
+    for candidate in candidates:
+        if not candidate:
+            continue
+        output = ((candidate.get('result') or {}).get('output') or {})
+        text = output.get('text') or (candidate.get('params') or {}).get('text')
+        if text:
+            return str(text)
+    return ''
+
+
+def _contract_path_upstream(graph, nodes, node):
+    """沿 contract 连线回溯到首个产出契约的分件节点。"""
+    seen = set()
+    current = node
+    while current and current.get('id') not in seen:
+        seen.add(current.get('id'))
+        output = ((current.get('result') or {}).get('output') or {})
+        path = output.get('contractPath')
+        if isinstance(path, str) and path.strip():
+            return path.strip()
+        edge = next((edge for edge in graph['edges']
+                     if edge.get('to') == current.get('id') and edge.get('in') == 'contract'), None)
+        current = nodes.get(edge['from']) if edge else None
+    return None
+
+
+def _load_contract_part(root, asset_id, kind, contract_path, part_id):
+    base = os.path.realpath(fw_pipeline.pipeline_root(root, asset_id, kind))
+    absolute = os.path.realpath(os.path.join(base, contract_path))
+    if not absolute.startswith(base + os.sep) or not os.path.isfile(absolute):
+        raise ValueError('分件契约不存在或越界：' + str(contract_path))
+    with open(absolute, encoding='utf-8') as stream:
+        contract = json.load(stream)
+    part = next((item for item in contract.get('parts') or []
+                 if isinstance(item, dict) and item.get('id') == part_id), None)
+    if not part:
+        raise ValueError('分件契约里没有部件 ' + part_id)
+    return absolute, part
+
+
+def _part_prompt(base_text, part):
+    name = part.get('name') or part.get('id') or ''
+    description = str(part.get('description') or '').strip()
+    detail = '%s — %s' % (name, description) if description else name
+    lines = [
+        '这是整机分件生成：画面里只画一个部件。',
+        '【只生成这个部件】' + detail,
+        '画面要求：单件特写，纯色浅灰或白色背景，不要其他部件，不要整机组装图；',
+        '成对或成组的部件（如四个轮胎、两侧车窗）拆开画成同一部件的重复件；',
+        '材质、配色与整体风格必须和整机设计保持一致。',
+    ]
+    base = str(base_text or '').strip()
+    return ((base + '\n\n') if base else '') + '\n'.join(lines)
+
+
+def _part_entries(node, upstream):
+    result = node.setdefault('result', {})
+    existing = result.get('parts') if isinstance(result.get('parts'), dict) else {}
+    merged = {}
+    for part_id, spec in fw_pipeline._parts_skeleton(upstream).items():
+        entry = dict(existing.get(part_id) or {})
+        entry.setdefault('name', spec.get('name') or part_id)
+        entry.setdefault('description', spec.get('description') or '')
+        entry.setdefault('state', 'pending')
+        if not isinstance(entry.get('output'), dict) and isinstance(spec.get('output'), dict):
+            entry['output'] = dict(spec['output'])
+        merged[part_id] = entry
+    for part_id, entry in existing.items():
+        if isinstance(entry, dict):
+            merged.setdefault(part_id, dict(entry))
+    result['parts'] = merged
+    return merged
+
+
+def _sync_part_node(node):
+    result = node.setdefault('result', {})
+    parts = result.get('parts') if isinstance(result.get('parts'), dict) else {}
+    state, error = fw_pipeline._aggregate_part_state(parts)
+    result['state'] = state
+    if error:
+        result['error'] = error
+    else:
+        result.pop('error', None)
+    output = result.get('output') if isinstance(result.get('output'), dict) else {}
+    output['parts'] = [{'id': part_id, 'name': entry.get('name'), 'state': entry.get('state'),
+                        'imagePath': (entry.get('output') or {}).get('imagePath'),
+                        'modelPath': (entry.get('output') or {}).get('modelPath')}
+                       for part_id, entry in parts.items()]
+    output['total'] = len(parts)
+    output['done'] = sum(1 for entry in parts.values() if entry.get('state') == 'success')
+    result['output'] = output
+
+
+def _store_part_image(root, asset_id, kind, entry, task):
+    store_task_output(root, asset_id, kind, 'textToImage', task)
+    output = task.get('output') if isinstance(task.get('output'), dict) else {}
+    if output.get('imagePath'):
+        entry['output'] = dict(entry.get('output') or {}, imagePath=output['imagePath'],
+                               size=output.get('size'))
+
+
+def _store_part_model(root, asset_id, kind, contract_abs, part, entry, task, output):
+    data = fw_providers.download_model(output.get('model_url'))
+    directory = os.path.join(fw_pipeline.pipeline_root(root, asset_id, kind), 'parts')
+    os.makedirs(directory, exist_ok=True)
+    filename = 'model_' + task['taskId'] + '.glb'
+    with open(os.path.join(directory, filename), 'wb') as stream:
+        stream.write(data)
+    with open(contract_abs, encoding='utf-8') as stream:
+        contract = json.load(stream)
+    for item in contract.get('parts') or []:
+        if isinstance(item, dict) and item.get('id') == part.get('id'):
+            item['mesh'] = filename
+            break
+    with open(contract_abs, 'w', encoding='utf-8') as stream:
+        json.dump(contract, stream, ensure_ascii=False, indent=2)
+    entry['output'] = dict(entry.get('output') or {},
+                           modelPath='parts/' + filename, size=len(data))
+
+
+def _part_input_image(root, asset_id, kind, entry):
+    output = entry.get('output') if isinstance(entry.get('output'), dict) else {}
+    image_path = output.get('imagePath')
+    if not image_path:
+        provider_output = (entry.get('providerTask') or {}).get('output') or {}
+        image_path = provider_output.get('imagePath')
+    if not image_path:
+        return None
+    try:
+        absolute = fw_pipeline.resolve_output(root, asset_id, kind, os.path.basename(str(image_path)))
+        if not absolute or os.path.getsize(absolute) > 8 * 1024 * 1024:
+            return None
+        with open(absolute, 'rb') as stream:
+            raw = stream.read()
+        extension = os.path.splitext(absolute)[1].lower().lstrip('.')
+        mime = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                'webp': 'image/webp'}.get(extension, 'image/png')
+        return 'data:%s;base64,%s' % (mime, base64.b64encode(raw).decode())
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 def ue_project_root():
     p = _state.get('ueProjectRoot')
     return p if p and os.path.isdir(p) else None
@@ -1691,16 +1838,47 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     raise ValueError('需要用户明确确认可能产生 Provider 费用')
                 asset_id, node_id = b.get('assetId'), b.get('nodeId')
                 kind = b.get('kind') or 'machine'
+                part_id = str(b.get('partId') or '').strip()
                 graph = fw_pipeline.load_graph(fw_dir(), asset_id, kind)
                 nodes, _ = fw_pipeline.validate_graph(graph)
                 node = nodes.get(node_id)
-                if not node or node.get('type') not in ('textToImage', 'imageTo3D'):
+                allowed = ('partImage', 'partModel') if part_id else ('textToImage', 'imageTo3D')
+                if not node or node.get('type') not in allowed:
                     raise ValueError('目标节点不是受支持的远程生成节点')
+                if part_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', part_id):
+                    raise ValueError('部件 ID 格式非法')
                 incoming = [edge for edge in graph['edges'] if edge.get('to') == node_id]
                 prompt = ''
                 input_task_id = None
                 image_data = None
-                if node['type'] == 'textToImage':
+                contract_abs = None
+                part = None
+                entry = None
+                if part_id:
+                    contract_path = _contract_path_upstream(graph, nodes, node)
+                    if not contract_path:
+                        raise ValueError('逐件生成缺少分件契约：请先运行分件规划')
+                    contract_abs, part = _load_contract_part(fw_dir(), asset_id, kind, contract_path, part_id)
+                    upstream = fw_pipeline._contract_source(graph, nodes, node_id)
+                    entries = _part_entries(node, upstream)
+                    entry = entries.setdefault(part_id, {})
+                    entry['name'] = part.get('name') or entry.get('name') or part_id
+                    entry['description'] = part.get('description') or ''
+                    entry['state'] = 'queued'
+                    entry.pop('error', None)
+                    prompt = _part_prompt(_prompt_text(graph, nodes, node), part)
+                    if node['type'] == 'partModel':
+                        upstream_entry = ((upstream or {}).get('result') or {}).get('parts')
+                        upstream_entry = upstream_entry.get(part_id) if isinstance(upstream_entry, dict) else None
+                        upstream_entry = upstream_entry if isinstance(upstream_entry, dict) else {}
+                        previous = upstream_entry.get('providerTask') or entry.get('providerTask') or {}
+                        if (previous.get('provider') == 'tripo'
+                                and previous.get('requestType') == 'textToImage'
+                                and str(previous.get('taskId') or '').startswith('task_')):
+                            input_task_id = previous.get('taskId')
+                        image_data = (_part_input_image(fw_dir(), asset_id, kind, upstream_entry)
+                                      or _part_input_image(fw_dir(), asset_id, kind, entry))
+                elif node['type'] == 'textToImage':
                     prompt_edge = next((edge for edge in incoming if edge.get('in') == 'text'), None)
                     if prompt_edge:
                         upstream = nodes[prompt_edge['from']]
@@ -1727,20 +1905,37 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                                 image_data = 'data:%s;base64,%s' % (mime, base64.b64encode(raw).decode())
                         except (OSError, ValueError, TypeError):
                             image_data = None
-                task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, node['type'], node.get('params'), prompt, input_task_id, image_data, fallback=True)
-                store_task_output(fw_dir(), asset_id, kind, node['type'], task)
-                state = node.setdefault('result', {})
-                previous_task = state.get('providerTask')
-                if previous_task:
-                    history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
-                    state['history'] = history + [previous_task]
-                state['providerTask'] = task
-                state['state'] = 'done' if task.get('state') == 'success' else 'queued'
-                state.pop('error', None)
+                provider_kind = 'imageTo3D' if node['type'] == 'partModel' else node['type']
+                task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, provider_kind, node.get('params'), prompt, input_task_id, image_data, fallback=True)
+                if part_id:
+                    if node['type'] == 'partImage':
+                        _store_part_image(fw_dir(), asset_id, kind, entry, task)
+                    elif task.get('state') == 'success' and (task.get('output') or {}).get('model_url'):
+                        _store_part_model(fw_dir(), asset_id, kind, contract_abs, part, entry, task, task.get('output') or {})
+                    entry['providerTask'] = task
+                    entry['state'] = 'success' if task.get('state') == 'success' else 'queued'
+                    _sync_part_node(node)
+                    state = node['result']
+                else:
+                    store_task_output(fw_dir(), asset_id, kind, node['type'], task)
+                    state = node.setdefault('result', {})
+                    previous_task = state.get('providerTask')
+                    if previous_task:
+                        history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
+                        state['history'] = history + [previous_task]
+                    state['providerTask'] = task
+                    state['state'] = 'done' if task.get('state') == 'success' else 'queued'
+                    state.pop('error', None)
                 result = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
-                push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': state['state'], 'taskId': task['taskId']})
-                self._json({'ok': True, 'graph': result, 'taskId': task['taskId'], 'state': state['state']})
-            except (ValueError, TypeError, RuntimeError) as error:
+                event = {'id': asset_id, 'nodeId': node_id, 'state': state['state'], 'taskId': task['taskId']}
+                if part_id:
+                    event['partId'] = part_id
+                push_event('pipeline.progress', event)
+                payload = {'ok': True, 'graph': result, 'taskId': task['taskId'], 'state': state['state']}
+                if part_id:
+                    payload['partId'] = part_id
+                self._json(payload)
+            except (ValueError, TypeError, RuntimeError, OSError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'pipeline/provider/poll':
             b = body or {}
@@ -1748,11 +1943,22 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 if not self._same_loopback_origin():
                     raise ValueError('Provider 任务仅允许 Forgeworks 本地同源页面查询')
                 asset_id, node_id = b.get('assetId'), b.get('nodeId')
+                part_id = str(b.get('partId') or '').strip()
                 kind = b.get('kind') or 'machine'
                 graph = fw_pipeline.load_graph(fw_dir(), asset_id, kind)
                 nodes, _ = fw_pipeline.validate_graph(graph)
                 node = nodes.get(node_id)
-                task = (node or {}).get('result', {}).get('providerTask') or {}
+                entry = None
+                if part_id:
+                    if not node or node.get('type') not in ('partImage', 'partModel'):
+                        raise ValueError('目标节点不是受支持的逐件生成节点')
+                    entries = (node.get('result') or {}).get('parts')
+                    entry = entries.get(part_id) if isinstance(entries, dict) else None
+                    if not isinstance(entry, dict):
+                        raise ValueError('没有该部件的生成记录：' + part_id)
+                    task = entry.get('providerTask') or {}
+                else:
+                    task = (node or {}).get('result', {}).get('providerTask') or {}
                 if not node or not task.get('taskId'):
                     raise ValueError('没有可轮询的 Provider 任务')
                 result = fw_providers.poll(read_json(CONFIG_FILE, {}) or {}, task)
@@ -1761,26 +1967,47 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     raise ValueError('Provider 返回了未知任务状态')
                 task.update({'state': state, 'progress': max(0, min(100, int(result.get('progress') or 0))),
                              'creditsConsumed': result.get('credits_consumed'), 'error': str(result.get('error_message') or '')[:300]})
-                node['result']['state'] = 'done' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
                 output = result.get('output') or {}
-                if state == 'success':
-                    node['result'].pop('error', None)
-                if state == 'success' and node['type'] == 'textToImage':
-                    task['output'] = {'generated_image_url': output.get('generated_image_url')}
-                    store_task_output(fw_dir(), asset_id, kind, node['type'], task)
-                if state == 'success' and node['type'] == 'imageTo3D':
-                    data = fw_providers.download_model(output.get('model_url'))
-                    output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
-                    os.makedirs(output_dir, exist_ok=True)
-                    filename = 'model_' + task['taskId'] + '.glb'
-                    with open(os.path.join(output_dir, filename), 'wb') as stream:
-                        stream.write(data)
-                    task['output'] = {'modelPath': 'outputs/' + filename, 'size': len(data)}
+                if part_id:
+                    entry['state'] = 'success' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
+                    if state == 'success':
+                        entry.pop('error', None)
+                    elif task.get('error'):
+                        entry['error'] = task['error']
+                    if state == 'success' and node['type'] == 'partImage':
+                        task['output'] = {'generated_image_url': output.get('generated_image_url')}
+                        _store_part_image(fw_dir(), asset_id, kind, entry, task)
+                    if state == 'success' and node['type'] == 'partModel' and output.get('model_url'):
+                        contract_path = _contract_path_upstream(graph, nodes, node)
+                        contract_abs, part = _load_contract_part(fw_dir(), asset_id, kind, contract_path, part_id)
+                        _store_part_model(fw_dir(), asset_id, kind, contract_abs, part, entry, task, output)
+                    _sync_part_node(node)
+                else:
+                    node['result']['state'] = 'done' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
+                    if state == 'success':
+                        node['result'].pop('error', None)
+                    if state == 'success' and node['type'] == 'textToImage':
+                        task['output'] = {'generated_image_url': output.get('generated_image_url')}
+                        store_task_output(fw_dir(), asset_id, kind, node['type'], task)
+                    if state == 'success' and node['type'] == 'imageTo3D':
+                        data = fw_providers.download_model(output.get('model_url'))
+                        output_dir = os.path.join(fw_pipeline.pipeline_root(fw_dir(), asset_id, kind), 'outputs')
+                        os.makedirs(output_dir, exist_ok=True)
+                        filename = 'model_' + task['taskId'] + '.glb'
+                        with open(os.path.join(output_dir, filename), 'wb') as stream:
+                            stream.write(data)
+                        task['output'] = {'modelPath': 'outputs/' + filename, 'size': len(data)}
                 task['error'] = str(result.get('error_message') or '')[:300]
                 result_graph = fw_pipeline.save_graph(fw_dir(), asset_id, graph, kind)
-                push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id, 'state': state,
-                                                  'progress': task.get('progress')})
-                self._json({'ok': True, 'graph': result_graph, 'task': task})
+                event = {'id': asset_id, 'nodeId': node_id, 'state': state,
+                         'progress': task.get('progress')}
+                if part_id:
+                    event['partId'] = part_id
+                push_event('pipeline.progress', event)
+                payload = {'ok': True, 'graph': result_graph, 'task': task}
+                if part_id:
+                    payload['partId'] = part_id
+                self._json(payload)
             except (ValueError, TypeError, RuntimeError, OSError) as error:
                 self._json({'ok': False, 'error': str(error)}, 400)
         elif route == 'materials/texture/submit':

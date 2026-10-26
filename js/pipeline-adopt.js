@@ -341,7 +341,7 @@
     if(!task || task.state !== 'success'){
       return Promise.resolve(reportApplyFailure(assetId, '任务尚未成功', nodeId));
     }
-    if(nodeType !== 'textToImage' && nodeType !== 'imageTo3D' && nodeType !== 'decimate'){
+    if(nodeType !== 'textToImage' && nodeType !== 'imageTo3D' && nodeType !== 'decimate' && nodeType !== 'assemble'){
       return Promise.resolve({ok:true, skipped:true});
     }
     // 元素只支持图标：先于就绪检查跳过，避免误报“Bridge 未连接”

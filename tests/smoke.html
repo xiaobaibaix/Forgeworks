@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261026d">
-<link rel="stylesheet" href="../css/layout.css?v=20261026d">
-<link rel="stylesheet" href="../css/components.css?v=20261026d">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261026d">
+<link rel="stylesheet" href="../css/theme.css?v=20261026e">
+<link rel="stylesheet" href="../css/layout.css?v=20261026e">
+<link rel="stylesheet" href="../css/components.css?v=20261026e">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261026e">
 </head>
 <body>
 <div class="app">
@@ -51,67 +51,67 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261026d"></script>
-<script src="../js/core/color.js?v=20261026d"></script>
-<script src="../js/data/styles.js?v=20261026d"></script>
-<script src="../js/data/seed.js?v=20261026d"></script>
-<script src="../js/data/prompts.js?v=20261026d"></script>
+<script src="../js/core/config.js?v=20261026e"></script>
+<script src="../js/core/color.js?v=20261026e"></script>
+<script src="../js/data/styles.js?v=20261026e"></script>
+<script src="../js/data/seed.js?v=20261026e"></script>
+<script src="../js/data/prompts.js?v=20261026e"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261026d"></script>
-<script src="../js/core/lookup.js?v=20261026d"></script>
-<script src="../js/core/style.js?v=20261026d"></script>
+<script src="../js/core/state.js?v=20261026e"></script>
+<script src="../js/core/lookup.js?v=20261026e"></script>
+<script src="../js/core/style.js?v=20261026e"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261026d"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261026d"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261026d"></script>
-<script src="../js/vendor/GLTFLoader.js?v=20261026d"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261026d"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261026d"></script>
+<script src="../js/vendor/three.min.js?v=20261026e"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261026e"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261026e"></script>
+<script src="../js/vendor/GLTFLoader.js?v=20261026e"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261026e"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261026e"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261026d"></script>
-<script src="../js/engines/material-textures.js?v=20261026d"></script>
-<script src="../js/engines/asset-layers.js?v=20261026d"></script>
-<script src="../js/engines/glb.js?v=20261026d"></script>
-<script src="../js/engines/viewer3d.js?v=20261026d"></script>
-<script src="../js/views/editor3d.js?v=20261026d"></script>
-<script src="../js/engines/validate.js?v=20261026d"></script>
-<script src="../js/engines/solver.js?v=20261026d"></script>
-<script src="../js/engines/balance.js?v=20261026d"></script>
-<script src="../js/engines/csv.js?v=20261026d"></script>
-<script src="../js/core/io.js?v=20261026d"></script>
-<script src="../js/sync.js?v=20261026d"></script>
-<script src="../js/pipeline-adopt.js?v=20261026d"></script>
-<script src="../js/pipeline.js?v=20261026d"></script>
-<script src="../js/pipeline-templates.js?v=20261026d"></script>
+<script src="../js/engines/icons.js?v=20261026e"></script>
+<script src="../js/engines/material-textures.js?v=20261026e"></script>
+<script src="../js/engines/asset-layers.js?v=20261026e"></script>
+<script src="../js/engines/glb.js?v=20261026e"></script>
+<script src="../js/engines/viewer3d.js?v=20261026e"></script>
+<script src="../js/views/editor3d.js?v=20261026e"></script>
+<script src="../js/engines/validate.js?v=20261026e"></script>
+<script src="../js/engines/solver.js?v=20261026e"></script>
+<script src="../js/engines/balance.js?v=20261026e"></script>
+<script src="../js/engines/csv.js?v=20261026e"></script>
+<script src="../js/core/io.js?v=20261026e"></script>
+<script src="../js/sync.js?v=20261026e"></script>
+<script src="../js/pipeline-adopt.js?v=20261026e"></script>
+<script src="../js/pipeline.js?v=20261026e"></script>
+<script src="../js/pipeline-templates.js?v=20261026e"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261026d"></script>
-<script src="../js/ui/router.js?v=20261026d"></script>
-<script src="../js/ui/editor.js?v=20261026d"></script>
-<script src="../js/ui/providers.js?v=20261026d"></script>
+<script src="../js/ui/table.js?v=20261026e"></script>
+<script src="../js/ui/router.js?v=20261026e"></script>
+<script src="../js/ui/editor.js?v=20261026e"></script>
+<script src="../js/ui/providers.js?v=20261026e"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261026d"></script>
-<script src="../js/views/elements.js?v=20261026d"></script>
-<script src="../js/views/items.js?v=20261026d"></script>
-<script src="../js/views/machines.js?v=20261026d"></script>
-<script src="../js/views/recipes.js?v=20261026d"></script>
-<script src="../js/views/techs.js?v=20261026d"></script>
-<script src="../js/views/assets.js?v=20261026d"></script>
-<script src="../js/views/validate.js?v=20261026d"></script>
-<script src="../js/views/balance.js?v=20261026d"></script>
-<script src="../js/views/solve.js?v=20261026d"></script>
-<script src="../js/views/graph.js?v=20261026d"></script>
-<script src="../js/views/sync.js?v=20261026d"></script>
-<script src="../js/views/project.js?v=20261026d"></script>
-<script src="../js/views/pipeline.js?v=20261026d"></script>
-<script src="../js/views/export.js?v=20261026d"></script>
+<script src="../js/views/style.js?v=20261026e"></script>
+<script src="../js/views/elements.js?v=20261026e"></script>
+<script src="../js/views/items.js?v=20261026e"></script>
+<script src="../js/views/machines.js?v=20261026e"></script>
+<script src="../js/views/recipes.js?v=20261026e"></script>
+<script src="../js/views/techs.js?v=20261026e"></script>
+<script src="../js/views/assets.js?v=20261026e"></script>
+<script src="../js/views/validate.js?v=20261026e"></script>
+<script src="../js/views/balance.js?v=20261026e"></script>
+<script src="../js/views/solve.js?v=20261026e"></script>
+<script src="../js/views/graph.js?v=20261026e"></script>
+<script src="../js/views/sync.js?v=20261026e"></script>
+<script src="../js/views/project.js?v=20261026e"></script>
+<script src="../js/views/pipeline.js?v=20261026e"></script>
+<script src="../js/views/export.js?v=20261026e"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261026d"></script>
+<script src="../js/main.js?v=20261026e"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -433,6 +433,80 @@
       return types.length + ' 节点 / ' + PIPELINE_LOCAL_STAGES.length + ' 个本地阶段';
     });
 
+    check('分件模板含逐件链路', function(){
+      var graph = pipelineStarterGraph('probe', 'parts');
+      var types = graph.nodes.map(function(node){ return node.type; });
+      var chain = ['partSpec', 'partImage', 'partModel', 'assemble'];
+      var missing = chain.filter(function(type){ return types.indexOf(type) < 0; });
+      if(missing.length) throw new Error('缺 ' + missing.join(','));
+      function linked(from, to){
+        return graph.edges.some(function(edge){
+          return edge.from === from && edge.to === to && edge['in'] === 'contract';
+        });
+      }
+      if(!linked('partSpec', 'partImage') || !linked('partImage', 'partModel')
+        || !linked('partModel', 'assemble')) throw new Error('契约连线缺失');
+      if(!graph.edges.some(function(edge){
+        return edge.from === 'assemble' && edge.to === 'style' && edge['in'] === 'mesh';
+      })) throw new Error('装配后未接风格对齐');
+      if(PIPELINE_NODE_LABELS.partSpec !== '分件规划' || PIPELINE_NODE_LABELS.assemble !== '装配')
+        throw new Error('节点标签缺失');
+      return chain.join('→');
+    });
+
+    check('逐件节点显示进度与单件重试', function(){
+      var prevAsset = PIPELINE.assetId, prevKind = PIPELINE.kind;
+      var prevReady = window.pipelineBridgeReady;
+      PIPELINE.assetId = 'probe';
+      PIPELINE.kind = 'machine';
+      window.pipelineBridgeReady = function(){ return true; };
+      try {
+        var html = pipelineNodeCard({id:'pi', type:'partImage', x:0, y:0, params:{},
+          result:{state:'running', parts:{
+            part_0:{name:'车身', state:'success', output:{imagePath:'outputs/image_a.png'}},
+            part_1:{name:'车顶', state:'failed'}}}});
+        if(html.indexOf('逐件效果图') < 0) throw new Error('节点标签缺失');
+        if(html.indexOf('· 1/2') < 0) throw new Error('缺少 1/2 进度');
+        if(html.indexOf('data-part-retry="pi"') < 0 || html.indexOf('data-part-id="part_1"') < 0)
+          throw new Error('缺少单件重试按钮');
+        if(html.indexOf('>重试<') < 0) throw new Error('失败件应为重试');
+        if(html.indexOf('车顶') < 0) throw new Error('缺少部件名');
+        var modelHTML = pipelineNodeCard({id:'pm', type:'partModel', x:0, y:0, params:{},
+          result:{state:'done', parts:{part_0:{name:'车身', state:'success',
+            output:{modelPath:'parts/model_1.glb'}}}}});
+        if(modelHTML.indexOf('>模型<') < 0) throw new Error('部件模型链接缺失');
+        return '进度 1/2 + 重试 + 模型链接';
+      } finally {
+        window.pipelineBridgeReady = prevReady;
+        PIPELINE.assetId = prevAsset;
+        PIPELINE.kind = prevKind;
+      }
+    });
+
+    check('装配结果可应用为资产模型', function(){
+      var prevAsset = PIPELINE.assetId, prevKind = PIPELINE.kind;
+      PIPELINE.assetId = 'probe';
+      PIPELINE.kind = 'machine';
+      try {
+        var node = {id:'assemble', type:'assemble', x:0, y:0, params:{},
+          result:{state:'done', output:{meshPath:'outputs/model_assembly_assemble.glb',
+            parts:3, triangles:1200}}};
+        var task = pipelineApplyTaskFor(node);
+        if(!task || task.taskId !== 'assemble:assemble:1200') throw new Error('装配任务映射异常');
+        if(task.output.modelPath !== 'outputs/model_assembly_assemble.glb')
+          throw new Error('装配模型路径异常');
+        if(pipelineApplyTaskFor({id:'a', type:'assemble', x:0, y:0, params:{},
+          result:{state:'running'}})) throw new Error('未完成也返回应用任务');
+        var html = pipelineNodeCard(node);
+        if(html.indexOf('应用装配') < 0) throw new Error('缺少应用装配按钮');
+        if(html.indexOf('3 件 · 1200 面') < 0) throw new Error('缺少装配摘要');
+        return '模型映射 + 应用按钮';
+      } finally {
+        PIPELINE.assetId = prevAsset;
+        PIPELINE.kind = prevKind;
+      }
+    });
+
     check('元素可进入生成管线', function(){
       var el = S.elements[0];
       var prev = PIPELINE.assetId;
@@ -632,6 +706,26 @@
         window.pipelineSave = savedSave;
         PIPELINE.graph = savedGraph;
         PIPELINE.assetId = savedAsset;
+      }
+    });
+
+    check('分件契约端口可连线且拒绝类型不符', function(){
+      var savedGraph = PIPELINE.graph, savedSave = window.pipelineSave;
+      var graph = pipelineStarterGraph('probe', 'parts');
+      PIPELINE.graph = graph;
+      window.pipelineSave = function(){ return Promise.resolve(); };
+      try {
+        if(pipelinePorts('partSpec', 'out').join() !== 'contract')
+          throw new Error('partSpec 输出端口异常');
+        if(pipelinePorts('assemble', 'in').join() !== 'contract')
+          throw new Error('assemble 输入端口异常');
+        if(!pipelineConnect('partSpec', 'assemble', 'contract')) throw new Error('契约端口无法连线');
+        if(pipelineConnect('partSpec', 'decimate', 'mesh'))
+          throw new Error('契约端口不该连到 mesh 输入');
+        return 'contract 端口连通 / 类型不符被拒';
+      } finally {
+        window.pipelineSave = savedSave;
+        PIPELINE.graph = savedGraph;
       }
     });
 
