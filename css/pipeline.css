@@ -32,6 +32,8 @@
   background-size:18px 18px;box-shadow:inset 0 1px 3px rgba(43,40,34,.05);
   overscroll-behavior:contain}
 .pipeline-scroll.panning{cursor:grabbing;user-select:none}
+.pipeline-marquee{position:absolute;z-index:20;pointer-events:none;border:1px dashed var(--brand);
+  border-radius:2px;background:rgba(194,65,12,.08)}
 .pipeline-canvas{position:absolute;top:0;left:0;transform-origin:0 0;will-change:transform}
 .pipeline-canvas>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
 .pipeline-canvas>svg path{fill:none;stroke:var(--accent);stroke-width:2;opacity:.55}

@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261026l">
-<link rel="stylesheet" href="../css/layout.css?v=20261026l">
-<link rel="stylesheet" href="../css/components.css?v=20261026l">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261026l">
+<link rel="stylesheet" href="../css/theme.css?v=20261026n">
+<link rel="stylesheet" href="../css/layout.css?v=20261026n">
+<link rel="stylesheet" href="../css/components.css?v=20261026n">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261026n">
 </head>
 <body>
 <div class="app">
@@ -51,67 +51,67 @@
      ============================================================ -->
 
 <!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261026l"></script>
-<script src="../js/core/color.js?v=20261026l"></script>
-<script src="../js/data/styles.js?v=20261026l"></script>
-<script src="../js/data/seed.js?v=20261026l"></script>
-<script src="../js/data/prompts.js?v=20261026l"></script>
+<script src="../js/core/config.js?v=20261026n"></script>
+<script src="../js/core/color.js?v=20261026n"></script>
+<script src="../js/data/styles.js?v=20261026n"></script>
+<script src="../js/data/seed.js?v=20261026n"></script>
+<script src="../js/data/prompts.js?v=20261026n"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261026l"></script>
-<script src="../js/core/lookup.js?v=20261026l"></script>
-<script src="../js/core/style.js?v=20261026l"></script>
+<script src="../js/core/state.js?v=20261026n"></script>
+<script src="../js/core/lookup.js?v=20261026n"></script>
+<script src="../js/core/style.js?v=20261026n"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261026l"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261026l"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261026l"></script>
-<script src="../js/vendor/GLTFLoader.js?v=20261026l"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261026l"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261026l"></script>
+<script src="../js/vendor/three.min.js?v=20261026n"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261026n"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261026n"></script>
+<script src="../js/vendor/GLTFLoader.js?v=20261026n"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261026n"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261026n"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261026l"></script>
-<script src="../js/engines/material-textures.js?v=20261026l"></script>
-<script src="../js/engines/asset-layers.js?v=20261026l"></script>
-<script src="../js/engines/glb.js?v=20261026l"></script>
-<script src="../js/engines/viewer3d.js?v=20261026l"></script>
-<script src="../js/views/editor3d.js?v=20261026l"></script>
-<script src="../js/engines/validate.js?v=20261026l"></script>
-<script src="../js/engines/solver.js?v=20261026l"></script>
-<script src="../js/engines/balance.js?v=20261026l"></script>
-<script src="../js/engines/csv.js?v=20261026l"></script>
-<script src="../js/core/io.js?v=20261026l"></script>
-<script src="../js/sync.js?v=20261026l"></script>
-<script src="../js/pipeline-adopt.js?v=20261026l"></script>
-<script src="../js/pipeline.js?v=20261026l"></script>
-<script src="../js/pipeline-templates.js?v=20261026l"></script>
+<script src="../js/engines/icons.js?v=20261026n"></script>
+<script src="../js/engines/material-textures.js?v=20261026n"></script>
+<script src="../js/engines/asset-layers.js?v=20261026n"></script>
+<script src="../js/engines/glb.js?v=20261026n"></script>
+<script src="../js/engines/viewer3d.js?v=20261026n"></script>
+<script src="../js/views/editor3d.js?v=20261026n"></script>
+<script src="../js/engines/validate.js?v=20261026n"></script>
+<script src="../js/engines/solver.js?v=20261026n"></script>
+<script src="../js/engines/balance.js?v=20261026n"></script>
+<script src="../js/engines/csv.js?v=20261026n"></script>
+<script src="../js/core/io.js?v=20261026n"></script>
+<script src="../js/sync.js?v=20261026n"></script>
+<script src="../js/pipeline-adopt.js?v=20261026n"></script>
+<script src="../js/pipeline.js?v=20261026n"></script>
+<script src="../js/pipeline-templates.js?v=20261026n"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261026l"></script>
-<script src="../js/ui/router.js?v=20261026l"></script>
-<script src="../js/ui/editor.js?v=20261026l"></script>
-<script src="../js/ui/providers.js?v=20261026l"></script>
+<script src="../js/ui/table.js?v=20261026n"></script>
+<script src="../js/ui/router.js?v=20261026n"></script>
+<script src="../js/ui/editor.js?v=20261026n"></script>
+<script src="../js/ui/providers.js?v=20261026n"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261026l"></script>
-<script src="../js/views/elements.js?v=20261026l"></script>
-<script src="../js/views/items.js?v=20261026l"></script>
-<script src="../js/views/machines.js?v=20261026l"></script>
-<script src="../js/views/recipes.js?v=20261026l"></script>
-<script src="../js/views/techs.js?v=20261026l"></script>
-<script src="../js/views/assets.js?v=20261026l"></script>
-<script src="../js/views/validate.js?v=20261026l"></script>
-<script src="../js/views/balance.js?v=20261026l"></script>
-<script src="../js/views/solve.js?v=20261026l"></script>
-<script src="../js/views/graph.js?v=20261026l"></script>
-<script src="../js/views/sync.js?v=20261026l"></script>
-<script src="../js/views/project.js?v=20261026l"></script>
-<script src="../js/views/pipeline.js?v=20261026l"></script>
-<script src="../js/views/export.js?v=20261026l"></script>
+<script src="../js/views/style.js?v=20261026n"></script>
+<script src="../js/views/elements.js?v=20261026n"></script>
+<script src="../js/views/items.js?v=20261026n"></script>
+<script src="../js/views/machines.js?v=20261026n"></script>
+<script src="../js/views/recipes.js?v=20261026n"></script>
+<script src="../js/views/techs.js?v=20261026n"></script>
+<script src="../js/views/assets.js?v=20261026n"></script>
+<script src="../js/views/validate.js?v=20261026n"></script>
+<script src="../js/views/balance.js?v=20261026n"></script>
+<script src="../js/views/solve.js?v=20261026n"></script>
+<script src="../js/views/graph.js?v=20261026n"></script>
+<script src="../js/views/sync.js?v=20261026n"></script>
+<script src="../js/views/project.js?v=20261026n"></script>
+<script src="../js/views/pipeline.js?v=20261026n"></script>
+<script src="../js/views/export.js?v=20261026n"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261026l"></script>
+<script src="../js/main.js?v=20261026n"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -750,6 +750,36 @@
       } finally {
         window.pipelineSave = savedSave;
         PIPELINE.graph = savedGraph;
+      }
+    });
+
+    check('管线支持多选与框选命中判定', function(){
+      var savedGraph = PIPELINE.graph, savedSelection = PIPELINE.selection, savedSelected = PIPELINE.selected;
+      try {
+        PIPELINE.graph = {nodes:[
+          {id:'a', type:'prompt', params:{}}, {id:'b', type:'prompt', params:{}}, {id:'c', type:'prompt', params:{}}
+        ], edges:[]};
+        pipelineSelect(['a', 'b']);
+        if(PIPELINE.selection.size !== 2) throw new Error('多选未生效');
+        if(PIPELINE.selected !== 'b') throw new Error('主选中项应为最后选中的节点');
+        pipelineToggleSelect('b');
+        if(PIPELINE.selection.has('b') || !PIPELINE.selection.has('a')) throw new Error('切换选中失败');
+        pipelineToggleSelect('c');
+        if(!PIPELINE.selection.has('c') || PIPELINE.selection.size !== 2) throw new Error('追加选中失败');
+        if(!pipelineRectHit({left:0,top:0,right:10,bottom:10}, {left:5,top:5,right:20,bottom:20}))
+          throw new Error('相交矩形未命中');
+        if(pipelineRectHit({left:0,top:0,right:4,bottom:4}, {left:5,top:5,right:9,bottom:9}))
+          throw new Error('相离矩形误判命中');
+        if(!pipelineRectHit({left:0,top:0,right:100,bottom:100}, {left:20,top:20,right:30,bottom:30}))
+          throw new Error('包含关系未命中');
+        pipelineSelect([]);
+        if(PIPELINE.selection.size || PIPELINE.selected !== null) throw new Error('清空选中失败');
+        return '多选 / 切换 / 追加 / 相交判定';
+      } finally {
+        PIPELINE.graph = savedGraph;
+        PIPELINE.selection = savedSelection;
+        PIPELINE.selected = savedSelected;
+        pipelinePaintSelection();
       }
     });
 
