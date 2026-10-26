@@ -147,6 +147,7 @@ machines:[
  {id:'MC_WINDER',name:'绕线车间',tier:3,footprint:'3×3',power:400,cat:'组装',desc:''},
  {id:'MC_CLEANROOM',name:'洁净室',tier:4,footprint:'6×6',power:2000,cat:'组装',desc:''},
  {id:'MC_ORBITAL_DOCK',name:'轨道建造坞',tier:4,footprint:'12×12',power:10000,cat:'组装',desc:'T5 宏构'},
+ {id:'MC_CAR',name:'小汽车',tier:0,footprint:'4×2',power:0,cat:'组装',desc:'低多边形体素载具，图生 3D 与分件流程的示例资产'},
 ],
 
 recipes:[

@@ -288,6 +288,19 @@ const MACHINE_BRIEFS = {
     note: '这是全场最大的建筑——12×12 格，必须能看出"尺度感"，'
         + '桁架要稀疏通透，不要做成实心方块',
   },
+  MC_CAR: {
+    subject: '轮式载具',
+    form: '方正的两厢小型汽车，短前悬、平直车尾，四个车轮对称接地；'
+        + '车身长宽高比例约 4.2 × 1.8 × 1.5 米',
+    parts: ['方正车身', '车顶', '前挡风玻璃', '两侧车窗', '四个轮胎与轮毂',
+            '前保险杠', '后保险杠', '前灯与尾灯', '外后视镜'],
+    palette: '车漆主色 #d5d9dc + 深色玻璃 #3d4a55 + 黑橡胶 #2a2a2a',
+    note: '四个轮子必须清楚可见并接地，轮拱切出方形凹口；'
+        + '前灯与尾灯用不同形状的小面积自发光色块区分车头车尾；'
+        + '不要做成赛车、装甲车或卡车，保持普通民用小型车轮廓',
+    spec: '三角面 900~1600；贴图 512×512（或纯顶点色）；轴心在四轮接地点中心；'
+        + '1 格 = 1 米；车头朝 +X',
+  },
 };
 
 /* ---------- 物品的形态描述 ---------- */
@@ -332,7 +345,7 @@ function machinePrompt(m, opt){
   }
 
   let p = '';
-  p += `【主体】${st.form.body}的工业建筑：${m.name}（${m.cat}类，占地 ${fp} 格）\n`;
+  p += `【主体】${st.form.body}的${brief.subject || '工业建筑'}：${m.name}（${m.cat}类，占地 ${fp} 格）\n`;
   p += `【形态】${form}\n`;
   p += `【必须包含的部件】\n${_joinParts(parts)}\n`;
   p += `【配色】${palette}\n`;
@@ -340,7 +353,7 @@ function machinePrompt(m, opt){
   // 风格约束（精简版，完整版在风格页/导出里）
   p += styleBrief(st, { withNegative:false });
   if(opt.withTech !== false){
-    p += `【技术规格】${st.spec.machine}\n`;
+    p += `【技术规格】${brief.spec || st.spec.machine}\n`;
     p += `【负向】${st.negative.join('、')}\n`;
   }
   return p;
@@ -449,12 +462,33 @@ const CATEGORY_MASSING = {
   ],
 };
 
+// 单个资产的体块覆盖：分类体块描述不出具体物件时按 id 定制
+const MACHINE_MASSING = {
+  MC_CAR: [
+    [-0.325, 0.38, 0.14, 0.14, 0.52, 0.02, 'dark'],
+    [-0.325,-0.38, 0.14, 0.14, 0.52, 0.02, 'dark'],
+    [ 0.325, 0.38, 0.14, 0.14, 0.52, 0.02, 'dark'],
+    [ 0.325,-0.38, 0.14, 0.14, 0.52, 0.02, 'dark'],
+    [0,0, 0.86,0.84, 0.52, 0.34, 'body'],
+    [0.03,0, 0.49,0.75, 0.42, 0.86, 'glass'],
+    [0.03,0, 0.45,0.69, 0.07, 1.28, 'body'],
+    [ 0.44,0, 0.04,0.80, 0.16, 0.36, 'dark'],
+    [-0.44,0, 0.04,0.80, 0.16, 0.36, 'dark'],
+    [ 0.435, 0.27, 0.03,0.20, 0.10, 0.62, 'hot'],
+    [ 0.435,-0.27, 0.03,0.20, 0.10, 0.62, 'hot'],
+    [-0.455, 0.27, 0.03,0.20, 0.10, 0.62, 'hot'],
+    [-0.455,-0.27, 0.03,0.20, 0.10, 0.62, 'hot'],
+  ],
+};
+
 // 分类配色（体块用）—— 保留作为兜底，实际渲染走风格引擎的 stylePalette()
 const MASSING_TONE = {
   base:   {top:'#c9c6bf', left:'#9d9a93', right:'#b5b2ab'},
   body:   {top:'#a8adb5', left:'#7c8188', right:'#9299a1'},
   accent: {top:'#ef9f27', left:'#b8761a', right:'#d68d21'},
   hot:    {top:'#e07b39', left:'#a85626', right:'#c66a30'},
+  dark:   {top:'#5c626b', left:'#34383f', right:'#484e56'},
+  glass:  {top:'#a9c7dc', left:'#6f93aa', right:'#8cb0c6'},
 };
 // 按分类给体块染色（风格引擎不可用时兜底）
 const CATEGORY_TONE = {
@@ -477,19 +511,22 @@ function isoPreview(m, rot, size){
   rot = rot || 0; size = size || 168;
   const fp = String(m.footprint || '1×1').split(/[×xX]/).map(n=>parseFloat(n)||1);
   const W = fp[0], D = fp[1] || fp[0];
-  const blocks = CATEGORY_MASSING[m.cat] || CATEGORY_MASSING['加工'];
+  const blocks = MACHINE_MASSING[m.id] || CATEGORY_MASSING[m.cat] || CATEGORY_MASSING['加工'];
 
   // 配色跟随当前风格（风格引擎没加载时兜底到 CATEGORY_TONE）
-  let accentBase, faceBase, faceBody, faceHot;
+  let accentBase, faceBase, faceBody, faceHot, faceDark, faceGlass;
   if(typeof getStyle === 'function'){
     const st = getStyle();
     accentBase = accentFor(m.cat, st);
     faceBase   = toneFaces(st.palette.structure);
     faceBody   = toneFaces(st.palette.metal);
     faceHot    = toneFaces(st.palette.glow);
+    faceDark   = toneFaces(st.palette.metalDark);
+    faceGlass  = toneFaces(st.palette.glass);
   }else{
     accentBase = CATEGORY_TONE[m.cat] || '#8a97a8';
     faceBase = MASSING_TONE.base; faceBody = MASSING_TONE.body; faceHot = MASSING_TONE.hot;
+    faceDark = MASSING_TONE.dark; faceGlass = MASSING_TONE.glass;
   }
 
   // 视野自适应：格数越大缩放越小
@@ -532,6 +569,8 @@ function isoPreview(m, rot, size){
       ? {top:accentBase, left:shade(accentBase,-28), right:shade(accentBase,-14)}
       : tone==='hot' ? faceHot
       : tone==='base' ? faceBase
+      : tone==='dark' ? faceDark
+      : tone==='glass' ? faceGlass
       : faceBody;
 
     const c = [[-hw,-hd],[hw,-hd],[hw,hd],[-hw,hd]];
