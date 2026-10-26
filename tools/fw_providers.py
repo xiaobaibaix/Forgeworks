@@ -210,6 +210,8 @@ def _check_remote_url(url, label):
 def submit(config, kind, params, prompt='', input_task_id=None, image_data=None, fallback=False):
     params = params if isinstance(params, dict) else {}
     provider = _pick_provider(config, params, fallback)
+    if kind == 'textToImage' and image_data and provider != 'ark':
+        raise ValueError('参考图生图只支持 Ark Provider，请把该节点 Provider 改为 Ark')
     if provider == 'ark':
         return _ark_submit(config, kind, params, prompt, image_data)
     return _tripo_submit(config, kind, params, prompt, input_task_id)
@@ -267,6 +269,8 @@ def _ark_submit(config, kind, params, prompt, image_data):
                 'response_format': 'url',
                 'output_format': _choice_param(params, 'outputFormat', ('png', 'jpeg'), 'png'),
                 'watermark': _bool_param(params, 'watermark', False)}
+        if image_data:
+            body['image'] = image_data
         result = _ark_request(config, '/images/generations', body, timeout=240)
         items = result.get('data')
         if not isinstance(items, list) or not items or not isinstance(items[0], dict):

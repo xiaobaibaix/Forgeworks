@@ -512,7 +512,7 @@ def store_task_output(root, asset_id, kind, node_type, task):
     return task
 
 
-PART_IMAGE_SUFFIX = '【单件】只生成这一个部件；纯色背景、单个物体居中、无其他部件、无地面投影。'
+PART_IMAGE_SUFFIX = '【拆件】以参考图为准，只输出按说明拆分出的这一个部件；保持参考图中的造型、比例、配色与朝向；纯色背景、单个部件居中、无其他部件、无地面投影。'
 
 
 def _part_image_prompt(text):
@@ -538,6 +538,21 @@ def _image_data_url(root, asset_id, kind, image_path):
         return 'data:%s;base64,%s' % (mime, base64.b64encode(raw).decode())
     except (OSError, ValueError, TypeError):
         return None
+
+
+def _part_reference_image(root, asset_id, kind, nodes, incoming):
+    image_edge = next((edge for edge in incoming if edge.get('in') == 'image'), None)
+    if not image_edge:
+        raise ValueError('单件效果图需要整体效果图：请把整体效果图节点连到 image 口')
+    upstream_result = (nodes[image_edge['from']].get('result') or {})
+    # 上游图被改动后会打回 dirty，旧图不能再当拆件参考
+    if upstream_result.get('state') not in ('done', None):
+        raise ValueError('整体效果图尚未生成或已变更：请先运行上游整体效果图节点')
+    upstream_task = upstream_result.get('providerTask') or {}
+    data = _image_data_url(root, asset_id, kind, (upstream_task.get('output') or {}).get('imagePath'))
+    if not data:
+        raise ValueError('整体效果图文件不可用或超过 8 MB，无法作为拆件参考图')
+    return data
 
 
 def ue_project_root():
@@ -1741,9 +1756,10 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                         prompt = prompt or params.get('prompt', '')
                     else:
                         if not prompt:
-                            raise ValueError('单件效果图缺少描述词：请先填写上游描述词节点')
+                            raise ValueError('单件效果图缺少拆件说明：请先填写上游描述词节点')
                         part_name = _part_name_from_prompt(prompt) or str(node_id)
                         prompt = _part_image_prompt(prompt)
+                        image_data = _part_reference_image(fw_dir(), asset_id, kind, nodes, incoming)
                 else:
                     prompt = str(params.get('prompt') or '')
                     image_edge = next((edge for edge in incoming if edge.get('in') == 'image'), None)

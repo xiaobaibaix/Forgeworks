@@ -205,17 +205,17 @@
 
 ### 3.10 分件组装：一部件一链路 + 本地组装
 
-语义是「一个部件 = 一条链」，要加部件就再加一组节点：
+语义是「先生成整体效果图，再按部件拆」，一个部件 = 一条拆件链，要加部件就再加一组节点：
 
 ```
-prompt_A ─► partImage_A ─► partModel_A ─┐
-prompt_B ─► partImage_B ─► partModel_B ─┼─► assemble ◄─ prompt_组装描述
-prompt_C ─► partImage_C ─► partModel_C ─┘        │
-                                                 ▼
+prompt_整体描述 ─► 整体效果图 ─┬─► partImage_A ◄─ prompt_拆件说明A ─► partModel_A ─┐
+                              ├─► partImage_B ◄─ prompt_拆件说明B ─► partModel_B ─┼─► assemble ◄─ prompt_组装描述
+                              └─► partImage_C ◄─ prompt_拆件说明C ─► partModel_C ─┘        │
+                                                                                         ▼
                         styleApply → uv → lod → collision → animation → metadata → validate → export
 ```
 
-- `partImage`（单件效果图）：严格读连到 `text` 口的描述词，追加固定后缀「【单件】只生成这一个部件；纯色背景、单个物体居中、无其他部件、无地面投影」，走 Provider 文生图；首行（去【】、截 32 字）写入 `result.output.partName`。
+- `partImage`（单件效果图）：输入口是 `text` + `image`。`image` 必须来自上游整体效果图（`textToImage`）的成功产物，作为**拆件参考图**；`text` 是拆件说明——告诉 AI 拆哪个位置、怎么拆、遵循什么规范，**不再描述部件长什么样**。Bridge 把参考图转成 data URI 并追加固定后缀「【拆件】以参考图为准，只输出按说明拆分出的这一个部件；保持参考图中的造型、比例、配色与朝向；纯色背景、单个部件居中、无其他部件、无地面投影」。首行（去【】、截 32 字）写入 `result.output.partName`。参考图生图只支持 Ark Provider。
 - `partModel`（单件模型）：读上游 `partImage` 的效果图，走 Provider 图生 3D；`partName` 从上游复制。产物落 `outputs/model_<taskId>.glb`。
 - `assemble`（组装）：`part` 口允许**多条**连线（`MULTI_INPUTS`），`text` 口接一个描述词节点作为组装描述。组装**不调用 Provider**，只调 Blender 移动/缩放/旋转各部件并合并。
 
@@ -568,7 +568,7 @@ graph.json 的状态                      ─▶ manifest.pipeline（§7）
 | textToImage | 远程 | text | image×1~4 | $0.05~0.10 |
 | imageTo3D | 远程 | image×1~4 | mesh | $0.20~0.40 |
 | decimate | Bridge/前端 | mesh | mesh | ✕ |
-| partImage | 远程 | text | image | $0.05~0.10 |
+| partImage | 远程 | text + image（整体效果图） | image | $0.05~0.10 |
 | partModel | 远程 | image | part | $0.20~0.40 |
 | assemble | Bridge | text + part×N | mesh | ✕ |
 | styleApply | 前端 | mesh | mesh | ✕ |

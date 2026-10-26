@@ -1,7 +1,7 @@
 const PIPELINE_TEMPLATES = [
   {id:'machine',label:'机器',kind:'machine',imageCredits:[5,5],modelCredits:[30,30]},
   {id:'item',label:'物品',kind:'item',imageCredits:[5,5],modelCredits:[30,30]},
-  {id:'parts',label:'分件装配',kind:'machine',imageCredits:[10,12],modelCredits:[60,120]},
+  {id:'parts',label:'分件装配',kind:'machine',imageCredits:[15,18],modelCredits:[60,120]},
   {id:'icon',label:'图标',kind:'icon',imageCredits:[5,10],modelCredits:[0,0]},
 ];
 

@@ -25,7 +25,7 @@ const PIPELINE_ZOOM_MAX = 1.8;
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
   decimate:{in:['mesh'],out:['mesh']},
-  partImage:{in:['text'],out:['image']}, partModel:{in:['image'],out:['part']},
+  partImage:{in:['text','image'],out:['image']}, partModel:{in:['image'],out:['part']},
   assemble:{in:['text','part'],out:['mesh']},
   styleApply:{in:['mesh'],out:['mesh']},
   uv:{in:['mesh'],out:['mesh']}, lod:{in:['mesh'],out:['mesh']}, collision:{in:['mesh'],out:['mesh']},
@@ -144,22 +144,27 @@ function pipelineStarterGraph(assetId, template){
     nodes[2].params.texture = false;
   }else if(template === 'parts'){
     nodes = [
-      {id:'prompt_body', type:'prompt', x:60, y:80, params:{text:''}},
-      {id:'partImage_body', type:'partImage', x:300, y:80, params:{provider:'tripo', size:'1K', outputFormat:'png'}},
-      {id:'partModel_body', type:'partModel', x:540, y:80, params:{provider:'tripo', texture:false, faceLimit:3000}},
-      {id:'prompt_roof', type:'prompt', x:60, y:300, params:{text:''}},
-      {id:'partImage_roof', type:'partImage', x:300, y:300, params:{provider:'tripo', size:'1K', outputFormat:'png'}},
-      {id:'partModel_roof', type:'partModel', x:540, y:300, params:{provider:'tripo', texture:false, faceLimit:3000}},
-      {id:'prompt_assemble', type:'prompt', x:60, y:520, params:{text:''}},
-      {id:'assemble', type:'assemble', x:780, y:260, params:{resetLayout:false}},
+      {id:'prompt_overall', type:'prompt', x:60, y:0, params:{text:''}},
+      {id:'overall', type:'textToImage', x:300, y:0, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'prompt_body', type:'prompt', x:60, y:420, params:{text:''}},
+      {id:'partImage_body', type:'partImage', x:540, y:420, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'partModel_body', type:'partModel', x:780, y:420, params:{provider:'ark', texture:false, faceLimit:3000}},
+      {id:'prompt_roof', type:'prompt', x:60, y:840, params:{text:''}},
+      {id:'partImage_roof', type:'partImage', x:540, y:840, params:{provider:'ark', size:'1K', outputFormat:'png'}},
+      {id:'partModel_roof', type:'partModel', x:780, y:840, params:{provider:'ark', texture:false, faceLimit:3000}},
+      {id:'prompt_assemble', type:'prompt', x:60, y:1260, params:{text:''}},
+      {id:'assemble', type:'assemble', x:1020, y:840, params:{resetLayout:false}},
     ];
     [['style','styleApply',{}],['uv','uv',{mode:'primitive'}],['lod','lod',{levels:3}],
      ['collision','collision',{type:'box'}],['animation','animation',{mode:'ue-rebuild'}],
      ['metadata','metadata',{formats:['csv','json']}],['validate','validate',{maxTriangles:20000}],
      ['export','export',{}]].forEach(([id,type,params],index)=>{
-      nodes.push({id, type, x:1020 + index * 240, y:260, params});
+      nodes.push({id, type, x:1260 + index * 240, y:840, params});
     });
     edges = [
+      {from:'prompt_overall', out:'text', to:'overall', in:'text'},
+      {from:'overall', out:'image', to:'partImage_body', in:'image'},
+      {from:'overall', out:'image', to:'partImage_roof', in:'image'},
       {from:'prompt_body', out:'text', to:'partImage_body', in:'text'},
       {from:'partImage_body', out:'image', to:'partModel_body', in:'image'},
       {from:'prompt_roof', out:'text', to:'partImage_roof', in:'text'},
@@ -353,7 +358,7 @@ function pipelineAddNode(type, x, y){
   const card = canvas.lastElementChild;
   document.querySelectorAll('.pipeline-node').forEach(item=>item.classList.toggle('selected', item.dataset.node === id));
   canvas.style.width = Math.max(parseFloat(canvas.style.width) || 1700, nodeX + 260) + 'px';
-  canvas.style.height = Math.max(parseFloat(canvas.style.height) || 650, nodeY + 210) + 'px';
+  canvas.style.height = Math.max(parseFloat(canvas.style.height) || 650, nodeY + 420) + 'px';
   pipelineWireCard(card);
   pipelineApplyZoom();
   pipelineSave({quiet:true}).catch(error => toast(error.message));
@@ -1351,7 +1356,7 @@ function pipelineParamForm(node){
       ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
       ${pipelineParamText(node, 'size', '分辨率', '1K / 1.5K / 2K')}
       ${pipelineParamSelect(node, 'outputFormat', '格式', [{value:'png',label:'PNG'},{value:'jpeg',label:'JPEG'}], 'png')}
-      <small class="pipeline-params-hint">读取上游描述词，只生成这一个部件的单件效果图（纯色背景、单物体居中）。</small>
+      <small class="pipeline-params-hint">上游描述词是拆件说明（拆哪个部件、怎么拆、遵循什么规范），由它配合整体效果图拆出单件图；需 Ark Provider。</small>
     </div>`;
   }
   if(node.type === 'partModel'){
@@ -1402,8 +1407,11 @@ function pipelineNodeCard(node){
   const appliedWhen = appliedDate && Number.isFinite(appliedDate.getTime())
     ? appliedDate.toLocaleString('zh-CN') : '';
   const progress = task && task.progress;
+  const promptHint = PIPELINE.graph.template === 'parts'
+    ? (node.id === 'prompt_overall' ? '整体效果描述词' : '拆件说明：拆哪个部件、怎么拆、遵循什么规范')
+    : '输入模型描述词';
   const params = node.type === 'prompt'
-    ? `<textarea data-param="text" rows="3" placeholder="输入模型描述词">${pipelineEscape(node.params.text || '')}</textarea>`
+    ? `<textarea data-param="text" rows="3" placeholder="${promptHint}">${pipelineEscape(node.params.text || '')}</textarea>`
     : pipelineParamForm(node);
   const taskOutput=applyTask&&applyTask.output||node.result&&node.result.output||{};
   const outputFile=taskOutput.modelPath||taskOutput.meshPath||taskOutput.imagePath;
@@ -1508,7 +1516,7 @@ function renderPipelineView(){
     </div>
   </div>
   <div class="pipeline-shell"><aside class="pipeline-palette"><b>节点</b>${Object.entries(PIPELINE_NODE_LABELS).map(([type,label])=>`<button data-add="${type}">${label}</button>`).join('')}</aside>
-  <div class="pipeline-scroll"><div class="pipeline-canvas" style="width:${Math.max(1700,...PIPELINE.graph.nodes.map(node=>(Number(node.x)||0)+260))}px;height:${Math.max(650,...PIPELINE.graph.nodes.map(node=>(Number(node.y)||0)+210))}px"><svg>${edgeSvg}</svg>${PIPELINE.graph.nodes.map(pipelineNodeCard).join('')}</div></div></div>
+  <div class="pipeline-scroll"><div class="pipeline-canvas" style="width:${Math.max(1700,...PIPELINE.graph.nodes.map(node=>(Number(node.x)||0)+260))}px;height:${Math.max(650,...PIPELINE.graph.nodes.map(node=>(Number(node.y)||0)+420))}px"><svg>${edgeSvg}</svg>${PIPELINE.graph.nodes.map(pipelineNodeCard).join('')}</div></div></div>
   <div class="card"><b>${pipelineEscape(selected&&selected.name||PIPELINE.assetId)}</b><span id="pipelineMeta"></span>
   <div style="font-family:var(--mono);font-size:10.5px;color:var(--text-3);margin-top:4px">项目：${pipelineEscape(bridgeReady&&SYNC.status.project.root ? SYNC.status.project.root : '未打开（浏览器本地）')}</div>
   <div class="pipeline-ports-hint">拖动节点两侧圆点连线：左侧输入端口各保留一条连线（新连线替换旧的），右侧输出可同时接多个下游；拖动中按 Esc 取消。滚轮缩放，按住右键拖动平移，工具条上的百分比按钮复位视角。</div>

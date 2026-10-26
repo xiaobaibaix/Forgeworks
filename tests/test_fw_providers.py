@@ -64,6 +64,23 @@ class ArkSubmitTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             fw_providers.submit(ARK_CONFIG, 'imageTo3D', {'provider': 'ark'}, '', None, None)
 
+    def test_image_submit_forwards_reference_image(self):
+        def fake(config, path, payload=None, timeout=60):
+            self.calls.append((path, payload))
+            return {'data': [{'url': IMAGE_URL}]}
+        fw_providers._ark_request = fake
+
+        fw_providers.submit(ARK_CONFIG, 'textToImage', {'provider': 'ark'}, '【车身】拆件',
+                            None, 'data:image/png;base64,AAAA')
+
+        self.assertEqual(self.calls[0][1]['image'], 'data:image/png;base64,AAAA')
+
+    def test_reference_image_requires_ark_provider(self):
+        config = {'providers': {'tripo': {'api_key': 't'}}}
+        with self.assertRaises(ValueError):
+            fw_providers.submit(config, 'textToImage', {'provider': 'tripo'}, '【车身】拆件',
+                                None, 'data:image/png;base64,AAAA')
+
 
 class ArkPollTest(unittest.TestCase):
     def setUp(self):

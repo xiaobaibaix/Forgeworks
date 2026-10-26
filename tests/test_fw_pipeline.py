@@ -349,6 +349,23 @@ class PipelinePartsTest(unittest.TestCase):
         assemble_inputs = [edge['in'] for edge in graph['edges'] if edge['to'] == 'assemble']
         self.assertEqual(sorted(assemble_inputs), ['part', 'part', 'text'])
 
+    def test_parts_template_splits_parts_from_overall_image(self):
+        graph = fw_pipeline.starter_graph('M1', 'parts')
+        by_id = {node['id']: node for node in graph['nodes']}
+        self.assertEqual(by_id['overall']['type'], 'textToImage')
+        self.assertEqual(by_id['overall']['params']['provider'], 'ark')
+        for part in ('body', 'roof'):
+            self.assertEqual(by_id['partImage_' + part]['params']['provider'], 'ark')
+            self.assertEqual(by_id['partModel_' + part]['params']['provider'], 'ark')
+        edges = {(edge['from'], edge['out'], edge['to'], edge['in']) for edge in graph['edges']}
+        self.assertIn(('prompt_overall', 'text', 'overall', 'text'), edges)
+        for part in ('body', 'roof'):
+            self.assertIn(('overall', 'image', 'partImage_' + part, 'image'), edges)
+
+    def test_part_image_accepts_text_and_image_inputs(self):
+        self.assertEqual(fw_pipeline.NODE_TYPES['partImage']['in'],
+                         {'text': 'text', 'image': 'image'})
+
     def test_multi_input_port_accepts_several_sources(self):
         fw_pipeline.validate_graph(_assemble_graph())
 

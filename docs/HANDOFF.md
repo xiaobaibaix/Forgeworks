@@ -655,11 +655,12 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 ## 21. 分件组装：一部件一链路 + 本地 Blender 组装（2026-10-26）
 
-- **语义**：一个部件 = 描述词 → `partImage`（单件效果图）→ `partModel`（单件模型）；加部件就再加一组节点。多个 `partModel` 的 `part` 口汇入同一个 `assemble`，`assemble` 的 `text` 口接一个描述词节点作为「组装描述词」。
+- **语义**：整体描述 → 整体效果图 → 按部件拆件。一个部件 = 拆件说明 → `partImage`（单件效果图）→ `partModel`（单件模型）；加部件就再加一组节点。多个 `partModel` 的 `part` 口汇入同一个 `assemble`，`assemble` 的 `text` 口接一个描述词节点作为「组装描述词」。
+- **整体效果图**：`partImage` 输入口为 `text` + `image`；`image` 必须连上游 `textToImage`（整体效果图）的成功产物，Bridge 读取 `providerTask.output.imagePath` 转 data URI 作为拆件参考图。`text` 是拆件说明（拆哪个部件、怎么拆、遵循什么规范），不再描述部件外观；首行去【】截 32 字作为 `partName`。缺参考图或上游未生成/已变更会直接报错。参考图生图只支持 Ark Provider。
 - **组装不再生成模型**：`assemble` 只调 Blender 按布局移动/缩放/旋转各部件并合并成 `outputs/model_assembly_<节点>.glb`，并写同名 `.report.json`。缺任一部件模型、缺 Blender 都会标 blocked 并列出具体节点。
 - **布局文件** `parts/layout_<节点>.json`（schemaVersion 1）：`assemblyPrompt` + `parts[]{id,name,mesh(相对管线根),description,sourceBbox,scale,translate,rotationZ,ground}`。首次运行自动生成（沿 X 并排、间距 0.02、底面贴地），保存后 AI 可直接改数值，重跑即生效；`ground: true` 时 `translate.z` 按 `-sourceBbox.min.z × scale` 重算。
 - **对账**：按 `mesh` 匹配已有布局，新部件自动补位、移除的部件丢弃并产生警告；节点参数 `resetLayout` 勾选则丢弃旧布局重算。
-- **Provider**：`pipeline/provider/submit|poll` 统一支持 `textToImage/imageTo3D/partImage/partModel`，不再有 `partId` 与逐件任务流。`partImage` 的提示词 = 上游描述词 + 固定单件后缀，首行去【】截 32 字写入 `result.output.partName`；`partModel` 复用 `imageTo3D` 的输入图解析并复制 `partName`。
+- **Provider**：`pipeline/provider/submit|poll` 统一支持 `textToImage/imageTo3D/partImage/partModel`，不再有 `partId` 与逐件任务流。`partImage` 的提示词 = 拆件说明 + 固定拆件后缀，并携带整体效果图作为 `image` 参考；`partModel` 复用 `imageTo3D` 的输入图解析并复制 `partName`。`fw_providers.submit` 在存在参考图且 Provider 非 Ark 时直接报错。
 - **已删除**：`partSpec` 节点、`contract` 端口、`parts/partspec.json`、粗切 bootstrap、逐件进度/重试 UI 与相关 Bridge 辅助函数。旧图会因未知节点/端口被拒，需要按新模板重建。
 - **入口**：`python3 tools/fw_parts.py assemble --layout <layout.json> --root <pipeline 目录> --out <assembly.glb>`；库函数 `measure_parts / auto_layout / load_layout / save_layout / resolve_layout_mesh / assemble_parts`。
-- **验证**：`tests/test_fw_parts.py` 29 项（布局校验、越界拒绝、自动布局、对账、ground 重算，Blender 全部 mock）；`tests/test_fw_pipeline.py` 覆盖多输入校验、重复边拒绝、新模板结构、组装三种状态；`tests/test_bridge_providers.py` 覆盖单件提示词/命名/落盘与无 `partId` 回归；`tests/smoke.html` 覆盖新标签、多部件汇入、单输入替换与组装应用映射。
+- **验证**：`tests/test_fw_parts.py` 29 项（布局校验、越界拒绝、自动布局、对账、ground 重算，Blender 全部 mock）；`tests/test_fw_pipeline.py` 覆盖多输入校验、重复边拒绝、新模板结构、组装三种状态；`tests/test_bridge_providers.py` 覆盖单件提示词/命名/落盘、整体参考图解析（缺失/未生成/已变更）与无 `partId` 回归；`tests/test_fw_providers.py` 覆盖参考图下发与 Tripo 拒绝；`tests/smoke.html` 覆盖整体图链路、新标签、多部件汇入、单输入替换与组装应用映射。

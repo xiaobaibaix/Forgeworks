@@ -242,6 +242,29 @@ class PipelinePartNodeTest(unittest.TestCase):
         self.assertTrue(data.startswith('data:image/png;base64,'))
         self.assertIsNone(bridge._image_data_url(self.root, 'Fe', 'element', None))
 
+    def _reference(self, state='done', image='outputs/image_overall.png'):
+        nodes = {'overall': {'id': 'overall', 'type': 'textToImage',
+                             'result': {'state': state,
+                                        'providerTask': {'output': {'imagePath': image}}}}}
+        edges = [{'from': 'overall', 'out': 'image', 'to': 'partImage_body', 'in': 'image'}]
+        return nodes, edges
+
+    def test_part_reference_image_requires_image_edge(self):
+        with self.assertRaises(ValueError):
+            bridge._part_reference_image(self.root, 'Fe', 'element', {}, [])
+
+    def test_part_reference_image_rejects_stale_or_unrun_upstream(self):
+        for state in ('dirty', 'queued', 'failed'):
+            nodes, edges = self._reference(state=state)
+            with self.assertRaises(ValueError):
+                bridge._part_reference_image(self.root, 'Fe', 'element', nodes, edges)
+
+    def test_part_reference_image_builds_data_uri(self):
+        (self.outputs / 'image_overall.png').write_bytes(b'png')
+        nodes, edges = self._reference()
+        data = bridge._part_reference_image(self.root, 'Fe', 'element', nodes, edges)
+        self.assertTrue(data.startswith('data:image/png;base64,'))
+
     def test_no_part_id_remains_in_provider_routes(self):
         source = Path(bridge.__file__).read_text(encoding='utf-8')
         self.assertNotIn('partId', source)

@@ -24,7 +24,7 @@ NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
     'textToImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
-    'partImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
+    'partImage': {'in': {'text': 'text', 'image': 'image'}, 'out': {'image': 'image'}},
     'partModel': {'in': {'image': 'image'}, 'out': {'part': 'part'}},
     'assemble': {'in': {'text': 'text', 'part': 'part'}, 'out': {'mesh': 'mesh'}},
     'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
@@ -549,18 +549,22 @@ def starter_graph(asset_id, template='machine'):
              {'from': 'metadata', 'out': 'mesh', 'to': 'export', 'in': 'mesh'}]
     if template == 'parts':
         nodes = [
-            {'id': 'prompt_body', 'type': 'prompt', 'x': 60, 'y': 80, 'params': {'text': ''}},
-            {'id': 'partImage_body', 'type': 'partImage', 'x': 300, 'y': 80,
-             'params': {'provider': 'tripo', 'size': '1K', 'outputFormat': 'png'}},
-            {'id': 'partModel_body', 'type': 'partModel', 'x': 540, 'y': 80,
-             'params': {'provider': 'tripo', 'texture': False, 'faceLimit': 3000}},
-            {'id': 'prompt_roof', 'type': 'prompt', 'x': 60, 'y': 300, 'params': {'text': ''}},
-            {'id': 'partImage_roof', 'type': 'partImage', 'x': 300, 'y': 300,
-             'params': {'provider': 'tripo', 'size': '1K', 'outputFormat': 'png'}},
-            {'id': 'partModel_roof', 'type': 'partModel', 'x': 540, 'y': 300,
-             'params': {'provider': 'tripo', 'texture': False, 'faceLimit': 3000}},
-            {'id': 'prompt_assemble', 'type': 'prompt', 'x': 60, 'y': 520, 'params': {'text': ''}},
-            {'id': 'assemble', 'type': 'assemble', 'x': 780, 'y': 260, 'params': {'resetLayout': False}},
+            {'id': 'prompt_overall', 'type': 'prompt', 'x': 60, 'y': 0, 'params': {'text': ''}},
+            {'id': 'overall', 'type': 'textToImage', 'x': 300, 'y': 0,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'prompt_body', 'type': 'prompt', 'x': 60, 'y': 420, 'params': {'text': ''}},
+            {'id': 'partImage_body', 'type': 'partImage', 'x': 540, 'y': 420,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_body', 'type': 'partModel', 'x': 780, 'y': 420,
+             'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_roof', 'type': 'prompt', 'x': 60, 'y': 840, 'params': {'text': ''}},
+            {'id': 'partImage_roof', 'type': 'partImage', 'x': 540, 'y': 840,
+             'params': {'provider': 'ark', 'size': '1K', 'outputFormat': 'png'}},
+            {'id': 'partModel_roof', 'type': 'partModel', 'x': 780, 'y': 840,
+             'params': {'provider': 'ark', 'texture': False, 'faceLimit': 3000}},
+            {'id': 'prompt_assemble', 'type': 'prompt', 'x': 60, 'y': 1260, 'params': {'text': ''}},
+            {'id': 'assemble', 'type': 'assemble', 'x': 1020, 'y': 840,
+             'params': {'resetLayout': False}},
         ]
         for index, (node_id, node_type, params) in enumerate([
                 ('style', 'styleApply', {'mode': 'primitive'}),
@@ -571,9 +575,12 @@ def starter_graph(asset_id, template='machine'):
                 ('metadata', 'metadata', {'formats': ['csv', 'json']}),
                 ('validate', 'validate', {'maxTriangles': 20000}),
                 ('export', 'export', {})]):
-            nodes.append({'id': node_id, 'type': node_type, 'x': 1020 + index * 240, 'y': 260,
+            nodes.append({'id': node_id, 'type': node_type, 'x': 1260 + index * 240, 'y': 840,
                           'params': params})
         edges = [
+            {'from': 'prompt_overall', 'out': 'text', 'to': 'overall', 'in': 'text'},
+            {'from': 'overall', 'out': 'image', 'to': 'partImage_body', 'in': 'image'},
+            {'from': 'overall', 'out': 'image', 'to': 'partImage_roof', 'in': 'image'},
             {'from': 'prompt_body', 'out': 'text', 'to': 'partImage_body', 'in': 'text'},
             {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
             {'from': 'partModel_body', 'out': 'part', 'to': 'assemble', 'in': 'part'},
