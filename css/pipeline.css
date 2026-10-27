@@ -69,7 +69,7 @@
 .pipeline-node small{display:block;margin:5px 0;color:var(--text-3);font-family:var(--mono);font-size:10px}
 .pipeline-node textarea,.pipeline-node input{width:100%;box-sizing:border-box;margin:4px 0}
 .pipeline-node textarea{font-size:10.5px}
-.pipeline-node-actions,.pipeline-ports{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+.pipeline-node-actions{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
 .pipeline-node-actions button{font-size:10px;padding:4px 7px;box-shadow:none}
 .pipeline-port{position:absolute;width:12px;height:12px;box-sizing:border-box;border-radius:50%;
   background:var(--panel);border:2px solid var(--accent);cursor:crosshair;z-index:2;
@@ -142,6 +142,13 @@
 .pipeline-edge-list span{padding:4px 7px;border-radius:5px;background:var(--panel-2);
   border:1px solid var(--border);font-family:var(--mono)}
 .pipeline-edge-list button{padding:2px 6px;font-size:9px;box-shadow:none;margin-left:4px}
+
+.pipeline-spec,.pipeline-fit,.pipeline-ports{margin-top:8px;font-size:12px;opacity:.85}
+.pipeline-spec summary{cursor:pointer}
+.pipeline-spec ul{margin:6px 0;padding-left:18px}
+.pipeline-spec pre{max-height:180px;overflow:auto;font-size:11px;white-space:pre-wrap}
+.pipeline-ports{display:flex;flex-wrap:wrap;gap:6px}
+.pipeline-ports span{border:1px solid currentColor;border-radius:999px;padding:1px 8px;opacity:.8}
 
 @media(max-width:900px){
   .pipeline-shell{min-height:500px}

@@ -10,6 +10,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import fw_pipeline
+import fw_spec
 
 
 class PipelineGraphTest(unittest.TestCase):
@@ -410,7 +411,7 @@ class PipelinePartsTest(unittest.TestCase):
 
     def test_part_image_accepts_text_and_image_inputs(self):
         self.assertEqual(fw_pipeline.NODE_TYPES['partImage']['in'],
-                         {'text': 'text', 'image': 'image'})
+                         {'text': 'text', 'image': 'image', 'spec': 'spec'})
 
     def test_multi_input_port_accepts_several_sources(self):
         fw_pipeline.validate_graph(_assemble_graph())
@@ -753,6 +754,399 @@ class PipelineConcurrencyTest(unittest.TestCase):
             saved['revision'] = 0
             again = fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
             self.assertGreater(again['revision'], first_revision)
+
+
+class SpecPipelineTest(unittest.TestCase):
+    def test_node_types_include_p1_ports(self):
+        self.assertEqual(fw_pipeline.NODE_TYPES['blueprint']['out']['spec'], 'spec')
+        self.assertEqual(fw_pipeline.NODE_TYPES['partImage']['in']['spec'], 'spec')
+        self.assertEqual(fw_pipeline.NODE_TYPES['partImage']['out']['ports'], 'ports')
+        self.assertEqual(fw_pipeline.NODE_TYPES['partModel']['in']['ports'], 'ports')
+        self.assertEqual(fw_pipeline.NODE_TYPES['partModel']['out']['assembly'], 'assembly')
+        self.assertIn('blueprint', fw_pipeline.PROVIDER_TYPES)
+
+    def test_validate_graph_accepts_spec_and_ports_edges(self):
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {}},
+                {'id': 'partImage_body', 'type': 'partImage', 'params': {}},
+                {'id': 'partModel_body', 'type': 'partModel', 'params': {}},
+            ],
+            'edges': [
+                {'from': 'blueprint', 'out': 'spec', 'to': 'partImage_body', 'in': 'spec'},
+                {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
+                {'from': 'partImage_body', 'out': 'ports', 'to': 'partModel_body', 'in': 'ports'},
+                {'from': 'blueprint', 'out': 'spec', 'to': 'partModel_body', 'in': 'spec'},
+            ],
+        }
+        fw_pipeline.validate_graph(graph)
+        graph['edges'].append({'from': 'blueprint', 'out': 'spec',
+                               'to': 'partModel_body', 'in': 'mesh'})
+        with self.assertRaises(ValueError):
+            fw_pipeline.validate_graph(graph)
+
+    def test_spec_for_node_reads_upstream_output_and_spec_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = fw_spec.template_spec('M1')
+            path = Path(fw_pipeline.pipeline_root(directory, 'M1')) / 'spec.json'
+            fw_spec.write_spec(str(path), spec)
+            graph = {
+                'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+                'nodes': [
+                    {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                     'result': {'state': 'done', 'output': {'specPath': 'spec.json', 'spec': spec}}},
+                    {'id': 'partModel_body', 'type': 'partModel', 'params': {}},
+                ],
+                'edges': [{'from': 'blueprint', 'out': 'spec',
+                           'to': 'partModel_body', 'in': 'spec'}],
+            }
+            by_id, _ = fw_pipeline.validate_graph(graph)
+            loaded = fw_pipeline.spec_for_node(directory, 'M1', 'machine', graph, by_id,
+                                               'partModel_body')
+            self.assertEqual(loaded['parts']['body']['role'], 'body')
+            self.assertEqual(fw_pipeline.part_role_for_node(graph, by_id, 'partModel_body'), 'body')
+
+    def test_spec_for_node_falls_back_to_spec_file_when_upstream_not_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = fw_spec.template_spec('M1')
+            path = Path(fw_pipeline.pipeline_root(directory, 'M1')) / 'spec.json'
+            fw_spec.write_spec(str(path), spec)
+            for result in (None, {'state': None}):
+                blueprint = {'id': 'blueprint', 'type': 'blueprint', 'params': {}}
+                if result is not None:
+                    blueprint['result'] = result
+                graph = {
+                    'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+                    'nodes': [
+                        blueprint,
+                        {'id': 'partModel_body', 'type': 'partModel', 'params': {}},
+                    ],
+                    'edges': [{'from': 'blueprint', 'out': 'spec',
+                               'to': 'partModel_body', 'in': 'spec'}],
+                }
+                by_id, _ = fw_pipeline.validate_graph(graph)
+                loaded = fw_pipeline.spec_for_node(directory, 'M1', 'machine', graph,
+                                                   by_id, 'partModel_body')
+                self.assertEqual(loaded['assetId'], 'M1')
+
+    def test_spec_for_node_rejects_spec_path_outside_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = fw_spec.template_spec('M1')
+            path = Path(fw_pipeline.pipeline_root(directory, 'M1')) / 'spec.json'
+            fw_spec.write_spec(str(path), spec)
+            (Path(directory) / 'secret.json').write_text(json.dumps(spec), encoding='utf-8')
+            for spec_path in ('../../../../secret.json', '../../etc/passwd'):
+                graph = {
+                    'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+                    'nodes': [
+                        {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                         'result': {'state': 'done', 'output': {'specPath': spec_path}}},
+                        {'id': 'partModel_body', 'type': 'partModel', 'params': {}},
+                    ],
+                    'edges': [{'from': 'blueprint', 'out': 'spec',
+                               'to': 'partModel_body', 'in': 'spec'}],
+                }
+                by_id, _ = fw_pipeline.validate_graph(graph)
+                with self.assertRaisesRegex(ValueError, '^SPEC_(MISSING|INVALID)'):
+                    fw_pipeline.spec_for_node(directory, 'M1', 'machine', graph, by_id,
+                                              'partModel_body')
+
+    def test_spec_for_node_rejects_stale_spec_when_upstream_dirty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec = fw_spec.template_spec('M1')
+            path = Path(fw_pipeline.pipeline_root(directory, 'M1')) / 'spec.json'
+            fw_spec.write_spec(str(path), spec)
+            for state in ('dirty', 'blocked', 'error'):
+                graph = {
+                    'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+                    'nodes': [
+                        {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                         'result': {'state': state, 'output': {'specPath': 'spec.json'}}},
+                        {'id': 'partModel_body', 'type': 'partModel', 'params': {}},
+                    ],
+                    'edges': [{'from': 'blueprint', 'out': 'spec',
+                               'to': 'partModel_body', 'in': 'spec'}],
+                }
+                by_id, _ = fw_pipeline.validate_graph(graph)
+                with self.assertRaisesRegex(ValueError, '^SPEC_MISSING'):
+                    fw_pipeline.spec_for_node(directory, 'M1', 'machine', graph, by_id,
+                                              'partModel_body')
+                graph['nodes'][0]['result']['output']['spec'] = spec
+                with self.assertRaisesRegex(ValueError, '^SPEC_MISSING'):
+                    fw_pipeline.spec_for_node(directory, 'M1', 'machine', graph, by_id,
+                                              'partModel_body')
+                graph['nodes'][0]['result']['state'] = 'done'
+                self.assertEqual(fw_pipeline.spec_for_node(directory, 'M1', 'machine', graph,
+                                                           by_id, 'partModel_body')['assetId'], 'M1')
+
+    def test_ports_for_node_prefers_ports_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            graph = {
+                'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+                'nodes': [
+                    {'id': 'partImage_body', 'type': 'partImage', 'params': {},
+                     'result': {'state': 'done', 'output': {'ports': [{'id': 'p'}]}}},
+                    {'id': 'partModel_body', 'type': 'partModel', 'params': {}},
+                ],
+                'edges': [{'from': 'partImage_body', 'out': 'ports',
+                           'to': 'partModel_body', 'in': 'ports'}],
+            }
+            by_id, _ = fw_pipeline.validate_graph(graph)
+            self.assertEqual(fw_pipeline.ports_for_node(directory, 'M1', 'machine', graph,
+                                                        by_id, 'partModel_body'),
+                             [{'id': 'p'}])
+
+
+class SpecExecutionTest(unittest.TestCase):
+    def _graph(self, spec):
+        return {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {'overallLengthM': 7.2},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'spec_1', 'state': 'success',
+                     'output': {'spec': spec, 'specPath': 'spec.json'}}}},
+                {'id': 'overall', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/overall.png'}}}},
+                {'id': 'partImage_body', 'type': 'partImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_body', 'state': 'success',
+                     'output': {'imagePath': 'outputs/body.png'}},
+                     'output': {'partName': '车身'}}},
+                {'id': 'partModel_body', 'type': 'partModel', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'model_body', 'state': 'success',
+                     'output': {'modelPath': 'outputs/model_body.glb'}}}},
+            ],
+            'edges': [
+                {'from': 'blueprint', 'out': 'spec', 'to': 'partImage_body', 'in': 'spec'},
+                {'from': 'overall', 'out': 'image', 'to': 'partImage_body', 'in': 'image'},
+                {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
+                {'from': 'partImage_body', 'out': 'ports', 'to': 'partModel_body', 'in': 'ports'},
+                {'from': 'blueprint', 'out': 'spec', 'to': 'partModel_body', 'in': 'spec'},
+            ],
+        }
+
+    def _fake_fit_report(self):
+        return {
+            'valid': True,
+            'fit': {'mode': 'uniform', 'scale': 1.0, 'scalePerAxis': [1.0, 1.0, 1.0],
+                    'aspectError': 0.02, 'rotationDeg': [0, 0, 0], 'grounded': False,
+                    'ambiguous': False,
+                    'measuredBbox': {'min': [-2.1, -0.8, -0.7], 'max': [2.1, 0.8, 0.7]}},
+            'ports': [{'id': 'boom_base', 'type': 'pin', 'anchorNorm': [0.62, 0.5, 0.7],
+                       'pos': [0.504, 0.0, 0.28], 'axis': [1, 0, 0],
+                       'normal': [0, 0, 1], 'radiusM': 0.08}],
+            'triangles': 1200,
+        }
+
+    def _prepare(self, directory, spec):
+        saved = fw_pipeline.save_graph(directory, 'M1', self._graph(spec), kind='machine')
+        # 首次保存会把未签名结果打回 dirty；二次保存保留已执行状态，贴近真实运行后的图
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+        outputs = Path(fw_pipeline.pipeline_root(directory, 'M1')) / 'outputs'
+        outputs.mkdir(parents=True, exist_ok=True)
+        (outputs / 'model_body.glb').write_bytes(b'glb')
+        return outputs
+
+    def test_blueprint_output_is_copied_to_node_result(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, spec)
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            blueprint = next(node for node in result['graph']['nodes']
+                             if node['id'] == 'blueprint')
+            self.assertEqual(blueprint['result']['output']['spec']['assetId'], 'M1')
+
+    def test_part_image_gets_role_and_anchor_ports_from_spec(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, spec)
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            part_image = next(node for node in result['graph']['nodes']
+                              if node['id'] == 'partImage_body')
+            self.assertEqual(part_image['result']['output']['role'], 'body')
+            self.assertEqual(part_image['result']['output']['ports'][0]['id'], 'boom_base')
+            self.assertNotIn('pos', part_image['result']['output']['ports'][0])
+
+    def test_part_model_fit_writes_ports_assembly_and_report(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, spec)
+            with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                   return_value=self._fake_fit_report()):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                   blender_path='blender')
+            node = next(node for node in result['graph']['nodes']
+                        if node['id'] == 'partModel_body')
+            output = node['result']['output']
+            self.assertEqual(node['result']['state'], 'done')
+            self.assertEqual(output['role'], 'body')
+            self.assertAlmostEqual(output['fit']['scale'], 1.0)
+            self.assertEqual(output['assembly']['assemblyId'], 'asm_partModel_body')
+            self.assertEqual(output['assembly']['connectors'][0]['id'], 'body:boom_base')
+            self.assertEqual(output['assembly']['parts'][0]['role'], 'body')
+
+    def test_part_model_fit_is_cached_by_task_and_spec_hash(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = self._prepare(directory, spec)
+            with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                   return_value=self._fake_fit_report()) as fit:
+                first = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                  blender_path='blender')
+                fw_pipeline.save_graph(directory, 'M1', first['graph'], kind='machine')
+                (outputs / 'model_fit_partModel_body.glb').write_bytes(b'glb')
+                fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                          blender_path='blender')
+            self.assertEqual(fit.call_count, 1)
+
+    def test_part_model_fit_failure_blocks_node_with_error_code(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, spec)
+            with mock.patch.object(
+                    fw_pipeline, '_fit_with_blender',
+                    return_value={'valid': False, 'errors': ['boom']}):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                   blender_path='blender')
+            node = next(node for node in result['graph']['nodes']
+                        if node['id'] == 'partModel_body')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertTrue(node['result']['error'].startswith('FIT_ASPECT_MISMATCH'))
+
+    def test_part_model_malformed_report_blocks_instead_of_raising(self):
+        spec = fw_spec.template_spec('M1')
+        cases = [
+            ('non-numeric aspect', {'valid': True, 'fit': {'aspectError': 'nope'},
+                                    'ports': 'bad'}),
+            ('scalar pos', {'valid': True, 'fit': {'aspectError': 0.02},
+                            'ports': [{'pos': 5, 'axis': [1, 0, 0],
+                                       'normal': [0, 0, 1]}]}),
+            ('short axis', {'valid': True, 'fit': {'aspectError': 0.02},
+                            'ports': [{'pos': [0, 0, 0], 'axis': [1, 0],
+                                       'normal': [0, 0, 1]}]}),
+            ('string radius', {'valid': True, 'fit': {'aspectError': 0.02},
+                               'ports': [{'pos': [0, 0, 0], 'axis': [1, 0, 0],
+                                          'normal': [0, 0, 1], 'radiusM': 'x'}]}),
+            ('overflow pos', {'valid': True, 'fit': {'aspectError': 0.02},
+                              'ports': [{'pos': [10 ** 400, 0, 0], 'axis': [1, 0, 0],
+                                         'normal': [0, 0, 1]}]}),
+            ('overflow aspect', {'valid': True, 'fit': {'aspectError': 10 ** 400},
+                                 'ports': []}),
+        ]
+        for label, report in cases:
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as directory:
+                    self._prepare(directory, spec)
+                    with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                           return_value=report):
+                        result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                           blender_path='blender')
+                    node = next(node for node in result['graph']['nodes']
+                                if node['id'] == 'partModel_body')
+                    self.assertEqual(node['result']['state'], 'blocked')
+                    self.assertTrue(
+                        node['result']['error'].startswith('FIT_ASPECT_MISMATCH'))
+
+    def test_part_model_missing_port_vector_blocks_instead_of_raising(self):
+        spec = fw_spec.template_spec('M1')
+        cases = [
+            ('missing pos', {'axis': [1, 0, 0], 'normal': [0, 0, 1]}),
+            ('null normal', {'pos': [0, 0, 0], 'axis': [1, 0, 0], 'normal': None}),
+        ]
+        for label, port in cases:
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as directory:
+                    self._prepare(directory, spec)
+                    report = {'valid': True, 'fit': {'aspectError': 0.02},
+                              'ports': [port]}
+                    with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                           return_value=report):
+                        result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                           blender_path='blender')
+                    node = next(node for node in result['graph']['nodes']
+                                if node['id'] == 'partModel_body')
+                    self.assertEqual(node['result']['state'], 'blocked')
+                    self.assertTrue(
+                        node['result']['error'].startswith('FIT_ASPECT_MISMATCH'))
+
+    def test_part_model_passes_metric_ports_to_blender(self):
+        spec = fw_spec.template_spec('M1')
+        plans = []
+
+        def capture(_blender_path, plan):
+            plans.append(plan)
+            return self._fake_fit_report()
+
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, spec)
+            with mock.patch.object(fw_pipeline, '_fit_with_blender', side_effect=capture):
+                fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                          blender_path='blender')
+        self.assertEqual(len(plans), 1)
+        self.assertEqual(plans[0]['targetSizeM'], spec['parts']['body']['sizeM'])
+        self.assertTrue(plans[0]['ports'])
+        for port in plans[0]['ports']:
+            self.assertEqual(port['anchor'], port['anchorNorm'])
+
+    def test_part_model_refits_when_fit_mode_changes(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = self._prepare(directory, spec)
+            with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                   return_value=self._fake_fit_report()) as fit:
+                first = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                  blender_path='blender')
+                (outputs / 'model_fit_partModel_body.glb').write_bytes(b'glb')
+                node = next(node for node in first['graph']['nodes']
+                            if node['id'] == 'partModel_body')
+                node['params']['fitMode'] = 'perAxis'
+                fw_pipeline.save_graph(directory, 'M1', first['graph'], kind='machine')
+                fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                          blender_path='blender')
+            self.assertEqual(fit.call_count, 2)
+
+    def test_part_model_refits_when_ground_changes(self):
+        spec = fw_spec.template_spec('M1')
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = self._prepare(directory, spec)
+            with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                   return_value=self._fake_fit_report()) as fit:
+                first = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                  blender_path='blender')
+                (outputs / 'model_fit_partModel_body.glb').write_bytes(b'glb')
+                node = next(node for node in first['graph']['nodes']
+                            if node['id'] == 'partModel_body')
+                node['params']['ground'] = True
+                fw_pipeline.save_graph(directory, 'M1', first['graph'], kind='machine')
+                fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                          blender_path='blender')
+            self.assertEqual(fit.call_count, 2)
+
+
+class FrontendMirrorTest(unittest.TestCase):
+    def test_frontend_mirrors_p1_nodes_and_ports(self):
+        source = (ROOT / 'js' / 'pipeline.js').read_text(encoding='utf-8')
+        compact = ''.join(source.split())
+        for expected in (
+            "blueprint:{in:['image','text'],out:['spec']}",
+            "partImage:{in:['text','image','spec'],out:['image','ports']}",
+            "partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']}",
+            "blueprint:'尺寸规格'",
+            "pipelineSpecPanel(node,taskOutput)",
+            "['textToImage','imageTo3D','partImage','partModel','blueprint']",
+            "visionNode?'DoubaoVision'",
+            "visionNode?'ark'",
+        ):
+            self.assertIn(expected, compact)
+        # compact 会删掉字符串内的空格，含空格的模型名字面量改查原始源码
+        self.assertIn("visionNode?'Doubao Vision'", source)
 
 
 if __name__ == '__main__':

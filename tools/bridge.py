@@ -33,6 +33,7 @@ serve.py 只做静态文件；bridge.py 在它之上加了「与文件系统、
 """
 
 import base64
+import copy
 import hashlib
 import json
 import math
@@ -57,6 +58,9 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
 _pipeline_spec = importlib.util.spec_from_file_location('fw_pipeline', os.path.join(ROOT, 'tools', 'fw_pipeline.py'))
 fw_pipeline = importlib.util.module_from_spec(_pipeline_spec)
 _pipeline_spec.loader.exec_module(fw_pipeline)
+_spec_spec = importlib.util.spec_from_file_location('fw_spec', os.path.join(ROOT, 'tools', 'fw_spec.py'))
+fw_spec = importlib.util.module_from_spec(_spec_spec)
+_spec_spec.loader.exec_module(fw_spec)
 _provider_spec = importlib.util.spec_from_file_location('fw_providers', os.path.join(ROOT, 'tools', 'fw_providers.py'))
 fw_providers = importlib.util.module_from_spec(_provider_spec)
 _provider_spec.loader.exec_module(fw_providers)
@@ -494,7 +498,7 @@ def fw_dir():
 
 
 PIPELINE_HISTORY_LIMIT = 50
-PROVIDER_NODE_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel')
+PROVIDER_NODE_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel', 'blueprint')
 
 
 def write_bytes_atomic(path, data):
@@ -535,9 +539,16 @@ def store_task_output(root, asset_id, kind, node_type, task):
 PART_IMAGE_SUFFIX = '【拆件】以参考图为准，只输出按说明拆分出的这一个部件；保持参考图中的造型、比例、配色与朝向；纯色背景、单个部件居中、无其他部件、无地面投影。'
 
 
-def _part_image_prompt(text):
+def _part_image_prompt(text, part=None):
     base = str(text or '').strip()
-    return ((base + '\n\n') if base else '') + PART_IMAGE_SUFFIX
+    extra = ''
+    if isinstance(part, dict) and part.get('sizeM'):
+        size = part['sizeM']
+        extra = ('目标包围盒尺寸：X %.2f m，Y %.2f m，Z %.2f m；'
+                 '端口只作为装配锚点，不需要在图中画出文字。'
+                 % (float(size[0]), float(size[1]), float(size[2])))
+    body = ((base + '\n\n') if base else '') + ((extra + '\n') if extra else '')
+    return body + PART_IMAGE_SUFFIX
 
 
 def _part_name_from_prompt(text):
@@ -573,6 +584,50 @@ def _part_reference_image(root, asset_id, kind, nodes, incoming):
     if not data:
         raise ValueError('整体效果图文件不可用或超过 8 MB，无法作为拆件参考图')
     return data
+
+
+def _upstream_image_path(root, asset_id, kind, incoming, nodes):
+    edge = next((edge for edge in incoming if edge.get('in') == 'image'), None)
+    if not edge:
+        raise ValueError('尺寸规格需要整机效果图：请把整体效果图节点连到 image 口')
+    source = nodes.get(edge.get('from')) or {}
+    result = source.get('result') or {}
+    # 上游图被改动后会打回 dirty，旧图不能再当整机参考
+    if result.get('state') not in ('done', None):
+        raise ValueError('整机效果图尚未生成或已变更：请先运行上游整体效果图节点')
+    provider = result.get('providerTask') if isinstance(result.get('providerTask'), dict) else {}
+    task_output = provider.get('output') if isinstance(provider.get('output'), dict) else {}
+    image_path = task_output.get('imagePath') or (result.get('output') or {}).get('imagePath')
+    absolute = fw_pipeline.resolve_output(
+        root, asset_id, kind, os.path.basename(str(image_path or '')))
+    if not absolute:
+        raise ValueError('整机效果图文件不可用，无法生成尺寸规格')
+    return absolute
+
+
+def _spec_from_incoming(root, asset_id, kind, nodes, incoming):
+    edge = next((edge for edge in incoming if edge.get('in') == 'spec'), None)
+    if not edge:
+        return None
+    result = (nodes.get(edge.get('from')) or {}).get('result') or {}
+    # 上游规格被改动后会打回 dirty，旧规格不能再喂给拆件
+    if result.get('state') not in ('done', None):
+        raise ValueError('尺寸规格尚未生成或已变更：请先运行尺寸规格节点')
+    output = result.get('output') or {}
+    candidate = output.get('spec')
+    if isinstance(candidate, dict):
+        return fw_spec.validate_spec(candidate)
+    path = output.get('specPath')
+    if not path:
+        return None
+    root_path = os.path.realpath(fw_pipeline.pipeline_root(root, asset_id, kind))
+    absolute = os.path.realpath(os.path.join(root_path, str(path)))
+    if os.path.commonpath((root_path, absolute)) != root_path:
+        raise ValueError('SPEC_INVALID: 尺寸规格路径越界')
+    try:
+        return fw_spec.read_spec(absolute)
+    except (OSError, ValueError):
+        raise ValueError('尺寸规格文件不可用：%s' % path)
 
 
 def ue_project_root():
@@ -1786,10 +1841,76 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     raise ValueError('目标节点不是受支持的远程生成节点')
                 incoming = [edge for edge in graph['edges'] if edge.get('to') == node_id]
                 params = node.get('params') or {}
+                if node['type'] == 'blueprint':
+                    root = fw_pipeline.pipeline_root(fw_dir(), asset_id, kind)
+                    spec_path = os.path.join(root, 'spec.json')
+                    params_snapshot = copy.deepcopy(params)
+                    if bool(params.get('specLocked')) and not os.path.isfile(spec_path):
+                        raise ValueError('SPEC_MISSING: 已锁定规格但 spec.json 不存在')
+                    if bool(params.get('specLocked')):
+                        spec = fw_spec.read_spec(spec_path)
+                        task = {'taskId': 'spec_locked', 'provider': 'ark',
+                                'state': 'success', 'requestType': 'blueprint',
+                                'output': {'spec': spec, 'specPath': 'spec.json'}}
+                    else:
+                        image_path = _upstream_image_path(fw_dir(), asset_id, kind,
+                                                          incoming, nodes)
+                        overall = params.get('overallLengthM')
+                        template = str(params.get('template') or 'excavator')
+                        prompt_edge = next((edge for edge in incoming
+                                            if edge.get('in') == 'text'), None)
+                        prompt_text = ''
+                        if prompt_edge:
+                            source = nodes.get(prompt_edge['from']) or {}
+                            prompt_text = str((((source.get('result') or {}).get('output') or {})
+                                               .get('text')) or '')
+                        raw, _meta = fw_providers.analyze_spec(
+                            read_json(CONFIG_FILE, {}) or {}, image_path,
+                            [{'name': role, 'description': fw_spec.ROLE_LABELS.get(role, '')}
+                             for role in fw_spec.PART_ROLES],
+                            prompt=prompt_text or str(params.get('prompt') or ''),
+                            overall_length=overall, template=template)
+                        spec = fw_spec.from_vision(raw, overall_length_m=overall,
+                                                   template=template, asset_id=asset_id)
+                        digest = hashlib.sha1(json.dumps(
+                            spec, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+                        task = {'taskId': 'spec_' + digest, 'provider': 'ark',
+                                'state': 'success', 'requestType': 'blueprint',
+                                'output': {'spec': spec, 'specPath': 'spec.json'}}
+                    def apply_blueprint(latest):
+                        latest_nodes, _ = fw_pipeline.validate_graph(latest)
+                        latest_node = latest_nodes.get(node_id)
+                        if not latest_node or latest_node.get('type') != 'blueprint':
+                            raise ValueError('提交期间节点已被删除或修改')
+                        if (latest_node.get('params') or {}) != params_snapshot:
+                            raise ValueError('提交期间尺寸规格参数已修改，本次结果未写入，请重新提交')
+                        fw_spec.write_spec(spec_path, spec)
+                        state = latest_node.setdefault('result', {})
+                        previous = state.get('providerTask')
+                        if previous:
+                            history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
+                            state['history'] = history + [previous]
+                        state['providerTask'] = task
+                        state['output'] = {'spec': spec, 'specPath': 'spec.json'}
+                        state['state'] = 'done'
+                        state.pop('error', None)
+                        return latest
+
+                    result = fw_pipeline.update_graph(fw_dir(), asset_id, kind, apply_blueprint)
+                    result_nodes, _ = fw_pipeline.validate_graph(result)
+                    state = ((result_nodes.get(node_id) or {}).get('result') or {}).get('state')
+                    push_event('pipeline.progress', {'id': asset_id, 'nodeId': node_id,
+                                                     'state': state, 'taskId': task['taskId']})
+                    self._json({'ok': True, 'graph': result, 'task': task,
+                                'taskId': task['taskId'], 'state': state})
+                    return
                 prompt = ''
                 input_task_id = None
                 image_data = None
                 part_name = ''
+                spec_input = None
+                role = ''
+                ports = []
                 if node['type'] in ('textToImage', 'partImage'):
                     prompt_edge = next((edge for edge in incoming if edge.get('in') == 'text'), None)
                     if prompt_edge:
@@ -1802,7 +1923,15 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                         if not prompt:
                             raise ValueError('单件效果图缺少拆件说明：请先填写上游描述词节点')
                         part_name = _part_name_from_prompt(prompt) or str(node_id)
-                        prompt = _part_image_prompt(prompt)
+                        spec_input = _spec_from_incoming(fw_dir(), asset_id, kind,
+                                                         nodes, incoming)
+                        role = fw_spec.role_for_node(node_id, part_name)
+                        part_spec = ((spec_input or {}).get('parts') or {}).get(role) or {}
+                        if spec_input and not part_spec:
+                            raise ValueError('PART_ROLE_MISSING: spec 中没有角色 %s'
+                                             % (role or node_id))
+                        ports = fw_spec.anchor_ports(part_spec) if part_spec else []
+                        prompt = _part_image_prompt(prompt, part_spec)
                         image_data = _part_reference_image(fw_dir(), asset_id, kind, nodes, incoming)
                 else:
                     prompt = str(params.get('prompt') or '')
@@ -1835,7 +1964,10 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                         history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
                         state['history'] = history + [previous_task]
                     if part_name:
-                        state['output'] = dict(state.get('output') or {}, partName=part_name)
+                        extra = {'partName': part_name}
+                        if spec_input:
+                            extra.update(role=role, ports=ports)
+                        state['output'] = dict(state.get('output') or {}, **extra)
                     state['providerTask'] = task
                     state['state'] = 'done' if task.get('state') == 'success' else 'queued'
                     state.pop('error', None)
@@ -1862,10 +1994,14 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                 if not node or node.get('type') not in PROVIDER_NODE_TYPES:
                     raise ValueError('目标节点不是受支持的远程生成节点')
                 task = dict((node.get('result') or {}).get('providerTask') or {})
+                node_type = node['type']
+                # 蓝图提交是同步的，没有远程任务可轮询
+                if node_type == 'blueprint':
+                    self._json({'ok': True, 'graph': graph, 'task': task})
+                    return
                 task_id = task.get('taskId')
                 if not task_id:
                     raise ValueError('没有可轮询的 Provider 任务')
-                node_type = node['type']
                 # 慢速轮询/模型下载也放在锁外，只有最终写图时再读取最新图
                 result = fw_providers.poll(read_json(CONFIG_FILE, {}) or {}, task)
                 state = result.get('status')

@@ -4,6 +4,7 @@ const PIPELINE_LAST_ASSET_KEY = 'fw.pipeline.lastAsset';
 
 const PIPELINE_NODE_LABELS = {
   prompt:'描述词', textToImage:'概念图生成', imageTo3D:'图生 3D', decimate:'减面',
+  blueprint:'尺寸规格',
   partImage:'单件效果图', partModel:'单件模型', assemble:'组装',
   styleApply:'风格对齐', uv:'UV 展开', lod:'LOD 分级', collision:'碰撞体',
   animation:'动画', metadata:'元数据', validate:'质量门禁', manualEdit:'人工精修',
@@ -25,7 +26,9 @@ const PIPELINE_ZOOM_MAX = 1.8;
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
   decimate:{in:['mesh'],out:['mesh','part']},
-  partImage:{in:['text','image'],out:['image']}, partModel:{in:['image'],out:['part','mesh']},
+  blueprint:{in:['image','text'],out:['spec']},
+  partImage:{in:['text','image','spec'],out:['image','ports']},
+  partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']},
   assemble:{in:['text','part','image'],out:['mesh']},
   styleApply:{in:['mesh'],out:['mesh']},
   uv:{in:['mesh'],out:['mesh']}, lod:{in:['mesh'],out:['mesh']}, collision:{in:['mesh'],out:['mesh']},
@@ -1000,7 +1003,7 @@ function pipelineRunLocal(nodeId, through){
       node.result.updatedAt = new Date().toISOString();
       node.result.output = {text:String((node.params && node.params.text) || '')};
       delete node.result.error;
-    }else if(['textToImage','imageTo3D','partImage','partModel'].includes(node.type)){
+    }else if(['textToImage','imageTo3D','partImage','partModel','blueprint'].includes(node.type)){
       const task = node.result.providerTask || {};
       if(task.state === 'success'){ node.result.state = 'done'; delete node.result.error; }
       else if(task.state === 'queued' || task.state === 'running'){ node.result.state = task.state; }
@@ -1169,14 +1172,15 @@ function pipelineTrackRemote(nodeId){
 
 async function pipelineSubmitRemote(nodeId){
   const node=PIPELINE.graph.nodes.find(item=>item.id===nodeId);
-  if(!node || !['textToImage','imageTo3D','partImage','partModel'].includes(node.type)) return;
+  if(!node || !['textToImage','imageTo3D','partImage','partModel','blueprint'].includes(node.type)) return;
   if(!pipelineBridgeReady()){toast('远程提交需要 Bridge 在线并绑定项目');return;}
   const imageNode=node.type==='textToImage'||node.type==='partImage';
-  const provider=pipelineNodeProvider(node);
+  const visionNode=node.type==='blueprint';
+  const provider=visionNode?'ark':pipelineNodeProvider(node);
   const info=PIPELINE.providers[provider];
   if(!info || !info.configured){toast(`先在「项目」页配置 ${provider} API key`);return;}
   const label=provider==='ark'?'火山方舟 Ark':'Tripo';
-  const model=provider==='ark'?(imageNode?'Seedream 5.0 Pro':'Seed3D 2.0'):(imageNode?'Seedream v5':'v3.1');
+  const model=provider==='ark'?(visionNode?'Doubao Vision':(imageNode?'Seedream 5.0 Pro':'Seed3D 2.0')):(imageNode?'Seedream v5':'v3.1');
   const estimated=provider==='ark'?0:(imageNode?5:
     (node.params.texture?(node.params.textureQuality==='detailed'?50:40):30)+(node.params.smartLowPoly===false?0:10));
   const price=estimated?`，当前公开价目估算约 ${estimated} credits（$${(estimated/100).toFixed(2)}）`:'';
@@ -1543,6 +1547,16 @@ function pipelineParamSelect(node, key, label, options, fallback){
     `<option value="${pipelineEscape(option.value)}" ${(value || fallback) === option.value ? 'selected' : ''}>${pipelineEscape(option.label)}</option>`).join('')}</select>`);
 }
 function pipelineParamForm(node){
+  if(node.type === 'blueprint'){
+    return `<div class="pipeline-params">
+      ${pipelineParamSelect(node, 'provider', '平台', [{value:'ark',label:'Ark'}], 'ark')}
+      ${pipelineParamNumber(node, 'overallLengthM', '整机长度（m）', 'min="0" step="0.1"', '')}
+      ${pipelineParamSelect(node, 'template', '机型模板', [{value:'excavator',label:'挖掘机'}], 'excavator')}
+      ${pipelineParamText(node, 'prompt', '额外视觉提示', '')}
+      ${pipelineParamCheck(node, 'specLocked', '锁定现有规格', false)}
+      <small class="pipeline-params-hint">调用一次 Ark 视觉模型生成 spec.json；整机长度是绝对尺寸锚，模板补全其余部件。锁定后若 spec 已存在则不再请求 Provider。</small>
+    </div>`;
+  }
   if(node.type === 'textToImage'){
     return `<div class="pipeline-params">
       ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
@@ -1582,6 +1596,8 @@ function pipelineParamForm(node){
       ${pipelineParamSelect(node, 'provider', '平台', PIPELINE_PROVIDER_OPTIONS, '')}
       ${pipelineParamNumber(node, 'faceLimit', '面数上限', 'min="500" max="150000" step="500"', '3000')}
       ${pipelineParamCheck(node, 'texture', '生成贴图', false)}
+      ${pipelineParamSelect(node, 'fitMode', '尺寸校准', [{value:'uniform',label:'等比缩放'},{value:'perAxis',label:'按轴缩放'}], 'uniform')}
+      ${pipelineParamCheck(node, 'ground', '对齐地面 Z=0', false)}
       <small class="pipeline-params-hint">读取上游单件效果图生成单件模型。Ark Seed3D 当前不接受面数参数，单件仍是高模；请把 mesh 口接到减面节点，再把减面节点的 part 口接到组装节点。</small>
     </div>`;
   }
@@ -1600,6 +1616,29 @@ function pipelineParamForm(node){
     </div>`;
   }
   return `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
+}
+
+function pipelineSpecPanel(node, output){
+  const own = (node.result && node.result.output) || {};
+  output = Object.assign({}, output || {}, own);
+  if(node.type==='blueprint' && output && output.spec){
+    const parts=(output.spec.parts&&typeof output.spec.parts==='object')?output.spec.parts:{};
+    const rows=Object.entries(parts).map(([role,part])=>{
+      const size=Array.isArray(part&&part.sizeM)?part.sizeM.map(value=>Number(value).toFixed(2)).join(' × '):'';
+      const confidence=part&&part.confidence!=null?` · ${Math.round(Number(part.confidence)*100)}%`:'';
+      return `<li>${pipelineEscape(role)} · ${pipelineEscape(size)} m${confidence}</li>`;
+    }).join('');
+    return `<details class="pipeline-spec"><summary>尺寸规格 · ${Object.keys(parts).length} 件</summary><ul>${rows}</ul><pre>${pipelineEscape(JSON.stringify(output.spec,null,2))}</pre></details>`;
+  }
+  if(node.type==='partImage' && Array.isArray(output.ports) && output.ports.length){
+    return `<div class="pipeline-ports">${output.ports.map(port=>`<span>${pipelineEscape(port.id)} · ${pipelineEscape(port.type||'pin')}</span>`).join('')}</div>`;
+  }
+  if(node.type==='partModel' && output.fit){
+    const fit=output.fit;
+    const rotation=(fit.rotationDeg||[]).map(value=>Math.round(Number(value))).join('/');
+    return `<div class="pipeline-fit">校准 ${Number(fit.scale||0).toFixed(3)}× · 偏差 ${(Number(fit.aspectError||0)*100).toFixed(1)}% · 旋转 ${pipelineEscape(rotation)}°</div>`;
+  }
+  return '';
 }
 
 function pipelineNodeCard(node){
@@ -1669,8 +1708,8 @@ function pipelineNodeCard(node){
   return `<article class="pipeline-node ${selected?'selected':''} ${busy?'is-running':''}" data-node="${pipelineEscape(node.id)}" style="left:${Number(node.x)||0}px;top:${Number(node.y)||0}px">
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(headerLabel)}</span></header>
-    <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D','partImage','partModel'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : (node.type === 'assemble' ? '应用组装' : '应用结果'))}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
+    <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${pipelineSpecPanel(node,taskOutput)}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D','partImage','partModel','blueprint'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : (node.type === 'assemble' ? '应用组装' : '应用结果'))}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
     ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir)}</small>` : ''}
     ${applied
       ? `<small class="pipeline-stage">已应用到 ${pipelineEscape((currentAsset && currentAsset.name) || '资产')}${appliedWhen ? ' · ' + pipelineEscape(appliedWhen) : ''}</small>`

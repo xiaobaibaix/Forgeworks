@@ -17,6 +17,7 @@ sys.argv = [_argv[0]]
 import bridge
 import fw_pipeline
 import fw_providers
+import fw_spec
 sys.argv = _argv
 
 
@@ -504,6 +505,211 @@ class PipelineProviderConcurrencyTest(unittest.TestCase):
         saved = {node['id']: (node.get('result') or {}).get('providerTask', {}).get('taskId')
                  for node in final['nodes']}
         self.assertEqual(saved, {'img_a': 'arkimg_aaaa', 'img_b': 'arkimg_bbbb'})
+
+
+class BlueprintBridgeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.tmp.name)
+        self.old_state = dict(bridge._state)
+        self.old_state_file = bridge.STATE_FILE
+        bridge.STATE_FILE = str(self.workspace / 'bridge-state.json')
+        bridge._state.clear()
+        bridge._state['recentProjects'] = []
+        created = bridge.create_project(str(self.workspace), '规格工程')
+        self.root = Path(created['fwDir'])
+        self.server = bridge.Bridge(('127.0.0.1', 0), bridge.BridgeHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.origin = 'http://127.0.0.1:%d' % self.server.server_address[1]
+        self.pipeline = Path(fw_pipeline.pipeline_root(str(self.root), 'M1', 'machine'))
+        (self.pipeline / 'outputs').mkdir(parents=True, exist_ok=True)
+        (self.pipeline / 'outputs' / 'overall.png').write_bytes(b'\x89PNG\r\n\x1a\n')
+        self.spec = fw_spec.template_spec('M1')
+        self.graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'overall', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/overall.png'}}}},
+                {'id': 'blueprint', 'type': 'blueprint',
+                 'params': {'provider': 'ark', 'overallLengthM': 7.2,
+                            'template': 'excavator'}},
+                {'id': 'partImage_body', 'type': 'partImage', 'params': {'provider': 'ark'},
+                 'result': {'output': {'partName': '车身'}}},
+            ],
+            'edges': [
+                {'from': 'overall', 'out': 'image', 'to': 'blueprint', 'in': 'image'},
+                {'from': 'overall', 'out': 'image', 'to': 'partImage_body', 'in': 'image'},
+            ],
+        }
+        saved = fw_pipeline.save_graph(str(self.root), 'M1', self.graph, kind='machine')
+        # 首次保存会把未签名结果打回 dirty；二次保存保留已执行状态，贴近真实运行后的图
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(str(self.root), 'M1', saved, kind='machine')
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+        bridge._state.clear()
+        bridge._state.update(self.old_state)
+        bridge.STATE_FILE = self.old_state_file
+        self.tmp.cleanup()
+
+    def _post(self, route, payload):
+        request = urllib.request.Request(
+            self.origin + '/api/' + route,
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers={'Content-Type': 'application/json', 'Origin': self.origin},
+            method='POST')
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read())
+
+    def test_blueprint_requires_confirm_remote(self):
+        with mock.patch.object(bridge.fw_providers, 'analyze_spec') as analyze:
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint'})
+        self.assertFalse(result['ok'])
+        self.assertIn('确认', result['error'])
+        analyze.assert_not_called()
+
+    def test_blueprint_writes_spec_and_node_output(self):
+        def fake(config, image_path, parts, prompt='', model='', overall_length=0.0,
+                 template='excavator'):
+            return {'parts': {}, 'connections': []}, {'model': 'vision', 'notes': ''}
+
+        with mock.patch.object(bridge.fw_providers, 'analyze_spec', side_effect=fake):
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint',
+                'confirmRemote': True})
+        self.assertTrue(result['ok'], result)
+        self.assertTrue((self.pipeline / 'spec.json').is_file())
+        graph = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        node = next(node for node in graph['nodes'] if node['id'] == 'blueprint')
+        self.assertEqual(node['result']['state'], 'done')
+        self.assertEqual(result['state'], 'done')
+        self.assertEqual(node['result']['output']['spec']['assetId'], 'M1')
+        self.assertTrue(node['result']['providerTask']['taskId'].startswith('spec_'))
+
+    def _lock_blueprint_params(self):
+        def lock(latest):
+            for node in latest['nodes']:
+                if node['id'] == 'blueprint':
+                    node['params']['specLocked'] = True
+            return latest
+        fw_pipeline.update_graph(str(self.root), 'M1', 'machine', lock)
+
+    def test_blueprint_locked_reads_spec_without_calling_provider(self):
+        fw_spec.write_spec(str(self.pipeline / 'spec.json'), self.spec)
+        self._lock_blueprint_params()
+        with mock.patch.object(bridge.fw_providers, 'analyze_spec') as analyze:
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint',
+                'confirmRemote': True})
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['taskId'], 'spec_locked')
+        analyze.assert_not_called()
+
+    def test_blueprint_locked_without_spec_file_does_not_call_provider(self):
+        self._lock_blueprint_params()
+        with mock.patch.object(bridge.fw_providers, 'analyze_spec') as analyze:
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint',
+                'confirmRemote': True})
+        self.assertFalse(result['ok'], result)
+        self.assertIn('SPEC_MISSING', result['error'])
+        analyze.assert_not_called()
+
+    def test_blueprint_params_change_during_analysis_is_rejected(self):
+        def fake(config, image_path, parts, prompt='', model='', overall_length=0.0,
+                 template='excavator'):
+            def mutate(latest):
+                for node in latest['nodes']:
+                    if node['id'] == 'blueprint':
+                        node['params']['overallLengthM'] = 8.0
+                return latest
+            fw_pipeline.update_graph(str(self.root), 'M1', 'machine', mutate)
+            return {'parts': {}, 'connections': []}, {'model': 'vision', 'notes': ''}
+
+        with mock.patch.object(bridge.fw_providers, 'analyze_spec', side_effect=fake):
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint',
+                'confirmRemote': True})
+        self.assertFalse(result['ok'], result)
+        self.assertIn('参数已修改', result['error'])
+        self.assertFalse((self.pipeline / 'spec.json').exists())
+
+    def _save_spec_input_graph(self):
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'overall', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/overall.png'}}}},
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                 'result': {'state': 'done', 'output': {'spec': self.spec,
+                                                        'specPath': 'spec.json'}}},
+                {'id': 'prompt_body', 'type': 'prompt', 'params': {'text': '车身'}},
+                {'id': 'partImage_body', 'type': 'partImage', 'params': {'provider': 'ark'},
+                 'result': {'output': {'partName': '车身'}}},
+            ],
+            'edges': [
+                {'from': 'overall', 'out': 'image', 'to': 'partImage_body', 'in': 'image'},
+                {'from': 'prompt_body', 'out': 'text', 'to': 'partImage_body', 'in': 'text'},
+                {'from': 'blueprint', 'out': 'spec', 'to': 'partImage_body', 'in': 'spec'},
+            ],
+        }
+        saved = fw_pipeline.save_graph(str(self.root), 'M1', graph, kind='machine')
+        # 首次保存会把未签名结果打回 dirty；二次保存保留已执行状态，贴近真实运行后的图
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(str(self.root), 'M1', saved, kind='machine')
+
+    def test_part_image_rejects_dirty_spec_upstream(self):
+        self._save_spec_input_graph()
+        graph = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        next(node for node in graph['nodes'] if node['id'] == 'blueprint')['result']['state'] = 'dirty'
+        fw_pipeline.save_graph(str(self.root), 'M1', graph, kind='machine')
+        with mock.patch.object(bridge.fw_providers, 'submit') as submit:
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'partImage_body',
+                'confirmRemote': True})
+        self.assertFalse(result['ok'], result)
+        self.assertIn('尺寸规格', result['error'])
+        submit.assert_not_called()
+
+    def test_part_image_gets_ports_from_spec_input(self):
+        self._save_spec_input_graph()
+        seen = {}
+
+        def fake_submit(config, kind, params, prompt='', input_task_id=None,
+                        image_data=None, fallback=False):
+            seen['prompt'] = prompt
+            return {'taskId': 'img_body', 'provider': 'ark', 'state': 'success',
+                    'output': {}}
+
+        with mock.patch.object(bridge.fw_providers, 'submit', side_effect=fake_submit):
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'partImage_body',
+                'confirmRemote': True})
+        self.assertTrue(result['ok'], result)
+        size = self.spec['parts']['body']['sizeM']
+        self.assertIn('目标包围盒尺寸', seen['prompt'])
+        self.assertIn('X %.2f m' % size[0], seen['prompt'])
+        self.assertIn('Y %.2f m' % size[1], seen['prompt'])
+        self.assertIn('Z %.2f m' % size[2], seen['prompt'])
+        node = next(node for node in result['graph']['nodes']
+                    if node['id'] == 'partImage_body')
+        self.assertEqual(node['result']['output']['role'], 'body')
+        self.assertEqual(node['result']['output']['ports'][0]['id'], 'boom_base')
+        self.assertNotIn('pos', node['result']['output']['ports'][0])
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -14,6 +15,7 @@ import uuid
 
 import fw_parts
 import fw_providers
+import fw_spec
 
 ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
 
@@ -27,8 +29,11 @@ NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
     'textToImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
-    'partImage': {'in': {'text': 'text', 'image': 'image'}, 'out': {'image': 'image'}},
-    'partModel': {'in': {'image': 'image'}, 'out': {'part': 'part', 'mesh': 'mesh'}},
+    'blueprint': {'in': {'image': 'image', 'text': 'text'}, 'out': {'spec': 'spec'}},
+    'partImage': {'in': {'text': 'text', 'image': 'image', 'spec': 'spec'},
+                  'out': {'image': 'image', 'ports': 'ports'}},
+    'partModel': {'in': {'image': 'image', 'spec': 'spec', 'ports': 'ports'},
+                  'out': {'part': 'part', 'mesh': 'mesh', 'assembly': 'assembly'}},
     'assemble': {'in': {'text': 'text', 'part': 'part', 'image': 'image'}, 'out': {'mesh': 'mesh'}},
     'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh', 'part': 'part'}},
     'styleApply': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
@@ -46,7 +51,7 @@ NODE_TYPES = {
 
 
 LOCAL_STAGE_TYPES = ('uv', 'lod', 'collision', 'animation', 'metadata')
-PROVIDER_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel')
+PROVIDER_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel', 'blueprint')
 # 组装要接多件单件模型；其余输入口仍只允许一条连线
 MULTI_INPUTS = {('assemble', 'part')}
 
@@ -543,6 +548,62 @@ def _load_provider_config(value):
     return config if isinstance(config, dict) else {}
 
 
+def spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id):
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node_id and edge.get('in') == 'spec'), None)
+    if not edge:
+        return None
+    source = by_id.get(edge.get('from'))
+    if not source:
+        raise ValueError('SPEC_MISSING: spec 上游节点不存在')
+    result = source.get('result') or {}
+    state = result.get('state')
+    if result and state not in ('done', None):
+        raise ValueError('SPEC_MISSING: 上游规格未就绪（%s）' % (state or '未运行'))
+    output = result.get('output') or {}
+    candidate = output.get('spec')
+    if isinstance(candidate, dict):
+        return fw_spec.validate_spec(candidate)
+    spec_path = output.get('specPath') or 'spec.json'
+    root = os.path.realpath(pipeline_root(forgeworks_root, asset_id, kind))
+    path = os.path.realpath(os.path.join(root, str(spec_path)))
+    if os.path.commonpath((root, path)) != root:
+        raise ValueError('SPEC_INVALID: spec 路径必须位于管线目录内：%s' % spec_path)
+    if not os.path.isfile(path):
+        raise ValueError('SPEC_MISSING: 上游规格尚未生成：%s' % spec_path)
+    return fw_spec.read_spec(path)
+
+
+def ports_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id):
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node_id and edge.get('in') == 'ports'), None)
+    if edge:
+        source = by_id.get(edge.get('from')) or {}
+        output = (source.get('result') or {}).get('output') or {}
+        ports = output.get('ports')
+        if isinstance(ports, list):
+            return ports
+        raise ValueError('PORT_MISSING: ports 上游没有端口结果')
+    spec = spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+    if not spec:
+        return []
+    role = part_role_for_node(graph, by_id, node_id)
+    part = spec['parts'].get(role)
+    return fw_spec.anchor_ports(part) if part else []
+
+
+def part_role_for_node(graph, by_id, node_id):
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node_id and edge.get('in') == 'image'), None)
+    source = by_id.get(edge.get('from')) if edge else None
+    output = ((source or {}).get('result') or {}).get('output') or {}
+    part_name = str(output.get('partName') or '')
+    role = fw_spec.role_for_node(node_id, part_name)
+    if not role:
+        raise ValueError('PART_ROLE_MISSING: 无法从节点 %s 判断部件角色' % node_id)
+    return role
+
+
 def _decimate_with_blender(blender_path, source, output, target_faces):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fw_blender.py')
     with tempfile.TemporaryDirectory(prefix='forgeworks-decimate-') as temp_dir:
@@ -570,6 +631,210 @@ def _decimate_with_blender(blender_path, source, output, target_faces):
         return report
 
 
+FIT_TIMEOUT = 300
+
+
+def _fit_with_blender(blender_path, plan):
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fw_blender.py')
+    with tempfile.TemporaryDirectory(prefix='forgeworks-fit-') as temp_dir:
+        plan_path = os.path.join(temp_dir, 'fit.json')
+        report_path = os.path.join(temp_dir, 'report.json')
+        with open(plan_path, 'w', encoding='utf-8') as stream:
+            json.dump(plan, stream, ensure_ascii=False)
+        try:
+            completed = subprocess.run([
+                blender_path, '--background', '--factory-startup', '--python-exit-code', '1',
+                '--python', script, '--', '--mode', 'fit', '--plan', plan_path,
+                '--output', plan['output'], '--report', report_path,
+            ], capture_output=True, text=True, timeout=FIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise ValueError('Blender 校准超时（%d 秒）' % FIT_TIMEOUT)
+        report = None
+        try:
+            with open(report_path, encoding='utf-8') as stream:
+                report = json.load(stream)
+        except (OSError, ValueError):
+            report = None
+        if not isinstance(report, dict):
+            tail = (completed.stderr or completed.stdout or 'Blender 无输出')[-1000:]
+            report = {'valid': False, 'errors': [tail]}
+        if completed.returncode != 0:
+            report['valid'] = False
+        return report
+
+
+def _attach_part_ports(forgeworks_root, asset_id, kind, graph, by_id, node_id):
+    spec = spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+    if not spec:
+        return
+    node = by_id[node_id]
+    result = node.setdefault('result', {})
+    output = result.setdefault('output', {})
+    role = fw_spec.role_for_node(node_id, output.get('partName') or '')
+    part = spec['parts'].get(role)
+    if not part:
+        raise ValueError('PART_ROLE_MISSING: spec 中没有角色 %s' % (role or node_id))
+    output['role'] = role
+    output['ports'] = fw_spec.anchor_ports(part)
+
+
+def _finite_number(value):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _finite_triplet(value):
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return False
+    return all(_finite_number(item) for item in value)
+
+
+def _valid_fit_port(port):
+    if not isinstance(port, dict):
+        return False
+    if not all(_finite_triplet(port.get(key)) for key in ('pos', 'axis', 'normal')):
+        return False
+    if 'radiusM' in port and not _finite_number(port['radiusM']):
+        return False
+    return True
+
+
+def _single_part_assembly(asset_id, node_id, role, mesh_path, ports):
+    connectors = []
+    for port in ports:
+        connectors.append({
+            'id': '%s:%s' % (role, port.get('id')),
+            'owner': role,
+            'frame': {'pos': list(port.get('pos') or [0, 0, 0]),
+                      'axis': list(port.get('axis') or [1, 0, 0]),
+                      'normal': list(port.get('normal') or [0, 0, 1])},
+            'radiusM': port.get('radiusM', 0.02),
+        })
+    return {
+        'schemaVersion': 1,
+        'assemblyId': 'asm_' + node_id,
+        'assetId': asset_id,
+        'meshPath': mesh_path,
+        'parts': [{'partId': node_id, 'role': role, 'meshPath': mesh_path}],
+        'connectors': connectors,
+        'mates': [],
+        'warnings': [],
+    }
+
+
+def _fit_is_current(forgeworks_root, asset_id, kind, node, spec):
+    result = node.get('result') or {}
+    task = result.get('providerTask') or {}
+    output = result.get('output') or {}
+    params = node.get('params') or {}
+    fit = output.get('fit') if isinstance(output.get('fit'), dict) else {}
+    mesh_path = output.get('meshPath')
+    if not mesh_path or output.get('fitSourceTaskId') != task.get('taskId'):
+        return False
+    if output.get('fitSpecHash') != _digest(spec):
+        return False
+    if fit.get('fitMode') != str(params.get('fitMode') or 'uniform'):
+        return False
+    if bool(fit.get('ground')) != bool(params.get('ground')):
+        return False
+    return bool(resolve_output(forgeworks_root, asset_id, kind,
+                               os.path.basename(str(mesh_path))))
+
+
+def _fit_part_model(forgeworks_root, asset_id, kind, graph, by_id, node_id, blender_path):
+    node = by_id[node_id]
+    result = node.setdefault('result', {})
+    task = result.get('providerTask') or {}
+    task_output = task.get('output') if isinstance(task.get('output'), dict) else {}
+    model_path = task_output.get('modelPath')
+    if not model_path:
+        raise ValueError('SPEC_MISSING: 单件模型没有可校准的 GLB')
+    source = resolve_output(forgeworks_root, asset_id, kind, os.path.basename(str(model_path)))
+    if not source:
+        raise ValueError('SPEC_MISSING: 单件模型文件不存在：%s' % model_path)
+    if not blender_path:
+        raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
+    spec = spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+    role = part_role_for_node(graph, by_id, node_id)
+    part = spec['parts'].get(role)
+    if not part:
+        raise ValueError('PART_ROLE_MISSING: spec 中没有角色 %s' % role)
+    params = node.get('params') or {}
+    fit_mode = str(params.get('fitMode') or 'uniform')
+    ground = bool(params.get('ground'))
+    ports = ports_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+    # Blender 按 anchor 解算米制坐标，端口表里存的是 anchorNorm
+    plan_ports = []
+    for port in ports:
+        item = dict(port)
+        if 'anchor' not in item and 'anchorNorm' in item:
+            item['anchor'] = item['anchorNorm']
+        plan_ports.append(item)
+    root = pipeline_root(forgeworks_root, asset_id, kind)
+    outputs_dir = os.path.join(root, 'outputs')
+    os.makedirs(outputs_dir, exist_ok=True)
+    filename = 'model_fit_%s.glb' % node_id
+    output = os.path.join(outputs_dir, filename)
+    plan = {
+        'input': source,
+        'output': output,
+        'targetSizeM': list(part['sizeM']),
+        'fitMode': fit_mode,
+        'ground': ground,
+        'forward': part.get('forward', '+X'),
+        'ports': plan_ports,
+    }
+    report = _fit_with_blender(blender_path, plan)
+    if not isinstance(report, dict):
+        raise ValueError('FIT_ASPECT_MISMATCH: Blender 校准报告格式无效')
+    if not report.get('valid'):
+        errors = report.get('errors')
+        message = '; '.join(str(item) for item in errors) if isinstance(errors, list) else ''
+        raise ValueError('FIT_ASPECT_MISMATCH: %s' % (message or 'Blender 校准失败'))
+    source_fit = report.get('fit')
+    fitted_ports = report.get('ports')
+    aspect_error = source_fit.get('aspectError') if isinstance(source_fit, dict) else None
+    if (not _finite_number(aspect_error)
+            or not isinstance(fitted_ports, list)
+            or not all(_valid_fit_port(port) for port in fitted_ports)):
+        raise ValueError('FIT_ASPECT_MISMATCH: Blender 校准报告格式无效')
+    fit = dict(source_fit)
+    if fit_mode == 'uniform' and aspect_error > 0.15:
+        raise ValueError('FIT_ASPECT_MISMATCH: 均匀校准无法消除长宽高差异（%.1f%%）'
+                         % (aspect_error * 100))
+    warnings = []
+    if aspect_error > 0.05:
+        warnings.append('校准后仍有 %.1f%% 轴向偏差' % (aspect_error * 100))
+    if fit.get('ambiguous'):
+        warnings.append('FIT_ORIENTATION_AMBIGUOUS: 多个朝向评分接近，请检查 rotationDeg')
+    fit['targetSizeM'] = list(part['sizeM'])
+    fit['forward'] = part.get('forward', '+X')
+    fit['fitMode'] = fit_mode
+    fit['ground'] = ground
+    relative = 'outputs/' + filename
+    assembly = _single_part_assembly(asset_id, node_id, role, relative, fitted_ports)
+    assembly['warnings'] = warnings
+    output_data = result.setdefault('output', {})
+    output_data.update({
+        'role': role,
+        'meshPath': relative,
+        'fit': fit,
+        'ports': fitted_ports,
+        'assembly': assembly,
+        'fitSourceTaskId': task.get('taskId'),
+        'fitSpecHash': _digest(spec),
+        'engine': 'blender',
+        'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+    })
+    result['state'] = 'done'
+    result.pop('error', None)
+    return output_data
+
+
 def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine',
                   blender_path=None, provider_config=None):
     kind = normalize_kind(kind)
@@ -592,6 +857,34 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 # 保留 dirty：上游或参数变了，旧产物不能当作现成结果
                 if node['result'].get('state') != 'dirty':
                     node['result']['state'] = 'done'
+                task_output = task.get('output') if isinstance(task.get('output'), dict) else {}
+                if node['type'] == 'blueprint' and isinstance(task_output.get('spec'), dict):
+                    node['result']['output'] = dict(node['result'].get('output') or {},
+                                                    spec=task_output['spec'],
+                                                    specPath=task_output.get('specPath', 'spec.json'))
+                if node['type'] == 'partImage':
+                    try:
+                        _attach_part_ports(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+                    except ValueError as error:
+                        warnings = node['result'].setdefault('warnings', [])
+                        if str(error) not in warnings:
+                            warnings.append(str(error))
+                if node['type'] == 'partModel':
+                    try:
+                        part_spec = spec_for_node(forgeworks_root, asset_id, kind,
+                                                  graph, by_id, node_id)
+                    except ValueError as error:
+                        node['result']['state'] = 'blocked'
+                        node['result']['error'] = str(error)
+                        part_spec = None
+                    if part_spec and not _fit_is_current(forgeworks_root, asset_id, kind,
+                                                         node, part_spec):
+                        try:
+                            _fit_part_model(forgeworks_root, asset_id, kind, graph,
+                                            by_id, node_id, blender_path)
+                        except (ValueError, OSError) as error:
+                            node['result']['state'] = 'blocked'
+                            node['result']['error'] = str(error)
             elif task.get('state') in ('queued', 'running'):
                 node['result']['state'] = task['state']
             else:
@@ -623,7 +916,7 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 assembly_prompt = _upstream_text(graph, by_id, node_id)
                 reference = _assemble_reference_image(
                     forgeworks_root, asset_id, kind, graph, by_id, node_id)
-                relative_reference = (os.path.relpath(reference, root).replace(os.sep, '/')
+                relative_reference = (os.path.relpath(os.path.realpath(reference), root).replace(os.sep, '/')
                                       if reference else '')
                 has_image_edge = any(edge.get('to') == node_id and edge.get('in') == 'image'
                                      for edge in graph['edges'])
@@ -770,10 +1063,28 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             # 执行期间参数/连线变了，这次本地结果不能覆盖最新图
             if snapshot_hashes[node_id][2] != latest_hashes[node_id][2]:
                 continue
-            # 远程任务的状态由 submit/poll 维护；本地运行不覆盖正在等待/已完成的任务
+            # 远程任务由 submit/poll 维护；本地运行只合并派生产物，不覆盖任务本身
             if computed['type'] in PROVIDER_TYPES:
                 current_task = (current.get('result') or {}).get('providerTask') or {}
                 if current_task:
+                    computed_result = computed.get('result') or {}
+                    current_result = current.setdefault('result', {})
+                    merged = dict(current_result)
+                    merged.update({key: computed_result[key]
+                                   for key in ('state', 'warnings')
+                                   if key in computed_result})
+                    if 'error' in computed_result:
+                        merged['error'] = computed_result['error']
+                    else:
+                        merged.pop('error', None)
+                    derived = (computed_result.get('output')
+                               if isinstance(computed_result.get('output'), dict) else {})
+                    if derived:
+                        merged['output'] = dict(current_result.get('output') or {}, **derived)
+                    # 无变化时不写盘，避免旧图仅因重跑就递增 revision
+                    if merged != current_result:
+                        current['result'] = merged
+                        changed = True
                     continue
             current['result'] = computed.get('result')
             changed = True

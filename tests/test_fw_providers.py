@@ -184,5 +184,94 @@ class AnalyzeLayoutTest(unittest.TestCase):
                 {'providers': {}}, str(self.image), [{'id': 'partModel_body', 'name': '车身'}])
 
 
+class ArkSpecTest(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        self.original = fw_providers._ark_request
+
+    def tearDown(self):
+        fw_providers._ark_request = self.original
+
+    def _image(self, directory):
+        path = pathlib.Path(directory) / 'overall.png'
+        path.write_bytes(b'\x89PNG\r\n\x1a\n')
+        return str(path)
+
+    def test_parses_fenced_spec_json_and_sends_image(self):
+        def fake(config, route, payload=None, timeout=60):
+            self.calls.append((route, payload))
+            return {'choices': [{'message': {'content':
+                '```json\n{"parts":{"bucket":{"sizeM":[1.1,1.2,1.0],'
+                '"forward":"+X","confidence":0.7}},"notes":["ok"]}\n```'}}]}
+
+        fw_providers._ark_request = fake
+        with tempfile.TemporaryDirectory() as directory:
+            raw, meta = fw_providers.analyze_spec(
+                ARK_CONFIG, self._image(directory),
+                [{'name': '铲斗', 'description': '前端挖斗'}],
+                prompt='保持比例', overall_length=7.2, template='excavator')
+
+        self.assertEqual(raw['parts']['bucket']['sizeM'], [1.1, 1.2, 1.0])
+        self.assertEqual(meta['model'], fw_providers.ARK_VISION_MODEL)
+        self.assertEqual(meta['notes'], 'ok')
+        route, payload = self.calls[0]
+        self.assertEqual(route, '/chat/completions')
+        content = payload['messages'][1]['content']
+        self.assertEqual(content[0]['type'], 'text')
+        self.assertEqual(content[1]['type'], 'image_url')
+        self.assertIn('data:image/png;base64,', content[1]['image_url']['url'])
+        self.assertIn('7.200', content[0]['text'])
+        self.assertIn('bucket', content[0]['text'])
+
+    def test_invalid_json_raises_runtime_error(self):
+        fw_providers._ark_request = lambda *args, **kwargs: {
+            'choices': [{'message': {'content': 'not json'}}]}
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, '有效 JSON'):
+                fw_providers.analyze_spec(
+                    ARK_CONFIG, self._image(directory), [{'name': '车身'}])
+
+    def test_missing_image_file_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            fw_providers.analyze_spec(
+                ARK_CONFIG, 'missing.png', [{'name': '车身'}])
+
+    def test_non_dict_choice_raises_runtime_error_instead_of_attribute_error(self):
+        fw_providers._ark_request = lambda *args, **kwargs: {'choices': ['x']}
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, '有效 JSON'):
+                fw_providers.analyze_spec(
+                    ARK_CONFIG, self._image(directory), [{'name': '车身'}])
+
+    def test_non_dict_message_raises_runtime_error_instead_of_attribute_error(self):
+        fw_providers._ark_request = lambda *args, **kwargs: {
+            'choices': [{'message': 'oops'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, '有效 JSON'):
+                fw_providers.analyze_spec(
+                    ARK_CONFIG, self._image(directory), [{'name': '车身'}])
+
+    def test_truncated_output_raises_explicit_error(self):
+        fw_providers._ark_request = lambda *args, **kwargs: {
+            'choices': [{'message': {'content': '{"parts":'}, 'finish_reason': 'length'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, '截断'):
+                fw_providers.analyze_spec(
+                    ARK_CONFIG, self._image(directory), [{'name': '车身'}])
+
+    def test_missing_key_raises_before_request(self):
+        calls = []
+
+        def fail(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError('missing key must not trigger a request')
+        fw_providers._ark_request = fail
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'API key'):
+                fw_providers.analyze_spec(
+                    {'providers': {}}, self._image(directory), [{'name': '车身'}])
+        self.assertEqual(calls, [])
+
+
 if __name__ == '__main__':
     unittest.main()

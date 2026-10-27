@@ -434,5 +434,92 @@ class BlenderPipelineTest(unittest.TestCase):
                 bridge._state.update(old_state)
 
 
+class BlenderFitTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.blender = find_blender()
+        if not cls.blender:
+            raise unittest.SkipTest('Blender not installed')
+
+    def _run_fit(self, source_size, target_size, forward='+X', ports=None, ground=False,
+                 fit_mode='uniform'):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source = directory / 'source.glb'
+            output = directory / 'fitted.glb'
+            plan = directory / 'plan.json'
+            make_box_glb(source, size=source_size)
+            plan.write_text(json.dumps({
+                'input': str(source), 'output': str(output),
+                'targetSizeM': list(target_size), 'fitMode': fit_mode,
+                'ground': ground, 'forward': forward, 'ports': ports or [],
+            }), encoding='utf-8')
+            report = run_blender(self.blender, [
+                '--mode', 'fit', '--plan', str(plan), '--output', str(output)])
+            self.assertTrue(output.is_file())
+            return report
+
+    def test_uniform_fit_scales_box_by_two(self):
+        report = self._run_fit((2, 1, 1), (4, 2, 2))
+        self.assertTrue(report['valid'], report)
+        self.assertAlmostEqual(report['fit']['scale'], 2.0, places=3)
+        self.assertAlmostEqual(report['fit']['aspectError'], 0.0, places=3)
+        self.assertGreater(report['triangles'], 0)
+
+    def test_fit_swaps_axes_with_quarter_turn(self):
+        report = self._run_fit((2, 1, 1), (1, 2, 1))
+        self.assertTrue(report['valid'], report)
+        self.assertAlmostEqual(report['fit']['scale'], 1.0, places=3)
+        self.assertEqual(abs(round(report['fit']['rotationDeg'][2])), 90)
+
+    def test_fit_resolves_center_port(self):
+        ports = [{'id': 'center', 'type': 'pin', 'anchor': [0.5, 0.5, 0.5],
+                  'axis': [1, 0, 0], 'normal': [0, 0, 1], 'radiusM': 0.1}]
+        report = self._run_fit((2, 1, 1), (2, 1, 1), ports=ports)
+        self.assertTrue(report['valid'], report)
+        center = report['ports'][0]['pos']
+        self.assertAlmostEqual(center[0], 0.0, places=3)
+        self.assertAlmostEqual(center[1], 0.0, places=3)
+        self.assertAlmostEqual(center[2], 0.0, places=3)
+
+    def test_fit_ground_sits_on_z_zero(self):
+        report = self._run_fit((2, 1, 1), (4, 2, 2), ground=True)
+        self.assertTrue(report['valid'], report)
+        self.assertTrue(report['fit']['grounded'])
+        self.assertAlmostEqual(report['fit']['measuredBbox']['min'][2], 0.0, places=3)
+
+    def test_per_axis_fit_hits_each_target_dimension(self):
+        report = self._run_fit((2, 1, 1), (3, 2, 4), fit_mode='perAxis')
+        self.assertTrue(report['valid'], report)
+        self.assertEqual(report['fit']['mode'], 'perAxis')
+        box = report['fit']['measuredBbox']
+        for axis in range(3):
+            size = box['max'][axis] - box['min'][axis]
+            self.assertAlmostEqual(size, (3, 2, 4)[axis], places=3)
+
+    def test_fit_without_target_size_reports_readable_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source = directory / 'source.glb'
+            output = directory / 'fitted.glb'
+            plan = directory / 'plan.json'
+            make_box_glb(source, size=(2, 1, 1))
+            plan.write_text(json.dumps({
+                'input': str(source), 'output': str(output), 'fitMode': 'uniform',
+                'forward': '+X', 'ports': [],
+            }), encoding='utf-8')
+            report_path = directory / 'report.json'
+            result = subprocess.run([
+                self.blender, '--background', '--factory-startup', '--python-exit-code', '1',
+                '--python', str(SCRIPT), '--', '--mode', 'fit', '--plan', str(plan),
+                '--output', str(output), '--report', str(report_path),
+            ], capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            report = json.loads(report_path.read_text())
+            self.assertFalse(report['valid'])
+            self.assertTrue(any('targetSizeM' in error for error in report['errors']), report)
+            self.assertNotIn("'targetSizeM'", report['errors'])
+
+
 if __name__ == '__main__':
     unittest.main()

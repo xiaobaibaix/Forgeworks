@@ -4,11 +4,14 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fw_spec
+
 
 def _arguments():
     values = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=('inspect', 'decimate', 'measure', 'assemble', 'cut'),
+    parser.add_argument('--mode', choices=('inspect', 'decimate', 'measure', 'assemble', 'cut', 'fit'),
                         default='inspect')
     parser.add_argument('--input')
     parser.add_argument('--inputs', nargs='+')
@@ -552,10 +555,96 @@ def _cut(args):
     return report
 
 
+def _fit(args):
+    import bpy
+    from mathutils import Matrix
+
+    report = {'valid': True, 'mode': 'fit', 'errors': []}
+    try:
+        if not args.plan:
+            raise ValueError('fit 模式需要 --plan')
+        with open(args.plan, encoding='utf-8') as stream:
+            plan = json.load(stream)
+        source = str(plan.get('input') or args.input or '')
+        output = str(plan.get('output') or args.output or '')
+        if not source or not os.path.isfile(source):
+            raise ValueError('fit 输入 GLB 不存在')
+        if not output:
+            raise ValueError('fit 缺少输出路径')
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.ops.import_scene.gltf(filepath=source)
+        objects = _mesh_objects()
+        if not objects:
+            raise ValueError('fit 输入没有网格')
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in objects:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = objects[0]
+        if len(objects) > 1:
+            bpy.ops.object.join()
+        target = bpy.context.view_layer.objects.active
+        bpy.context.view_layer.update()
+        lower, upper = _object_bounds(target)
+        measured = [upper[index] - lower[index] for index in range(3)]
+        target_size = plan.get('targetSizeM')
+        if target_size is None:
+            raise ValueError('fit 缺少 targetSizeM')
+        fit = fw_spec.choose_orientation(
+            measured, target_size, plan.get('forward', '+X'),
+            plan.get('fitMode', 'uniform'))
+        rotation = fit['matrix']
+        scale = fit.get('scalePerAxis') or [fit['scale']] * 3
+        rotation_matrix = Matrix((
+            (rotation[0][0], rotation[0][1], rotation[0][2], 0.0),
+            (rotation[1][0], rotation[1][1], rotation[1][2], 0.0),
+            (rotation[2][0], rotation[2][1], rotation[2][2], 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ))
+        scale_matrix = Matrix((
+            (scale[0], 0.0, 0.0, 0.0),
+            (0.0, scale[1], 0.0, 0.0),
+            (0.0, 0.0, scale[2], 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ))
+        target.matrix_world = scale_matrix @ rotation_matrix @ target.matrix_world
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        if plan.get('ground'):
+            bpy.context.view_layer.update()
+            lower, upper = _object_bounds(target)
+            target.location.z -= lower[2]
+            bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
+        bpy.context.view_layer.update()
+        lower, upper = _object_bounds(target)
+        ports = fw_spec.resolve_ports(plan.get('ports') or [],
+                                      {'min': lower, 'max': upper}, rotation)
+        os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+        bpy.ops.export_scene.gltf(filepath=output, export_format='GLB')
+        if not os.path.isfile(output):
+            raise RuntimeError('fit 未生成 GLB')
+        report['fit'] = {
+            'mode': plan.get('fitMode', 'uniform'),
+            'scale': round(float(fit['scale']), 9),
+            'scalePerAxis': [round(float(value), 9) for value in fit['scalePerAxis']],
+            'aspectError': round(float(fit['aspectError']), 9),
+            'rotationDeg': fit['rotationDeg'],
+            'measuredBbox': {'min': [round(float(value), 6) for value in lower],
+                             'max': [round(float(value), 6) for value in upper]},
+            'grounded': bool(plan.get('ground')),
+            'ambiguous': bool(fit.get('ambiguous')),
+        }
+        report['ports'] = ports
+        report['triangles'] = _count_triangles([target])
+    except Exception as error:
+        report['valid'] = False
+        report['errors'].append(str(error))
+    return report
+
+
 def main():
     args = _arguments()
     handlers = {'inspect': _inspect, 'decimate': _decimate,
-                'measure': _measure, 'assemble': _assemble, 'cut': _cut}
+                'measure': _measure, 'assemble': _assemble, 'cut': _cut,
+                'fit': _fit}
     try:
         report = handlers[args.mode](args)
     except Exception as error:

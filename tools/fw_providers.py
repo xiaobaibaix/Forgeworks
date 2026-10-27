@@ -317,6 +317,74 @@ def analyze_layout(config, image_path, parts, prompt='', model=''):
     return hints, {'model': name, 'notes': str(raw.get('notes') or '').strip()[:500]}
 
 
+def analyze_spec(config, image_path, parts, prompt='', model='',
+                 overall_length=0.0, template='excavator'):
+    """让 Ark 视觉模型把整机效果图整理成结构化 spec 候选 JSON。"""
+    name = str(model or _provider_config(config, 'ark').get('vision_model')
+               or ARK_VISION_MODEL).strip()
+    if not name:
+        raise ValueError('未配置 Ark 视觉模型')
+    _key(config, 'ark')
+    image_uri = _vision_image_uri(image_path)
+    part_lines = []
+    for part in parts or []:
+        if not isinstance(part, dict):
+            continue
+        title = str(part.get('name') or part.get('id') or '部件').strip()
+        description = str(part.get('description') or '').strip()
+        part_lines.append('- %s%s' % (title, ('：' + description[:160]) if description else ''))
+    if not part_lines:
+        raise ValueError('没有可用于尺寸规格的部件')
+    try:
+        anchor = float(overall_length or 0)
+    except (TypeError, ValueError):
+        anchor = 0.0
+    anchor_text = ('整机长度锚：%.3f 米' % anchor) if anchor > 0 else '整机长度锚：未提供'
+    instruction = str(prompt or '').strip()[:1200]
+    user_text = (
+        '参考图是一台机械的整体效果图。已经拆出的部件：\n%s\n'
+        '机型模板：%s；%s。\n'
+        '额外说明：%s\n'
+        '请只输出 JSON，不要解释。字段：\n'
+        '{"overall":{"lengthM":7.2,"widthM":2.4,"heightM":3.1},'
+        '"assembly":{"rootRole":"body"},'
+        '"parts":{"bucket":{"sizeM":[1.15,1.2,1.05],"forward":"+X","confidence":0.7,'
+        '"ports":[{"id":"ear_pin","type":"pin","anchor":[0.02,0.5,0.78],'
+        '"axis":[-1,0,0],"normal":[0,0,1],"radiusM":0.06}]}},'
+        '"connections":[{"id":"c_bucket_boom","a":"bucket:ear_pin",'
+        '"b":"boom:tip_pin","joint":"pin"}],"notes":["一句话"]}\n'
+        '角色只能用 body/track/wheel/boom/bucket/cab/roof/door/window；'
+        'sizeM 是 [X,Y,Z] 米；anchor 是 [0,1] 包围盒归一化坐标；'
+        'forward 只能是 +X/-X/+Y/-Y/+Z/-Z。看不出的尺寸给合理估计。'
+        % ('\n'.join(part_lines[:30]), template, anchor_text, instruction or '（无）'))
+    body = {
+        'model': name,
+        'messages': [
+            {'role': 'system',
+             'content': '你是机械尺寸规格分析师。只依据参考图和已列出的部件输出严格 JSON，'
+                        '不要新增未列出的部件，不要解释。'},
+            {'role': 'user', 'content': [
+                {'type': 'text', 'text': user_text},
+                {'type': 'image_url', 'image_url': {'url': image_uri}},
+            ]},
+        ],
+        'temperature': 0.2,
+        'max_tokens': 1800,
+    }
+    result = _ark_request(config, '/chat/completions', body, timeout=120)
+    choices = result.get('choices')
+    first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    if first.get('finish_reason') == 'length':
+        raise RuntimeError('视觉分析输出被截断，请减少部件或重试')
+    message = first.get('message')
+    content = _message_text(message.get('content') if isinstance(message, dict) else '')
+    raw = _json_object(content)
+    notes = raw.get('notes')
+    if isinstance(notes, list):
+        notes = '; '.join(str(item) for item in notes)
+    return raw, {'model': name, 'notes': str(notes or '')[:500]}
+
+
 def submit(config, kind, params, prompt='', input_task_id=None, image_data=None, fallback=False):
     params = params if isinstance(params, dict) else {}
     provider = _pick_provider(config, params, fallback)
