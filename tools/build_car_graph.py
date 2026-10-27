@@ -70,7 +70,8 @@ def rewire(graph, spec):
     if not overall:
         raise ValueError('CAR_GRAPH_BUILD: 图中没有 blueprint 节点')
     overall_params = dict(overall.get('params') or {})
-    overall_params.update({'scope': 'overall', 'template': overall_params.get('template') or 'car'})
+    overall_params.update({'scope': 'overall', 'template': overall_params.get('template') or 'car',
+                           'specLocked': False})
     overall_params.pop('role', None)
     overall_node = _carry_results(
         _node('blueprint_overall', 'blueprint', -150, -200, overall_params), overall)
