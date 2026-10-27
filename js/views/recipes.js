@@ -2,6 +2,11 @@
 /* ---------- 配方 ---------- */
 function renderRecipes(){
   const v=document.getElementById('view');
+  if(!S.recipes.length){
+    v.innerHTML = emptyHint('当前项目还没有配方。');
+    addBtn('+ 新增配方');
+    return;
+  }
   const byCat={};
   S.recipes.forEach(r=>{(byCat[r.cat]=byCat[r.cat]||[]).push(r)});
   let h='';

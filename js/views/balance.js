@@ -5,10 +5,15 @@ let FWD_INPUTS = {};
 
 function renderBalance(){
   const v=document.getElementById('view');
+  if(!S.items.length){
+    v.innerHTML = emptyHint('当前项目还没有物品，先到「物品」页新增。');
+    addBtn('+ 新增物品');
+    return;
+  }
   // 默认选一个 T4 模块，最能体现链条深度
-  if(!window._balTarget){
+  if(!window._balTarget || !S.items.some(i=>i.id===window._balTarget)){
     const t4 = S.items.find(i=>i.type==='module') || S.items[S.items.length-1];
-    window._balTarget = t4 ? t4.id : S.items[0].id;
+    window._balTarget = t4.id;
   }
   const opts = S.items.map(i=>{
     const produced = S.recipes.some(r=>r.outputs.some(o=>o.amount>0&&o.item===i.id));

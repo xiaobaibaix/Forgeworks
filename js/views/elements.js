@@ -2,6 +2,11 @@
 /* ---------- 元素 ---------- */
 function renderElements(){
   const v=document.getElementById('view');
+  if(!S.elements.length){
+    v.innerHTML = emptyHint('当前项目还没有元素。');
+    addBtn('+ 新增元素');
+    return;
+  }
   v.innerHTML = tableHTML([
     {t:'图标',w:'46px',f:r=>elementIconHTML(r, 24)},
     {t:'颜色',w:'60px',f:r=>`<span class="swatch" style="background:${r.color}"></span>`},

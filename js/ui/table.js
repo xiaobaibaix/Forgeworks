@@ -18,6 +18,9 @@ function typeLabel(t){
   return {raw:'原料',concentrate:'精矿',ingot:'锭/气体',part:'零件',material:'材料',
           module:'模块',mega:'宏构',byproduct:'副产物',fluid:'流体'}[t]||t;
 }
+function emptyHint(text){
+  return `<div class="card"><p class="hint" style="margin:0">${text}</p></div>`;
+}
 function addBtn(label){
   const b=document.createElement('button');
   b.className='primary'; b.textContent=label;

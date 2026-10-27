@@ -1,8 +1,13 @@
 /* Forgeworks · js/core/state.js */
 /* ---------- 状态 ---------- */
-let S = loadState();
+let S = emptyContent();
 let cur = 'elements';
 let modalState = null;
+
+/** 空内容；刻意不带 meta，避免把前端自造的元信息写进项目文件 */
+function emptyContent(){
+  return { elements:[], items:[], machines:[], recipes:[], techs:[] };
+}
 
 /**
  * 资源字段补全。
@@ -76,24 +81,12 @@ function defaultModelStatus(type){
   return 'primitive';                      // 矿石/精矿/锭/材料/副产物可用基础几何体
 }
 
-function loadState(){
-  let s = null;
-  try{
-    const raw = localStorage.getItem(LS_KEY);
-    if(raw){ const p = JSON.parse(raw); if(p && p.items && p.recipes) s = p; }
-  }catch(e){ console.warn('load fail', e); }
-  if(!s) s = JSON.parse(JSON.stringify(SEED));
-  normalizeAssets(s);
-  return s;
-}
-function saveLocalState(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); return true; }
-  catch(e){ console.warn('save local fail', e); return false; }
-}
 function saveState(){
-  if(!saveLocalState()){ toast('保存失败：浏览器本地存储不可用'); return; }
-  const toProject = typeof syncScheduleContentSave === 'function' && syncScheduleContentSave();
-  toast(toProject ? '已保存到项目' : '已保存到浏览器本地');
+  if(typeof syncScheduleContentSave === 'function' && syncScheduleContentSave()){
+    toast('已保存到项目');
+    return;
+  }
+  toast('内容未保存：请先打开项目');
 }
 function toast(msg){
   const t = document.getElementById('toast');

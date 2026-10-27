@@ -7,19 +7,15 @@ document.addEventListener('keydown',e=>{
 
 /* ---------- 启动 ---------- */
 document.getElementById('btnSave').onclick=saveState;
-document.getElementById('btnReset').onclick=()=>{
-  if(!confirm('确认恢复预填数据？当前所有修改将丢失。')) return;
-  S=JSON.parse(JSON.stringify(SEED));
-  normalizeAssets(S);
-  saveState(); clearCostCache(); clearIconCache(); // 版本戳：直接从 main.js 自己的 src 里读 ?v=，保证与资源版本号一致
-(function(){
-  const el = document.getElementById('buildStamp');
-  if(!el) return;
-  const tag = document.querySelector('script[src*="js/main.js"]');
-  const v = tag ? (tag.getAttribute('src').split('?v=')[1] || '') : '';
-  el.textContent = v ? 'build ' + v : (typeof BUILD_STAMP !== 'undefined' ? BUILD_STAMP : '');
-})();
-render(); toast('已恢复预填数据');
+document.getElementById('btnReset').onclick=async ()=>{
+  if(!confirm('确认重新载入项目？未保存的修改将丢失。')) return;
+  if(typeof syncReloadContent === 'function' && typeof syncProjectReady === 'function' && syncProjectReady()){
+    const content = await syncReloadContent('手动重新载入');
+    if(!content) toast('项目暂无内容');
+    return;
+  }
+  S = emptyContent();
+  clearCostCache(); clearIconCache(); render(); toast('尚未打开项目，内容为空');
 };
 
 // 所有脚本已载入，现在才构建视图表（见 router.js 里的说明）
@@ -45,7 +41,7 @@ VIEWS = makeViews();
     }
     // 探测结束（无论在线与否）都要替换掉首帧的「正在连接」占位
     if(cur !== 'sync' && cur !== 'project' && cur !== 'pipeline'){
-      // 首帧用的是 localStorage 旧数据；项目内容确实变了才补一次渲染
+      // 首帧是空内容；项目内容载入后补一次渲染
       if(online && SYNC.contentReloaded && !(typeof modalState !== 'undefined' && modalState)) render();
       return;
     }

@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forgeworks · 工厂游戏内容设计器</title>
-<link rel="stylesheet" href="../css/theme.css?v=20261027a">
-<link rel="stylesheet" href="../css/layout.css?v=20261027a">
-<link rel="stylesheet" href="../css/components.css?v=20261027a">
-<link rel="stylesheet" href="../css/pipeline.css?v=20261027a">
-<link rel="stylesheet" href="../css/terminal.css?v=20261027a">
-<link rel="stylesheet" href="../js/vendor/xterm.css?v=20261027a">
+<link rel="stylesheet" href="../css/theme.css?v=20261027c">
+<link rel="stylesheet" href="../css/layout.css?v=20261027c">
+<link rel="stylesheet" href="../css/components.css?v=20261027c">
+<link rel="stylesheet" href="../css/pipeline.css?v=20261027c">
+<link rel="stylesheet" href="../css/terminal.css?v=20261027c">
+<link rel="stylesheet" href="../js/vendor/xterm.css?v=20261027c">
 </head>
 <body>
 <div class="app">
@@ -27,8 +27,8 @@
     <div id="projectChip"></div>
     <nav class="nav" id="nav"></nav>
     <div class="side-foot">
-      <button id="btnSave" class="sm">保存到本地</button>
-      <button id="btnReset" class="sm">恢复预填数据</button>
+      <button id="btnSave" class="sm">保存到项目</button>
+      <button id="btnReset" class="sm">重新载入项目</button>
     </div>
   </aside>
   <main class="main">
@@ -52,71 +52,71 @@
      ES module 在 file:// 下会被 CORS 拦截，双击打不开。
      ============================================================ -->
 
-<!-- 1. 配置与数据（先有 SEED，state.js 才能初始化 S） -->
-<script src="../js/core/config.js?v=20261027a"></script>
-<script src="../js/core/color.js?v=20261027a"></script>
-<script src="../js/data/styles.js?v=20261027a"></script>
-<script src="../js/data/seed.js?v=20261027a"></script>
-<script src="../js/data/prompts.js?v=20261027a"></script>
+<!-- 1. 配置与数据（产品内容为空，测试夹具单独提供数据） -->
+<script src="../js/core/config.js?v=20261027c"></script>
+<script src="../js/core/color.js?v=20261027c"></script>
+<script src="../js/data/styles.js?v=20261027c"></script>
+<script src="../js/data/prompts.js?v=20261027c"></script>
 
 <!-- 2. 状态与索引 -->
-<script src="../js/core/state.js?v=20261027a"></script>
-<script src="../js/core/lookup.js?v=20261027a"></script>
-<script src="../js/core/style.js?v=20261027a"></script>
+<script src="../js/core/state.js?v=20261027c"></script>
+<script src="seed-fixture.js?v=20261027c"></script>
+<script src="../js/core/lookup.js?v=20261027c"></script>
+<script src="../js/core/style.js?v=20261027c"></script>
 
 <!-- 3. 第三方（本地 vendored，不依赖 CDN，离线可用） -->
-<script src="../js/vendor/three.min.js?v=20261027a"></script>
-<script src="../js/vendor/OrbitControls.js?v=20261027a"></script>
-<script src="../js/vendor/RoomEnvironment.js?v=20261027a"></script>
-<script src="../js/vendor/GLTFLoader.js?v=20261027a"></script>
-<script src="../js/vendor/GLTFExporter.js?v=20261027a"></script>
-<script src="../js/vendor/BufferGeometryUtils.js?v=20261027a"></script>
-<script src="../js/vendor/xterm.js?v=20261027a"></script>
-<script src="../js/vendor/xterm-addon-fit.js?v=20261027a"></script>
+<script src="../js/vendor/three.min.js?v=20261027c"></script>
+<script src="../js/vendor/OrbitControls.js?v=20261027c"></script>
+<script src="../js/vendor/RoomEnvironment.js?v=20261027c"></script>
+<script src="../js/vendor/GLTFLoader.js?v=20261027c"></script>
+<script src="../js/vendor/GLTFExporter.js?v=20261027c"></script>
+<script src="../js/vendor/BufferGeometryUtils.js?v=20261027c"></script>
+<script src="../js/vendor/xterm.js?v=20261027c"></script>
+<script src="../js/vendor/xterm-addon-fit.js?v=20261027c"></script>
 
 <!-- 4. 引擎（无 UI 依赖） -->
-<script src="../js/engines/icons.js?v=20261027a"></script>
-<script src="../js/engines/material-textures.js?v=20261027a"></script>
-<script src="../js/engines/asset-layers.js?v=20261027a"></script>
-<script src="../js/engines/glb.js?v=20261027a"></script>
-<script src="../js/engines/viewer3d.js?v=20261027a"></script>
-<script src="../js/views/editor3d.js?v=20261027a"></script>
-<script src="../js/engines/validate.js?v=20261027a"></script>
-<script src="../js/engines/solver.js?v=20261027a"></script>
-<script src="../js/engines/balance.js?v=20261027a"></script>
-<script src="../js/engines/csv.js?v=20261027a"></script>
-<script src="../js/core/io.js?v=20261027a"></script>
-<script src="../js/sync.js?v=20261027a"></script>
-<script src="../js/pipeline-adopt.js?v=20261027a"></script>
-<script src="../js/pipeline.js?v=20261027a"></script>
-<script src="../js/pipeline-templates.js?v=20261027a"></script>
+<script src="../js/engines/icons.js?v=20261027c"></script>
+<script src="../js/engines/material-textures.js?v=20261027c"></script>
+<script src="../js/engines/asset-layers.js?v=20261027c"></script>
+<script src="../js/engines/glb.js?v=20261027c"></script>
+<script src="../js/engines/viewer3d.js?v=20261027c"></script>
+<script src="../js/views/editor3d.js?v=20261027c"></script>
+<script src="../js/engines/validate.js?v=20261027c"></script>
+<script src="../js/engines/solver.js?v=20261027c"></script>
+<script src="../js/engines/balance.js?v=20261027c"></script>
+<script src="../js/engines/csv.js?v=20261027c"></script>
+<script src="../js/core/io.js?v=20261027c"></script>
+<script src="../js/sync.js?v=20261027c"></script>
+<script src="../js/pipeline-adopt.js?v=20261027c"></script>
+<script src="../js/pipeline.js?v=20261027c"></script>
+<script src="../js/pipeline-templates.js?v=20261027c"></script>
 
 <!-- 5. UI 基础 -->
-<script src="../js/ui/table.js?v=20261027a"></script>
-<script src="../js/ui/router.js?v=20261027a"></script>
-<script src="../js/terminal.js?v=20261027a"></script>
-<script src="../js/ui/editor.js?v=20261027a"></script>
-<script src="../js/ui/providers.js?v=20261027a"></script>
+<script src="../js/ui/table.js?v=20261027c"></script>
+<script src="../js/ui/router.js?v=20261027c"></script>
+<script src="../js/terminal.js?v=20261027c"></script>
+<script src="../js/ui/editor.js?v=20261027c"></script>
+<script src="../js/ui/providers.js?v=20261027c"></script>
 
 <!-- 6. 各视图 -->
-<script src="../js/views/style.js?v=20261027a"></script>
-<script src="../js/views/elements.js?v=20261027a"></script>
-<script src="../js/views/items.js?v=20261027a"></script>
-<script src="../js/views/machines.js?v=20261027a"></script>
-<script src="../js/views/recipes.js?v=20261027a"></script>
-<script src="../js/views/techs.js?v=20261027a"></script>
-<script src="../js/views/assets.js?v=20261027a"></script>
-<script src="../js/views/validate.js?v=20261027a"></script>
-<script src="../js/views/balance.js?v=20261027a"></script>
-<script src="../js/views/solve.js?v=20261027a"></script>
-<script src="../js/views/graph.js?v=20261027a"></script>
-<script src="../js/views/sync.js?v=20261027a"></script>
-<script src="../js/views/project.js?v=20261027a"></script>
-<script src="../js/views/pipeline.js?v=20261027a"></script>
-<script src="../js/views/export.js?v=20261027a"></script>
+<script src="../js/views/style.js?v=20261027c"></script>
+<script src="../js/views/elements.js?v=20261027c"></script>
+<script src="../js/views/items.js?v=20261027c"></script>
+<script src="../js/views/machines.js?v=20261027c"></script>
+<script src="../js/views/recipes.js?v=20261027c"></script>
+<script src="../js/views/techs.js?v=20261027c"></script>
+<script src="../js/views/assets.js?v=20261027c"></script>
+<script src="../js/views/validate.js?v=20261027c"></script>
+<script src="../js/views/balance.js?v=20261027c"></script>
+<script src="../js/views/solve.js?v=20261027c"></script>
+<script src="../js/views/graph.js?v=20261027c"></script>
+<script src="../js/views/sync.js?v=20261027c"></script>
+<script src="../js/views/project.js?v=20261027c"></script>
+<script src="../js/views/pipeline.js?v=20261027c"></script>
+<script src="../js/views/export.js?v=20261027c"></script>
 
 <!-- 7. 启动（构建 VIEWS 并首次渲染） -->
-<script src="../js/main.js?v=20261027a"></script>
+<script src="../js/main.js?v=20261027c"></script>
 
 <pre id="selftest-result" style="font:12px monospace;white-space:pre-wrap;padding:16px"></pre>
 <script>
@@ -441,7 +441,7 @@
     check('分件模板含整体图、六条单件链路与组装', function(){
       var graph = pipelineStarterGraph('probe', 'parts');
       var types = graph.nodes.map(function(node){ return node.type; });
-      var chain = ['prompt', 'textToImage', 'partImage', 'partModel', 'assemble'];
+      var chain = ['prompt', 'textToImage', 'partImage', 'partModel', 'decimate', 'assemble'];
       var missing = chain.filter(function(type){ return types.indexOf(type) < 0; });
       if(missing.length) throw new Error('缺 ' + missing.join(','));
       function linked(from, to, port){
@@ -449,7 +449,7 @@
           return edge.from === from && edge.to === to && edge['in'] === port;
         });
       }
-      if(pipelinePorts('partImage', 'in').join() !== 'text,image')
+      if(pipelinePorts('partImage', 'in').join() !== 'text,image,spec')
         throw new Error('partImage 输入端口异常');
       if(!linked('prompt_overall', 'overall', 'text')) throw new Error('缺少整体描述词连线');
       ['body','roof','wheel','door','side_window','rear_window'].forEach(function(name){
@@ -457,7 +457,8 @@
           throw new Error(name + ' 未接入整体效果图');
         if(!linked('prompt_' + name, 'partImage_' + name, 'text')
           || !linked('partImage_' + name, 'partModel_' + name, 'image')
-          || !linked('partModel_' + name, 'assemble', 'part'))
+          || !linked('partModel_' + name, 'decimate_' + name, 'mesh')
+          || !linked('decimate_' + name, 'assemble', 'part'))
           throw new Error(name + ' 链路缺失');
       });
       if(!linked('prompt_assemble', 'assemble', 'text')) throw new Error('缺少组装描述词连线');
@@ -731,12 +732,12 @@
         });
       }
       try {
-        if(pipelinePorts('partModel', 'out').join() !== 'part')
+        if(pipelinePorts('partModel', 'out').join() !== 'part,mesh,assembly')
           throw new Error('partModel 输出端口异常');
-        if(pipelinePorts('assemble', 'in').join() !== 'text,part')
+        if(pipelinePorts('assemble', 'in').join() !== 'text,part,image')
           throw new Error('assemble 输入端口异常');
-        graph.edges = graph.edges.filter(function(edge){ return edge.from !== 'partModel_roof'; });
-        if(!pipelineConnect('partModel_roof', 'assemble', 'part'))
+        graph.edges = graph.edges.filter(function(edge){ return edge.from !== 'decimate_roof'; });
+        if(!pipelineConnect('decimate_roof', 'assemble', 'part'))
           throw new Error('部件端口无法连线');
         var partModels = graph.nodes.filter(function(node){ return node.type === 'partModel'; }).length;
         if(partEdges().length !== partModels) throw new Error('部件连线数量与单件模型不一致');
@@ -750,8 +751,8 @@
         });
         if(before.length !== 1 || after.length !== 1 || after[0].from !== 'prompt_roof')
           throw new Error('单输入口应替换旧连线');
-        if(pipelineConnect('partModel_body', 'decimate', 'mesh'))
-          throw new Error('part 端口不该连到 mesh 输入');
+        if(pipelineConnect('prompt_body', 'style', 'mesh'))
+          throw new Error('text 端口不该连到 mesh 输入');
         return '多输入并存 / 单输入替换 / 类型不符被拒';
       } finally {
         window.pipelineSave = savedSave;
@@ -972,8 +973,6 @@
     check('编辑器保存走真实提交路径', function(){
       var oldItems = S.items.slice();
       var oldCur = cur, oldModal = modalState;
-      var oldLocal = null;
-      try{ oldLocal = localStorage.getItem(LS_KEY); }catch(e){}
       var icon = 'data:image/png;base64,OLD';
       try{
         S.items.push({id:'SMOKE_MERGE', name:'旧', tier:0, type:'raw', value:1,
@@ -997,10 +996,6 @@
         modalState = oldModal;
         cur = oldCur;
         document.getElementById('mask').classList.add('hide');
-        try{
-          if(oldLocal === null) localStorage.removeItem(LS_KEY);
-          else localStorage.setItem(LS_KEY, oldLocal);
-        }catch(e){}
       }
     });
     /* ---- 独立 GLB 工具 ---- */
@@ -1499,6 +1494,10 @@
 
   window.addEventListener('load', function(){
     setTimeout(function(){
+      if(typeof SEED_FIXTURE !== 'undefined'){
+        S = JSON.parse(JSON.stringify(SEED_FIXTURE));
+        normalizeAssets(S);
+      }
       var initialView = cur;
       runSync();
       runAsync(function(){

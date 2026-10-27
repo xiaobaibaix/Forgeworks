@@ -2,6 +2,11 @@
 /* ---------- 科技 ---------- */
 function renderTechs(){
   const v=document.getElementById('view');
+  if(!S.techs.length){
+    v.innerHTML = emptyHint('当前项目还没有科技。');
+    addBtn('+ 新增科技');
+    return;
+  }
   const byTier={};
   S.techs.forEach(t=>{(byTier[t.tier]=byTier[t.tier]||[]).push(t)});
   let h='';

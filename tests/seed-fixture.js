@@ -1,6 +1,6 @@
-/* Forgeworks · js/data/seed.js */
-/* ---------- 预填数据（与设计文档保持一致） ---------- */
-const SEED = {
+/* Forgeworks · tests/seed-fixture.js */
+/* ---------- 冒烟测试夹具：产品代码不再内置任何内容数据 ---------- */
+const SEED_FIXTURE = {
 meta:{name:'StellarEra 内容数据',version:1,updated:'2026-10-20'},
 
 elements:[

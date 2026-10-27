@@ -149,7 +149,7 @@ open index.html          # macOS
 # start index.html       # Windows
 ```
 
-浏览器打开即用。数据存在 localStorage，`Cmd/Ctrl + S` 保存。
+浏览器打开即用。内容数据只存在项目的 `project.json` 里：先用 Bridge 打开/新建项目，各栏才会载入该项目的数据；没有绑定项目时界面是空白的。`Cmd/Ctrl + S` 写回项目。
 
 **开发时建议用自带的静态服务器**（禁用缓存）：
 
@@ -198,15 +198,14 @@ Forgeworks/
     │   ├── GLTFExporter.js     导出 GLB
     │   └── GLTFLoader.js       预留：加载模型
     ├── core/
-    │   ├── config.js       常量（存储键名）
+    │   ├── config.js       全局配置说明（内容只来自项目文件）
     │   ├── color.js        颜色工具（hexToHsl / clampSL / mixHex，全局唯一定义）
-    │   ├── state.js        状态、localStorage、资源字段补全
+    │   ├── state.js        全局状态（启动时为空）、资源字段补全
     │   ├── style.js        风格引擎：角色带校正、一致性检查、修正表
     │   ├── lookup.js       索引查询
     │   └── io.js           下载、剪贴板
     ├── data/
     │   ├── styles.js       风格基线 + 角色带定义 + 旋钮定义
-    │   ├── seed.js         预填数据集（75 物品 / 32 机器 / 60 配方）
     │   └── prompts.js      美术需求描述词库 + 等轴测体块预览
     ├── engines/
     │   ├── icons.js        程序化 SVG 图标（配色走风格引擎）
@@ -240,13 +239,12 @@ Forgeworks/
 全部是普通 `<script>`（不是 ES module）——`import` 在 `file://` 下会被 CORS 拦截，双击打不开。
 靠 `index.html` 里的顺序保证依赖，顺序错了直接白屏：
 
-1. `data/seed.js` 必须在 `core/state.js` 之前（后者初始化时要读 `SEED`）
-2. `core/color.js` 必须在 `engines/icons.js` 之前（图标引擎要用它做 HSL 变换，
+1. `core/color.js` 必须在 `engines/icons.js` 之前（图标引擎要用它做 HSL 变换，
    颜色工具全局只有这一份定义，多份实现会导致颜色对不上）
-3. `data/styles.js` 必须在 `core/style.js` 之前（风格引擎读基线）；
+2. `data/styles.js` 必须在 `core/style.js` 之前（风格引擎读基线）；
    `core/style.js` 必须在 `engines/*` 之前（图标与 3D 都要跟风格联动）
-4. `js/vendor/three.min.js` 必须在 `engines/viewer3d.js` 之前
-5. `ui/router.js` 里的 `VIEWS` 用 `makeViews()` 延迟构建，它比所有 `views/*.js` 先加载，
+3. `js/vendor/three.min.js` 必须在 `engines/viewer3d.js` 之前
+4. `ui/router.js` 里的 `VIEWS` 用 `makeViews()` 延迟构建，它比所有 `views/*.js` 先加载，
    不能在顶层直接引用还没定义的渲染函数
 
 > 风格相关的函数（`getStyle` / `fitColor` / `accentFor`）虽然定义在 `core/style.js`，
@@ -407,7 +405,7 @@ bash tests/run.sh
 - 求解器不处理配方分支的组合爆炸，副产物去向需人工核对
 - 不做多配方并行生产（只给一条链）
 - 元素暂时不参与配方计算，仅作展示
-- 本地存储上限约 5MB；数据量大时用 JSON 导入导出
+- 项目文件单个上限 16MB（图标内嵌会撑大体积）；数据量大时用 JSON 导入导出
 - 3D 预览需要 WebGL 支持
 - 体块是程序化占位，不是最终美术资产
 

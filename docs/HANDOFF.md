@@ -389,7 +389,7 @@ Forgeworks/
 ├── css/                        样式
 ├── js/
 │   ├── core/    config.js  color.js  state.js  lookup.js  style.js  io.js
-│   ├── data/    styles.js  seed.js  prompts.js
+│   ├── data/    styles.js  prompts.js
 │   ├── engines/ icons.js  viewer3d.js  validate.js  solver.js  balance.js  csv.js
 │   ├── ui/      table.js  router.js  editor.js
 │   ├── views/   style.js elements.js items.js machines.js recipes.js
@@ -422,7 +422,7 @@ Forgeworks/
 ### 9.1 `index.html` 脚本加载顺序（**有依赖，别乱动**）
 
 1. `core/config.js` → `core/color.js` → `data/styles.js`（**styles 必须在 style 之前**）
-2. `data/seed.js` → `data/prompts.js`
+2. `data/prompts.js`（内容数据不再内置，运行时由项目文件载入）
 3. `core/state.js` → `core/lookup.js` → `core/style.js`
 4. `vendor/three*.js` 全家
 5. `engines/icons.js`（**color.js 必须在它之前**）→ 其余 engines
@@ -564,7 +564,7 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 ```
 <Forgeworks 项目>/
 ├── forgeworks.project.json     项目标记（名称、创建时间）
-├── project.json                全部内容（主存储；localStorage 仅离线兜底）
+├── project.json                全部内容（唯一存储；未绑定项目时前端为空内容）
 ├── _Source/{机器,物品/图标,材质,数据}/
 └── _Sync/{manifest.json,tool_versions,conflicts}/
 
@@ -591,7 +591,7 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 
 - `js/sync.js`：`SYNC.projects / content / contentRoot / ueManifest`，`syncCreateProject / syncOpenProject / syncSetUETarget / syncPublishUE / syncUnbindProject`，内容防抖保存与 SSE 重载。
 - `js/views/sync.js`：「Forgeworks 项目」卡（打开态/新建/打开/最近项目）、「UE 导出目标」卡（设置/更换/导出全部/只导出待更新）、资源表 UE 列。
-- `js/core/state.js`：保存时优先写项目，失败回退 localStorage。
+- `js/core/state.js`：启动时内容为空，只由 `js/sync.js` 从项目文件载入；保存直接写项目，未绑定项目时提示而不落本地。
 - 侧栏底部项目 chip 显示当前项目与 UE 就绪状态。
 
 ### 测试与验证

@@ -2,6 +2,11 @@
 /* ---------- 物品 ---------- */
 function renderItems(){
   const v=document.getElementById('view');
+  if(!S.items.length){
+    v.innerHTML = emptyHint('当前项目还没有物品。');
+    addBtn('+ 新增物品');
+    return;
+  }
   const byTier = {};
   S.items.forEach(it=>{(byTier[it.tier]=byTier[it.tier]||[]).push(it)});
   let h='';

@@ -15,7 +15,7 @@
 ```
 <Forgeworks 项目>/                       ← 新建/打开的项目工程，存全部设计数据
 ├── forgeworks.project.json              ← 项目标记（含名称、创建时间）
-├── project.json                         ← 全部内容数据（替代 localStorage 作为主存储）
+├── project.json                         ← 全部内容数据（唯一存储，前端不内置任何内容）
 ├── _Source/
 │   ├── 机器/<中文名>/                    ← GLB + 预览 SVG/PNG + pipeline/prompt
 │   ├── 物品/图标/<中文名>/ 元素/<中文名>/ 材质/<风格>/ 数据/
@@ -30,11 +30,11 @@
 
 ### 行为约定
 
-- **新建项目**：选父目录 + 名称，创建上述目录树并写入项目标记与初始内容。
+- **新建项目**：选父目录 + 名称，创建上述目录树并写入项目标记与清单；内容从空白开始，第一次保存才生成 `project.json`。
 - **打开项目**：选项目根（含 `forgeworks.project.json`）或旧版 `<UE>/Forgeworks`；旧版自动迁移为项目根。
 - **UE 导出目标**：独立设置，必须含 `.uproject`；**不能与当前项目根相同**（否则等于自拷贝）。
 - **导出到 UE**：只复制 `files.mesh`（GLB）与导出的 manifest，`preview` / `thumbnail` / `pipeline` / `prompt` 留在项目里。`meta` 原样带过去，用于计算 `stale`（contentHash/styleHash 变化）与尺寸校验。
-- 项目内容变更 → 防抖 400ms 写回 `project.json`；localStorage 仅作离线兜底。
+- 项目内容变更 → 防抖 400ms 写回 `project.json`；未绑定项目时内容为空、保存被拒绝。
 - 导出状态机仍在项目层比较：项目 `contentHash`/`styleHash` vs UE manifest 的 `meta` → `none | stale | exported`。
 
 ### Bridge API（新增/变更）

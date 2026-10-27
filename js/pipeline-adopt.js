@@ -105,15 +105,14 @@
   }
 
   async function persistAsset(){
-    if(typeof saveLocalState === 'function') saveLocalState();
     if(typeof syncSaveProjectNow !== 'function') return '';
     try{
       const saved = await syncSaveProjectNow();
       if(saved && saved.ok === false && !saved.skipped){
-        return '项目内容保存失败，资产仅保存在浏览器本地';
+        return '项目内容保存失败';
       }
     }catch(_){
-      return '项目内容保存失败，资产仅保存在浏览器本地';
+      return '项目内容保存失败';
     }
     return '';
   }

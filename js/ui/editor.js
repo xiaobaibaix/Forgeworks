@@ -77,7 +77,7 @@ function iconResourceHTML(opt){
           ${opt.showGenerate?`<button class="sm" id="iconGen">${opt.generateLabel || '生成图标 →'}</button>`:''}
         </div>
         <div style="font-size:10.5px;color:var(--text-3);margin-top:6px">
-          上传或拖入的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆 localStorage。
+          上传或拖入的图片会自动缩放到 128×128 并转成内嵌数据，避免撑爆项目文件。
         </div>
       </div>
     </div>

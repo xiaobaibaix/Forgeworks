@@ -139,11 +139,26 @@ function syncCloneJSON(value){
   return JSON.parse(JSON.stringify(value));
 }
 
-/** 载入项目内容；force=true 时即使已载入也重新读。项目没有内容时保留当前 S。 */
+/** 清空内存内容与基线；没有可读的项目文件时，界面必须回到空白。 */
+function syncResetContent(){
+  S = emptyContent();
+  SYNC.content = syncCloneJSON(S);
+  if(typeof clearCostCache === 'function') clearCostCache();
+  if(typeof clearIconCache === 'function') clearIconCache();
+}
+
+/** 载入项目内容；force=true 时即使已载入也重新读。没有内容就清空，不沿用上一个项目。 */
 async function syncLoadProjectContent(force){
   const proj = SYNC.status && SYNC.status.project;
-  if(!SYNC.online || !proj || !proj.root){ SYNC.contentRoot = null; return null; }
+  if(!SYNC.online || !proj || !proj.root){
+    const hadContent = SYNC.contentRoot !== null;
+    if(hadContent) syncResetContent();
+    SYNC.contentRoot = null;
+    SYNC.contentReloaded = hadContent;
+    return null;
+  }
   if(!force && SYNC.contentRoot === proj.root) return SYNC.content;
+  if(SYNC.contentRoot && SYNC.contentRoot !== proj.root) syncResetContent();
   try{
     const r = await syncApi('project/content');
     if(!r || !r.ok) throw new Error((r && r.error) || '读取失败');
@@ -154,23 +169,20 @@ async function syncLoadProjectContent(force){
     SYNC.contentStale = false;
     if(content && Array.isArray(content.items) && Array.isArray(content.recipes)){
       S = content;
-      normalizeAssets(S);
-      syncSaveLocal();
-      if(typeof clearCostCache === 'function') clearCostCache();
-      if(typeof clearIconCache === 'function') clearIconCache();
-    }
-    SYNC.contentReloaded = !!content && JSON.stringify(S) !== previous;
-    // 基线必须与 S 分离，否则编辑会同时改掉基线，三方合并失效
-    if(content){
-      SYNC.content = syncCloneJSON(content);
-      normalizeAssets(SYNC.content);
     }else{
-      SYNC.content = null;
+      S = emptyContent();
     }
+    normalizeAssets(S);
+    if(typeof clearCostCache === 'function') clearCostCache();
+    if(typeof clearIconCache === 'function') clearIconCache();
+    SYNC.contentReloaded = JSON.stringify(S) !== previous;
+    // 基线必须与 S 分离，否则编辑会同时改掉基线，三方合并失效
+    SYNC.content = syncCloneJSON(S);
+    normalizeAssets(SYNC.content);
     return content;
   }catch(e){
     SYNC.contentRoot = null;
-    syncLog('读取项目内容失败，暂时只保存到浏览器：' + e.message, 'warn');
+    syncLog('读取项目内容失败：' + e.message, 'warn');
     return null;
   }
 }
@@ -243,18 +255,12 @@ function syncMergeContent(latest){
   });
   S = merged;
   normalizeAssets(S);
-  syncSaveLocal();
   if(typeof clearCostCache === 'function') clearCostCache();
   if(typeof clearIconCache === 'function') clearIconCache();
   const baseCopy = syncCloneJSON(latest);
   normalizeAssets(baseCopy);
   SYNC.content = baseCopy;
   return conflicts;
-}
-
-function syncSaveLocal(){
-  if(typeof saveLocalState === 'function') return saveLocalState();
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); return true; }catch(e){ return false; }
 }
 
 /** 内容未载入时不写项目，避免用本地旧数据覆盖项目文件。 */
@@ -312,12 +318,13 @@ async function syncFlushContent(retried){
 
 /** 外部写入后重新载入内容；仅在编辑器关闭且无待保存改动时调用。 */
 async function syncReloadContent(reason){
-  if(!SYNC.online) return;
+  if(!SYNC.online) return null;
   const content = await syncLoadProjectContent(true);
-  if(!content) return;
-  if(typeof render === 'function') render();
-  if(typeof toast === 'function') toast('已载入最新项目内容');
-  syncLog((reason || '外部修改') + '：已同步最新内容', 'ok');
+  if(SYNC.contentReloaded && typeof render === 'function') render();
+  if(content && typeof toast === 'function') toast('已载入最新项目内容');
+  syncLog((reason || '外部修改') + '：' + (content ? '已同步最新内容' : '项目暂无内容'),
+          content ? 'ok' : 'info');
+  return content;
 }
 
 /** 弹窗关闭后补上编辑器打开期间跳过的外部更新。 */
@@ -328,9 +335,8 @@ function syncResumeAfterModal(){
   syncReloadContent('外部修改');
 }
 
-/** 立即保存（浏览器本地备份 + 项目文件）。 */
+/** 立即保存到项目文件。 */
 async function syncSaveProjectNow(){
-  syncSaveLocal();
   return syncFlushContent();
 }
 
@@ -433,10 +439,11 @@ async function syncOpenProject(path){
   const r = await syncApi('project/bind', { path });
   if(r && r.ok){
     syncProjectsPayload(r);
-    SYNC.contentRoot = null; SYNC.content = null;
+    syncResetContent();
+    SYNC.contentRoot = null;
     syncLog('已打开项目：' + r.project.name + '（' + r.project.root + '）', 'ok');
     await syncLoadProjects();
-    await syncLoadProjectContent();
+    await syncLoadProjectContent(true);
     await Promise.all([syncLoadManifest(), syncLoadUEManifest(), syncLoadUEAssets(), syncLoadConflicts()]);
   }
   return r;
@@ -447,11 +454,11 @@ async function syncCreateProject(parent, name){
   const r = await syncApi('project/create', { parent, name });
   if(r && r.ok){
     syncProjectsPayload(r);
-    SYNC.contentRoot = r.project.root;
-    SYNC.content = S;
+    syncResetContent();                  // 新项目从空白开始，不再把当前设计写进去
+    SYNC.contentRoot = null;
     syncLog('已新建项目：' + r.project.name + '（' + r.project.root + '）', 'ok');
     await syncLoadProjects();
-    await syncSaveProjectNow();          // 新项目立即写入当前设计数据
+    await syncLoadProjectContent(true);
     await Promise.all([syncLoadManifest(), syncLoadUEManifest(), syncLoadUEAssets(), syncLoadConflicts()]);
   }
   return r;
@@ -484,8 +491,8 @@ async function syncUnbindProject(){
   SYNC.ueManifest = null;
   SYNC.ueAssets = [];
   SYNC.conflicts = [];
-  SYNC.content = null;
   SYNC.contentRoot = null;
+  syncResetContent();
   if(SYNC.status){ SYNC.status.project = null; SYNC.status.ueTarget = null; }
   await syncLoadProjects();
   return r;
@@ -1016,7 +1023,11 @@ function syncWatchEvents(onEvent){
       if(ev.kind === 'project.opened' || ev.kind === 'project.created' || ev.kind === 'project.unbound'
           || ev.kind === 'project.ue_target'){
         Promise.all([syncLoadProjects(), syncLoadProjectContent(true), syncLoadManifest(), syncLoadUEManifest()])
-          .then(function(){ if(onEvent) onEvent(ev); });
+          .then(function(){
+            if(SYNC.contentReloaded && !(typeof modalState !== 'undefined' && modalState)
+               && typeof render === 'function') render();
+            if(onEvent) onEvent(ev);
+          });
       }else if(ev.kind === 'content.changed'){
         if(SYNC.contentSaving || (typeof modalState !== 'undefined' && modalState) || SYNC.contentTimer){
           SYNC.contentStale = true;

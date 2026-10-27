@@ -41,7 +41,7 @@ function dlCsv(name, content){
 /* ---------- 图标上传：缩放后转 dataURL ---------- */
 /**
  * 把用户选的图片缩到 128×128 以内再转 dataURL。
- * 直接存原图会让 localStorage 爆掉（5MB 配额，75 个物品）。
+ * 直接存原图会让 project.json 膨胀到几十 MB（图标内嵌在内容里）。
  */
 function readIconFile(file, maxSize){
   maxSize = maxSize || 128;

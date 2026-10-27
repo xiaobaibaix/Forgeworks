@@ -26,6 +26,11 @@ function machineIconHTML(m, size){
  */
 function renderMachines(){
   const v=document.getElementById('view');
+  if(!S.machines.length){
+    v.innerHTML = emptyHint('当前项目还没有机器。');
+    addBtn('+ 新增机器');
+    return;
+  }
   const showSync = SYNC.online && SYNC.status && SYNC.status.project;
 
   const cols = [
