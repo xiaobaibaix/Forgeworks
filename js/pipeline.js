@@ -1551,7 +1551,7 @@ function pipelineParamForm(node){
     return `<div class="pipeline-params">
       ${pipelineParamSelect(node, 'provider', '平台', [{value:'ark',label:'Ark'}], 'ark')}
       ${pipelineParamNumber(node, 'overallLengthM', '整机长度（m）', 'min="0" step="0.1"', '')}
-      ${pipelineParamSelect(node, 'template', '机型模板', [{value:'excavator',label:'挖掘机'}], 'excavator')}
+      ${pipelineParamSelect(node, 'template', '机型模板', [{value:'excavator',label:'挖掘机'},{value:'car',label:'小汽车'}], 'excavator')}
       ${pipelineParamText(node, 'prompt', '额外视觉提示', '')}
       ${pipelineParamCheck(node, 'specLocked', '锁定现有规格', false)}
       <small class="pipeline-params-hint">调用一次 Ark 视觉模型生成 spec.json；整机长度是绝对尺寸锚，模板补全其余部件。锁定后若 spec 已存在则不再请求 Provider。</small>

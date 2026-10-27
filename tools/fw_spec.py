@@ -88,10 +88,62 @@ EXCAVATOR_TEMPLATE = {
 }
 
 
+CAR_TEMPLATE = {
+    'schemaVersion': 1,
+    'assetId': '',
+    'units': 'm',
+    'overall': {'lengthM': 4.2, 'widthM': 1.8, 'heightM': 1.5,
+                'source': 'template', 'confidence': 0.5},
+    'assembly': {'rootRole': 'body'},
+    'parts': {
+        'body': {
+            'role': 'body', 'sizeM': [4.2, 1.8, 0.7], 'forward': '+X', 'confidence': 0.5,
+            'ports': [
+                {'id': 'roof_mount', 'type': 'fixed', 'anchor': [0.5, 0.5, 1.0],
+                 'axis': [0, 0, 1], 'normal': [0, 0, 1], 'radiusM': 0.05},
+                {'id': 'axle_front', 'type': 'pin', 'anchor': [0.72, 0.5, 0.0],
+                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
+                {'id': 'axle_rear', 'type': 'pin', 'anchor': [0.28, 0.5, 0.0],
+                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
+            ],
+        },
+        'wheel': {
+            'role': 'wheel', 'sizeM': [4.0, 1.7, 0.6], 'forward': '+X', 'confidence': 0.5,
+            'ports': [
+                {'id': 'axle_front', 'type': 'fixed', 'anchor': [0.72, 0.5, 1.0],
+                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
+                {'id': 'axle_rear', 'type': 'fixed', 'anchor': [0.28, 0.5, 1.0],
+                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
+            ],
+        },
+        'roof': {
+            'role': 'roof', 'sizeM': [2.6, 1.5, 0.2], 'forward': '+X', 'confidence': 0.5,
+            'ports': [
+                {'id': 'mount', 'type': 'fixed', 'anchor': [0.5, 0.5, 0.0],
+                 'axis': [0, 0, -1], 'normal': [0, 0, 1], 'radiusM': 0.05},
+            ],
+        },
+    },
+    'connections': [
+        {'id': 'c_roof_body', 'a': 'roof:mount', 'b': 'body:roof_mount', 'joint': 'fixed'},
+        {'id': 'c_wheel_body_front', 'a': 'wheel:axle_front', 'b': 'body:axle_front', 'joint': 'fixed'},
+        {'id': 'c_wheel_body_rear', 'a': 'wheel:axle_rear', 'b': 'body:axle_rear', 'joint': 'fixed'},
+    ],
+    'notes': [],
+}
+
+TEMPLATES = {'excavator': EXCAVATOR_TEMPLATE, 'car': CAR_TEMPLATE}
+
+
+def _template(name):
+    template = TEMPLATES.get(str(name or 'excavator'))
+    if template is None:
+        raise ValueError('SPEC_UNANCHORED: 没有机型模板 %s，请填写 overallLengthM' % name)
+    return template
+
+
 def template_spec(asset_id='', template='excavator'):
-    if template != 'excavator':
-        raise ValueError('SPEC_UNANCHORED: 没有机型模板 %s，请填写 overallLengthM' % template)
-    spec = copy.deepcopy(EXCAVATOR_TEMPLATE)
+    spec = copy.deepcopy(_template(template))
     spec['assetId'] = str(asset_id or '')
     return validate_spec(spec)
 
@@ -275,9 +327,8 @@ def from_vision(raw, overall_length_m=0.0, template='excavator', asset_id=''):
         raw = raw['spec']
     if not isinstance(raw, dict):
         raise ValueError('SPEC_INVALID: 视觉结果不是 JSON 对象')
-    if template != 'excavator':
-        raise ValueError('SPEC_UNANCHORED: 没有机型模板 %s' % template)
-    spec = copy.deepcopy(EXCAVATOR_TEMPLATE)
+    base = _template(template)
+    spec = copy.deepcopy(base)
     spec['assetId'] = str(asset_id or '')
     raw_parts = raw.get('parts') if isinstance(raw.get('parts'), dict) else {}
     model_roles = set()
@@ -302,7 +353,7 @@ def from_vision(raw, overall_length_m=0.0, template='excavator', asset_id=''):
         anchor = 0.0
     raw_overall = raw.get('overall') if isinstance(raw.get('overall'), dict) else {}
     reported_length = _positive(raw_overall.get('lengthM'))
-    template_overall = EXCAVATOR_TEMPLATE['overall']
+    template_overall = base['overall']
     template_length = float(template_overall['lengthM'])
     target_length = anchor if anchor > 0 else template_length
     # 模型按整机锚直接给米制尺寸，用它自报的整机长度做基准，避免二次缩放

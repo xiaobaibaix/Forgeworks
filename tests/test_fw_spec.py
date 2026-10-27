@@ -21,6 +21,37 @@ class SpecValidationTest(unittest.TestCase):
             self.assertIn(role, validated['parts'])
             self.assertEqual(len(validated['parts'][role]['sizeM']), 3)
 
+    def test_car_template_is_valid(self):
+        spec = fw_spec.template_spec('MC_CAR', template='car')
+        self.assertEqual(spec['assembly']['rootRole'], 'body')
+        self.assertEqual(set(spec['parts']), {'body', 'roof', 'wheel'})
+        self.assertAlmostEqual(spec['overall']['lengthM'], 4.2)
+        self.assertAlmostEqual(spec['parts']['body']['sizeM'][2], 0.7)
+        ports = {connection['id'] for connection in spec['connections']}
+        self.assertEqual(ports, {'c_roof_body', 'c_wheel_body_front', 'c_wheel_body_rear'})
+
+    def test_unknown_template_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'SPEC_UNANCHORED'):
+            fw_spec.template_spec('M1', template='spaceship')
+        with self.assertRaisesRegex(ValueError, 'SPEC_UNANCHORED'):
+            fw_spec.from_vision({'parts': {}}, template='spaceship')
+
+    def test_from_vision_accepts_car_template(self):
+        raw = {
+            'overall': {'lengthM': 4.2},
+            'parts': {
+                'roof': {'sizeM': [2.4, 1.4, 0.2], 'confidence': 0.8},
+                'boom': {'sizeM': [1.0, 1.0, 1.0]},
+            },
+            'connections': [],
+        }
+        spec = fw_spec.from_vision(raw, overall_length_m=4.2, template='car',
+                                   asset_id='MC_CAR')
+        self.assertEqual(set(spec['parts']), {'body', 'roof', 'wheel'})
+        self.assertNotIn('boom', spec['parts'])
+        self.assertAlmostEqual(spec['parts']['roof']['sizeM'][0], 2.4)
+        self.assertAlmostEqual(spec['parts']['body']['sizeM'][0], 4.2)
+
     def test_missing_overall_is_rejected(self):
         spec = fw_spec.template_spec('M1')
         del spec['overall']
