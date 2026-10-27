@@ -498,7 +498,8 @@ def fw_dir():
 
 
 PIPELINE_HISTORY_LIMIT = 50
-PROVIDER_NODE_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel', 'blueprint')
+PROVIDER_NODE_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel',
+                       'blueprint', 'threeView')
 
 
 def write_bytes_atomic(path, data):
@@ -518,7 +519,7 @@ def write_bytes_atomic(path, data):
 
 def store_task_output(root, asset_id, kind, node_type, task):
     """同步成功的图片立即落盘，节点无需再等一次轮询才显示结果。"""
-    if node_type not in ('textToImage', 'partImage') or task.get('state') != 'success':
+    if node_type not in ('textToImage', 'partImage', 'threeView') or task.get('state') != 'success':
         return task
     output = task.get('output') if isinstance(task.get('output'), dict) else {}
     url = output.get('generated_image_url')
@@ -537,6 +538,15 @@ def store_task_output(root, asset_id, kind, node_type, task):
 
 
 PART_IMAGE_SUFFIX = '【拆件】以参考图为准，只输出按说明拆分出的这一个部件；保持参考图中的造型、比例、配色与朝向；纯色背景、单个部件居中、无其他部件、无地面投影。'
+
+THREE_VIEW_SUFFIX = ('【三视图】同一模型的正面、侧面、顶面三个正交视图，横向三等分排列；'
+                     '每格都是正交投影、无透视、同一比例尺；纯白背景；无阴影、无地面、'
+                     '无文字、无标注、无边框；三格之间留出清晰空白，每格完整不裁切。')
+
+
+def _three_view_prompt(subject=''):
+    text = str(subject or '').strip()
+    return ((text + '\n\n') if text else '') + THREE_VIEW_SUFFIX
 
 
 def _part_image_prompt(text, part=None):
@@ -1945,8 +1955,24 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                                                  (upstream_task.get('output') or {}).get('imagePath'))
                     if node['type'] == 'partModel':
                         part_name = str((upstream_result.get('output') or {}).get('partName') or '')
+                    if node['type'] == 'threeView':
+                        prompt_edge = next((edge for edge in incoming
+                                            if edge.get('in') == 'text'), None)
+                        subject = ''
+                        if prompt_edge:
+                            source = nodes.get(prompt_edge['from']) or {}
+                            subject = str((((source.get('result') or {}).get('output') or {})
+                                           .get('text')) or '')
+                        subject = subject or str(params.get('prompt') or '')
+                        if not subject:
+                            subject = fw_spec.ROLE_LABELS.get(
+                                fw_spec.role_for_node(node_id), '')
+                        prompt = _three_view_prompt(subject)
+                        if not image_data:
+                            raise ValueError('三视图需要参考图：请把概念图或单件图连到 image 口')
                 node_type = node['type']
-                provider_kind = {'partImage': 'textToImage', 'partModel': 'imageTo3D'}.get(node_type, node_type)
+                provider_kind = {'partImage': 'textToImage', 'partModel': 'imageTo3D',
+                                 'threeView': 'textToImage'}.get(node_type, node_type)
                 # 慢速 Provider 调用必须在锁外完成，避免串行化整个资产的提交
                 task = fw_providers.submit(read_json(CONFIG_FILE, {}) or {}, provider_kind, params,
                                            prompt, input_task_id, image_data, fallback=True)
@@ -2012,7 +2038,7 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                              'error': str(result.get('error_message') or '')[:300]})
                 output = result.get('output') or {}
                 node_state = 'done' if state == 'success' else ('failed' if state in ('failed', 'cancelled', 'banned') else state)
-                if state == 'success' and node_type in ('textToImage', 'partImage'):
+                if state == 'success' and node_type in ('textToImage', 'partImage', 'threeView'):
                     task['output'] = {'generated_image_url': output.get('generated_image_url')}
                     store_task_output(fw_dir(), asset_id, kind, node_type, task)
                 if state == 'success' and node_type in ('imageTo3D', 'partModel') and output.get('model_url'):

@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from PIL import Image, ImageDraw
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 import fw_pipeline
@@ -898,6 +900,57 @@ class SpecPipelineTest(unittest.TestCase):
                              [{'id': 'p'}])
 
 
+class ThreeViewExecutionTest(unittest.TestCase):
+    def _write_sheet(self, path):
+        image = Image.new('RGB', (900, 300), 'white')
+        draw = ImageDraw.Draw(image)
+        for index, color in enumerate(('black', 'gray', 'red')):
+            draw.rectangle([index * 300 + 10, 20, (index + 1) * 300 - 10, 280], fill=color)
+        image.save(path)
+
+    def test_successful_sheet_is_cropped_into_panels(self):
+        spec = fw_spec.template_spec('M1')
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                 'result': {'state': 'done', 'output': {'spec': spec}}},
+                {'id': 'overall', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/overall.png'}}}},
+                {'id': 'threeView_overall', 'type': 'threeView',
+                 'params': {'annotate': True},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'tv_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/sheet.png'}}}},
+            ],
+            'edges': [
+                {'from': 'overall', 'out': 'image', 'to': 'threeView_overall', 'in': 'image'},
+                {'from': 'blueprint', 'out': 'spec', 'to': 'threeView_overall', 'in': 'spec'},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            saved = fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            for node in saved['nodes']:
+                node['result']['state'] = 'done'
+            fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+            outputs = Path(fw_pipeline.pipeline_root(directory, 'M1')) / 'outputs'
+            outputs.mkdir(parents=True, exist_ok=True)
+            self._write_sheet(outputs / 'sheet.png')
+            result = fw_pipeline.execute_local(directory, 'M1', target_id='threeView_overall',
+                                               kind='machine')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'threeView_overall')
+            output = node['result']['output']
+            self.assertEqual(output['sheetPath'], 'outputs/sheet.png')
+            for key in ('frontPath', 'sidePath', 'topPath', 'annotatedPath'):
+                self.assertTrue(output[key].startswith('outputs/'), key)
+                self.assertTrue((Path(fw_pipeline.pipeline_root(directory, 'M1'))
+                                 / output[key]).is_file(), key)
+            self.assertEqual(output['warnings'], [])
+
+
 class SpecExecutionTest(unittest.TestCase):
     def _graph(self, spec):
         return {
@@ -1136,11 +1189,13 @@ class FrontendMirrorTest(unittest.TestCase):
         compact = ''.join(source.split())
         for expected in (
             "blueprint:{in:['image','text'],out:['spec']}",
+            "threeView:{in:['image','spec','text'],out:['sheet','front','side','top']}",
             "partImage:{in:['text','image','spec'],out:['image','ports']}",
             "partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']}",
             "blueprint:'尺寸规格'",
+            "threeView:'三视图'",
             "pipelineSpecPanel(node,taskOutput)",
-            "['textToImage','imageTo3D','partImage','partModel','blueprint']",
+            "['textToImage','imageTo3D','partImage','partModel','blueprint','threeView']",
             "visionNode?'DoubaoVision'",
             "visionNode?'ark'",
         ):

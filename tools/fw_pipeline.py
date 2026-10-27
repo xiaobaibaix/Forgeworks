@@ -16,6 +16,7 @@ import uuid
 import fw_parts
 import fw_providers
 import fw_spec
+import fw_views
 
 ASSET_KIND_DIRS = {'machine': '机器', 'item': '物品/图标', 'element': '元素', 'data': '数据'}
 
@@ -30,6 +31,9 @@ NODE_TYPES = {
     'textToImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
     'blueprint': {'in': {'image': 'image', 'text': 'text'}, 'out': {'spec': 'spec'}},
+    'threeView': {'in': {'image': 'image', 'spec': 'spec', 'text': 'text'},
+                  'out': {'sheet': 'image', 'front': 'image', 'side': 'image',
+                          'top': 'image'}},
     'partImage': {'in': {'text': 'text', 'image': 'image', 'spec': 'spec'},
                   'out': {'image': 'image', 'ports': 'ports'}},
     'partModel': {'in': {'image': 'image', 'spec': 'spec', 'ports': 'ports'},
@@ -51,7 +55,8 @@ NODE_TYPES = {
 
 
 LOCAL_STAGE_TYPES = ('uv', 'lod', 'collision', 'animation', 'metadata')
-PROVIDER_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel', 'blueprint')
+PROVIDER_TYPES = ('textToImage', 'imageTo3D', 'partImage', 'partModel',
+                  'blueprint', 'threeView')
 # 组装要接多件单件模型；其余输入口仍只允许一条连线
 MULTI_INPUTS = {('assemble', 'part')}
 
@@ -835,6 +840,51 @@ def _fit_part_model(forgeworks_root, asset_id, kind, graph, by_id, node_id, blen
     return output_data
 
 
+def _three_view_source(forgeworks_root, asset_id, kind, node):
+    result = node.get('result') or {}
+    task = result.get('providerTask') or {}
+    task_output = task.get('output') if isinstance(task.get('output'), dict) else {}
+    image_path = task_output.get('imagePath')
+    if not image_path:
+        return None
+    return resolve_output(forgeworks_root, asset_id, kind, os.path.basename(str(image_path)))
+
+
+def _process_three_view_node(forgeworks_root, asset_id, kind, graph, by_id, node_id):
+    node = by_id[node_id]
+    result = node.setdefault('result', {})
+    sheet = _three_view_source(forgeworks_root, asset_id, kind, node)
+    if not sheet:
+        return None
+    root = os.path.realpath(pipeline_root(forgeworks_root, asset_id, kind))
+    outputs_dir = os.path.join(root, 'outputs')
+    params = node.get('params') or {}
+    try:
+        spec = spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+    except ValueError:
+        spec = None
+    processed = fw_views.process_three_view(
+        sheet, outputs_dir, node_id, spec=spec,
+        measure=(result.get('output') or {}).get('measure'),
+        annotate=bool(params.get('annotate')))
+
+    def relative(path):
+        if not path:
+            return ''
+        return os.path.relpath(os.path.realpath(path), root).replace(os.sep, '/')
+
+    output = result.setdefault('output', {})
+    output.update({
+        'sheetPath': relative(processed['sheetPath']),
+        'frontPath': relative(processed['frontPath']),
+        'sidePath': relative(processed['sidePath']),
+        'topPath': relative(processed['topPath']),
+        'annotatedPath': relative(processed['annotatedPath']),
+        'warnings': processed['warnings'],
+    })
+    return output
+
+
 def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind='machine',
                   blender_path=None, provider_config=None):
     kind = normalize_kind(kind)
@@ -866,6 +916,14 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                     try:
                         _attach_part_ports(forgeworks_root, asset_id, kind, graph, by_id, node_id)
                     except ValueError as error:
+                        warnings = node['result'].setdefault('warnings', [])
+                        if str(error) not in warnings:
+                            warnings.append(str(error))
+                if node['type'] == 'threeView':
+                    try:
+                        _process_three_view_node(forgeworks_root, asset_id, kind,
+                                                 graph, by_id, node_id)
+                    except (ValueError, OSError) as error:
                         warnings = node['result'].setdefault('warnings', [])
                         if str(error) not in warnings:
                             warnings.append(str(error))
