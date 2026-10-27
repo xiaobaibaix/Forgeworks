@@ -25,11 +25,11 @@ const PIPELINE_ZOOM_MAX = 1.8;
 
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
-  decimate:{in:['mesh'],out:['mesh','part']},
+  decimate:{in:['mesh','assembly'],out:['mesh','part','assembly']},
   blueprint:{in:['image','spec','text'],out:['spec','measure']},
   threeView:{in:['image','spec','text'],out:['sheet','front','side','top']},
   partImage:{in:['text','image','spec'],out:['image','ports']},
-  partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']},
+  partModel:{in:['image','spec','ports','measure'],out:['part','mesh','assembly']},
   assemble:{in:['text','part','image'],out:['mesh']},
   styleApply:{in:['mesh'],out:['mesh']},
   uv:{in:['mesh'],out:['mesh']}, lod:{in:['mesh'],out:['mesh']}, collision:{in:['mesh'],out:['mesh']},
@@ -925,7 +925,10 @@ function pipelineStageSummary(node){
   if(node.type === 'animation') return output.parts + ' 件' + (output.kinds && output.kinds.length ? ' · ' + output.kinds.join('、') : '');
   if(node.type === 'metadata') return (output.formats || []).join(' / ');
   if(node.type === 'decimate' && output.trianglesBefore != null && output.trianglesAfter != null){
-    return output.trianglesBefore + ' → ' + output.trianglesAfter + ' 面';
+    const parts = output.assembly && Array.isArray(output.assembly.parts) ? output.assembly.parts.length : 0;
+    const drift = output.bboxDrift != null ? ' · 漂移 ' + (Number(output.bboxDrift) * 100).toFixed(1) + '%' : '';
+    return output.trianglesBefore + ' → ' + output.trianglesAfter + ' 面'
+      + (parts ? ' · 装配 ' + parts + ' 件' + drift : '');
   }
   if(node.type === 'assemble' && output.parts != null){
     const layout = output.layoutPath ? output.layoutPath.split('/').pop() : '';
@@ -1642,7 +1645,7 @@ function pipelineParamForm(node){
   if(node.type === 'decimate'){
     return `<div class="pipeline-params">
       ${pipelineParamNumber(node, 'targetFaces', '目标面数', 'min="50" max="2000000" step="50"', '900')}
-      <small class="pipeline-params-hint">由 Blender Decimate 执行；每次运行生成一个新 GLB，满意后手动「应用减面」。把 part 口接到组装节点可把减面结果作为单件输入。</small>
+      <small class="pipeline-params-hint">由 Blender Decimate 执行；每次运行生成一个新 GLB，满意后手动「应用减面」。mesh 口接单件 GLB，或改接装配节点的 assembly 口来整体减面——两种输入不能同时接线，装配模式会保留端口与 mate 记录，包围盒漂移超过 1% 会告警。</small>
     </div>`;
   }
   return `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
@@ -1674,7 +1677,11 @@ function pipelineSpecPanel(node, output){
   if(node.type==='partModel' && output.fit){
     const fit=output.fit;
     const rotation=(fit.rotationDeg||[]).map(value=>Math.round(Number(value))).join('/');
-    return `<div class="pipeline-fit">校准 ${Number(fit.scale||0).toFixed(3)}× · 偏差 ${(Number(fit.aspectError||0)*100).toFixed(1)}% · 旋转 ${pipelineEscape(rotation)}°</div>`;
+    const source=fit.targetSource==='measure'?'三视图':(fit.targetSource==='spec'?'规格':'');
+    const target=Array.isArray(fit.targetSizeM)
+      ? ' · 目标 '+fit.targetSizeM.map(value=>Number(value).toFixed(2)).join(' × ')+' m'+(source?'（'+source+'）':'')
+      : '';
+    return `<div class="pipeline-fit">校准 ${Number(fit.scale||0).toFixed(3)}× · 偏差 ${(Number(fit.aspectError||0)*100).toFixed(1)}% · 旋转 ${pipelineEscape(rotation)}°${target}</div>`;
   }
   return '';
 }

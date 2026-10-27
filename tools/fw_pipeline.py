@@ -13,6 +13,7 @@ import threading
 import time
 import uuid
 
+import fw_assembly
 import fw_parts
 import fw_providers
 import fw_spec
@@ -37,10 +38,12 @@ NODE_TYPES = {
                           'top': 'image'}},
     'partImage': {'in': {'text': 'text', 'image': 'image', 'spec': 'spec'},
                   'out': {'image': 'image', 'ports': 'ports'}},
-    'partModel': {'in': {'image': 'image', 'spec': 'spec', 'ports': 'ports'},
+    'partModel': {'in': {'image': 'image', 'spec': 'spec', 'ports': 'ports',
+                         'measure': 'measure'},
                   'out': {'part': 'part', 'mesh': 'mesh', 'assembly': 'assembly'}},
     'assemble': {'in': {'text': 'text', 'part': 'part', 'image': 'image'}, 'out': {'mesh': 'mesh'}},
-    'decimate': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh', 'part': 'part'}},
+    'decimate': {'in': {'mesh': 'mesh', 'assembly': 'assembly'},
+                 'out': {'mesh': 'mesh', 'part': 'part', 'assembly': 'assembly'}},
     'styleApply': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'uv': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'lod': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
@@ -137,6 +140,13 @@ def validate_graph(graph):
             raise ValueError('输入端口只能有一条连线')
         incoming.add(key)
         adjacency[source['id']].append(target['id'])
+    input_kinds = {}
+    for target_id, port in incoming:
+        input_kinds.setdefault(target_id, set()).add(port)
+    for node_id, ports in input_kinds.items():
+        # 减面节点要么减单件 GLB，要么减装配 GLB，两种输入不能同时接
+        if by_id[node_id]['type'] == 'decimate' and 'mesh' in ports and 'assembly' in ports:
+            raise ValueError('DECIMATE_INPUT_CONFLICT: 减面节点的 mesh 与 assembly 输入不能同时接线')
     visiting, visited, order = set(), set(), []
     def visit(node_id):
         if node_id in visiting:
@@ -580,6 +590,25 @@ def spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id):
     return fw_spec.read_spec(path)
 
 
+def measure_for_node(graph, by_id, node_id):
+    """读取单件尺寸 measure；未接线返回 None，接线但未就绪则报错。"""
+    edge = next((edge for edge in graph['edges']
+                 if edge.get('to') == node_id and edge.get('in') == 'measure'), None)
+    if not edge:
+        return None
+    source = by_id.get(edge.get('from'))
+    if not source:
+        raise ValueError('SPEC_MISSING: measure 上游节点不存在')
+    result = source.get('result') or {}
+    state = result.get('state')
+    if result and state not in ('done', None):
+        raise ValueError('SPEC_MISSING: 上游单件尺寸未就绪（%s）' % (state or '未运行'))
+    candidate = (result.get('output') or {}).get('measure')
+    if not isinstance(candidate, dict):
+        raise ValueError('SPEC_MISSING: 上游节点没有 measure 结果')
+    return candidate
+
+
 def ports_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id):
     edge = next((edge for edge in graph['edges']
                  if edge.get('to') == node_id and edge.get('in') == 'ports'), None)
@@ -732,7 +761,7 @@ def _single_part_assembly(asset_id, node_id, role, mesh_path, ports):
     }
 
 
-def _fit_is_current(forgeworks_root, asset_id, kind, node, spec):
+def _fit_is_current(forgeworks_root, asset_id, kind, node, spec, measure=None):
     result = node.get('result') or {}
     task = result.get('providerTask') or {}
     output = result.get('output') or {}
@@ -742,6 +771,9 @@ def _fit_is_current(forgeworks_root, asset_id, kind, node, spec):
     if not mesh_path or output.get('fitSourceTaskId') != task.get('taskId'):
         return False
     if output.get('fitSpecHash') != _digest(spec):
+        return False
+    measure_hash = _digest(fw_spec.validate_measure(measure, spec)) if measure else ''
+    if output.get('fitMeasureHash', '') != measure_hash:
         return False
     if fit.get('fitMode') != str(params.get('fitMode') or 'uniform'):
         return False
@@ -769,6 +801,21 @@ def _fit_part_model(forgeworks_root, asset_id, kind, graph, by_id, node_id, blen
     part = spec['parts'].get(role)
     if not part:
         raise ValueError('PART_ROLE_MISSING: spec 中没有角色 %s' % role)
+    measure = measure_for_node(graph, by_id, node_id)
+    if measure:
+        measure = fw_spec.validate_measure(measure, spec)
+        if measure['role'] != role:
+            raise ValueError('SPEC_INVALID: 单件尺寸角色 %s 与节点角色 %s 不一致'
+                             % (measure['role'], role))
+    target_size = list(part['sizeM'])
+    forward = part.get('forward', '+X')
+    target_source = 'spec'
+    measure_hash = ''
+    if measure:
+        target_size = list(measure['sizeM'])
+        forward = measure.get('forward') or forward
+        target_source = 'measure'
+        measure_hash = _digest(measure)
     params = node.get('params') or {}
     fit_mode = str(params.get('fitMode') or 'uniform')
     ground = bool(params.get('ground'))
@@ -788,10 +835,10 @@ def _fit_part_model(forgeworks_root, asset_id, kind, graph, by_id, node_id, blen
     plan = {
         'input': source,
         'output': output,
-        'targetSizeM': list(part['sizeM']),
+        'targetSizeM': target_size,
         'fitMode': fit_mode,
         'ground': ground,
-        'forward': part.get('forward', '+X'),
+        'forward': forward,
         'ports': plan_ports,
     }
     report = _fit_with_blender(blender_path, plan)
@@ -817,8 +864,9 @@ def _fit_part_model(forgeworks_root, asset_id, kind, graph, by_id, node_id, blen
         warnings.append('校准后仍有 %.1f%% 轴向偏差' % (aspect_error * 100))
     if fit.get('ambiguous'):
         warnings.append('FIT_ORIENTATION_AMBIGUOUS: 多个朝向评分接近，请检查 rotationDeg')
-    fit['targetSizeM'] = list(part['sizeM'])
-    fit['forward'] = part.get('forward', '+X')
+    fit['targetSizeM'] = target_size
+    fit['forward'] = forward
+    fit['targetSource'] = target_source
     fit['fitMode'] = fit_mode
     fit['ground'] = ground
     relative = 'outputs/' + filename
@@ -833,6 +881,7 @@ def _fit_part_model(forgeworks_root, asset_id, kind, graph, by_id, node_id, blen
         'assembly': assembly,
         'fitSourceTaskId': task.get('taskId'),
         'fitSpecHash': _digest(spec),
+        'fitMeasureHash': measure_hash,
         'engine': 'blender',
         'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
     })
@@ -935,15 +984,17 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                         if str(error) not in warnings:
                             warnings.append(str(error))
                 if node['type'] == 'partModel':
+                    part_measure = None
                     try:
                         part_spec = spec_for_node(forgeworks_root, asset_id, kind,
                                                   graph, by_id, node_id)
+                        part_measure = measure_for_node(graph, by_id, node_id)
                     except ValueError as error:
                         node['result']['state'] = 'blocked'
                         node['result']['error'] = str(error)
                         part_spec = None
                     if part_spec and not _fit_is_current(forgeworks_root, asset_id, kind,
-                                                         node, part_spec):
+                                                         node, part_spec, part_measure):
                         try:
                             _fit_part_model(forgeworks_root, asset_id, kind, graph,
                                             by_id, node_id, blender_path)
@@ -1053,7 +1104,17 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
             result = node.setdefault('result', {})
             try:
                 target = _decimate_target(node.get('params', {}).get('targetFaces'))
-                source_path = _decimate_input(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+                assembly = fw_assembly.assembly_for_node(graph, by_id, node_id)
+                if assembly:
+                    assembly_mesh = assembly.get('meshPath')
+                    source_path = resolve_output(
+                        forgeworks_root, asset_id, kind,
+                        os.path.basename(str(assembly_mesh or '')))
+                    if not source_path:
+                        raise ValueError('ASSEMBLY_MISSING: 装配网格不可用：%s' % assembly_mesh)
+                else:
+                    source_path = _decimate_input(forgeworks_root, asset_id, kind,
+                                                  graph, by_id, node_id)
                 if not blender_path:
                     raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
                 outputs_dir = os.path.join(pipeline_root(forgeworks_root, asset_id, kind), 'outputs')
@@ -1063,7 +1124,7 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 if not report.get('valid'):
                     raise ValueError('; '.join(report.get('errors') or []) or 'Blender 减面失败')
                 result['state'] = 'done'
-                result['output'] = {
+                output = {
                     'meshPath': filename,
                     'trianglesBefore': int(report.get('trianglesBefore') or 0),
                     'trianglesAfter': int(report.get('trianglesAfter') or 0),
@@ -1072,6 +1133,18 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                     'engine': 'blender',
                     'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
                 }
+                if assembly:
+                    drift = fw_assembly.bbox_drift(report.get('boundsBefore'),
+                                                   report.get('boundsAfter'))
+                    warnings = []
+                    if drift > fw_assembly.BBOX_DRIFT_LIMIT:
+                        warnings.append('DECIMATE_BBOX_DRIFT: 减面后包围盒变化 %.1f%%'
+                                        % (drift * 100))
+                    output['assembly'] = fw_assembly.retarget_assembly(
+                        assembly, 'outputs/' + filename)
+                    output['bboxDrift'] = round(drift, 6)
+                    output['warnings'] = warnings
+                result['output'] = output
                 result.pop('error', None)
             except (ValueError, OSError) as error:
                 result['state'] = 'blocked'

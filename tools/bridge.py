@@ -561,6 +561,20 @@ def _part_image_prompt(text, part=None):
     return body + PART_IMAGE_SUFFIX
 
 
+def _measure_prompt(prompt, measure):
+    size = measure.get('sizeM') if isinstance(measure, dict) else None
+    if not isinstance(size, (list, tuple)) or len(size) != 3:
+        return prompt
+    try:
+        dims = ' × '.join('%.2f' % float(value) for value in size)
+    except (TypeError, ValueError):
+        return prompt
+    hint = ('单件目标尺寸：%s 米（米制，按三视图估算）；朝向 %s。'
+            % (dims, measure.get('forward') or '+X'))
+    base = str(prompt or '').strip()
+    return (base + '\n\n' + hint) if base else hint
+
+
 def _part_name_from_prompt(text):
     first = next((line.strip() for line in str(text or '').splitlines() if line.strip()), '')
     return first.replace('【', '').replace('】', '').strip()[:32]
@@ -2016,6 +2030,9 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                                                  (upstream_task.get('output') or {}).get('imagePath'))
                     if node['type'] == 'partModel':
                         part_name = str((upstream_result.get('output') or {}).get('partName') or '')
+                        measure = fw_pipeline.measure_for_node(graph, nodes, node_id)
+                        if measure:
+                            prompt = _measure_prompt(prompt, measure)
                     if node['type'] == 'threeView':
                         prompt_edge = next((edge for edge in incoming
                                             if edge.get('in') == 'text'), None)

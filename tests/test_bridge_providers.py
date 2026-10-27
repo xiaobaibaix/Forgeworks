@@ -821,6 +821,70 @@ class BlueprintBridgeTest(unittest.TestCase):
         self.assertEqual(node['result']['output']['ports'][0]['id'], 'boom_base')
         self.assertNotIn('pos', node['result']['output']['ports'][0])
 
+    def _save_measure_graph(self):
+        measure = {
+            'schemaVersion': 1, 'scope': 'part', 'role': 'body',
+            'partId': 'blueprint_body', 'sizeM': [6.5, 2.4, 2.1], 'forward': '+X',
+            'confidence': 0.6,
+            'anchor': {'overallLengthM': 7.2, 'template': 'excavator'},
+            'views': {}, 'notes': '',
+        }
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                 'result': {'state': 'done', 'output': {'spec': self.spec,
+                                                        'specPath': 'spec.json'}}},
+                {'id': 'partImage_body', 'type': 'partImage', 'params': {'provider': 'ark'},
+                 'result': {'state': 'done',
+                            'providerTask': {'taskId': 'img_body', 'state': 'success',
+                                             'output': {'imagePath': 'outputs/overall.png'}},
+                            'output': {'partName': '车身',
+                                       'imagePath': 'outputs/overall.png'}}},
+                {'id': 'blueprint_body', 'type': 'blueprint',
+                 'params': {'scope': 'part', 'role': 'body'},
+                 'result': {'state': 'done',
+                            'providerTask': {'taskId': 'measure_1', 'state': 'success',
+                                             'output': {'measure': measure, 'role': 'body'}},
+                            'output': {'measure': measure, 'role': 'body', 'scope': 'part'}}},
+                {'id': 'partModel_body', 'type': 'partModel', 'params': {'provider': 'ark'}},
+            ],
+            'edges': [
+                {'from': 'blueprint', 'out': 'spec', 'to': 'partModel_body', 'in': 'spec'},
+                {'from': 'blueprint_body', 'out': 'measure', 'to': 'partModel_body',
+                 'in': 'measure'},
+                {'from': 'partImage_body', 'out': 'image', 'to': 'partModel_body', 'in': 'image'},
+                {'from': 'partImage_body', 'out': 'ports', 'to': 'partModel_body', 'in': 'ports'},
+            ],
+        }
+        saved = fw_pipeline.save_graph(str(self.root), 'M1', graph, kind='machine')
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(str(self.root), 'M1', saved, kind='machine')
+
+    def test_part_model_prompt_includes_measure_size(self):
+        self._save_measure_graph()
+        seen = {}
+
+        def fake_submit(config, kind, params, prompt='', input_task_id=None,
+                        image_data=None, fallback=False):
+            seen['prompt'] = prompt
+            return {'taskId': 'model_body', 'provider': 'ark', 'state': 'success',
+                    'output': {}}
+
+        with mock.patch.object(bridge.fw_providers, 'submit', side_effect=fake_submit):
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'partModel_body',
+                'confirmRemote': True})
+        self.assertTrue(result['ok'], result)
+        self.assertIn('6.50 × 2.40 × 2.10 米', seen['prompt'])
+        self.assertIn('朝向 +X', seen['prompt'])
+
+    def test_measure_prompt_keeps_prompt_on_malformed_size(self):
+        self.assertEqual(bridge._measure_prompt('车身', {'sizeM': [1, 2]}), '车身')
+        self.assertEqual(bridge._measure_prompt('车身', {'sizeM': ['x', 1, 1]}), '车身')
+        self.assertEqual(bridge._measure_prompt('车身', None), '车身')
+
 
 if __name__ == '__main__':
     unittest.main()

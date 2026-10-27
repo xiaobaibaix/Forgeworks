@@ -233,6 +233,16 @@ def _count_triangles(objects):
     return sum(len(obj.data.loop_triangles) for obj in objects)
 
 
+def _bounds_meters(objects):
+    from mathutils import Vector
+    corners = [obj.matrix_world @ Vector(corner) for obj in objects for corner in obj.bound_box]
+    if not corners:
+        return []
+    lower = [min(point[i] for point in corners) for i in range(3)]
+    upper = [max(point[i] for point in corners) for i in range(3)]
+    return [round(upper[i] - lower[i], 6) for i in range(3)]
+
+
 def _decimate(args):
     import bpy
 
@@ -264,6 +274,7 @@ def _decimate(args):
 
         before = _count_triangles(objects)
         report['trianglesBefore'] = before
+        report['boundsBefore'] = _bounds_meters(objects)
         target = max(1, min(int(args.target_faces or 0), before))
         report['targetFaces'] = target
         if before <= target:
@@ -281,6 +292,7 @@ def _decimate(args):
             modifier.use_collapse_triangulate = True
             bpy.ops.object.modifier_apply(modifier=modifier.name)
         report['trianglesAfter'] = _count_triangles(objects)
+        report['boundsAfter'] = _bounds_meters(objects)
 
         os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
         bpy.ops.export_scene.gltf(filepath=args.output, export_format='GLB')

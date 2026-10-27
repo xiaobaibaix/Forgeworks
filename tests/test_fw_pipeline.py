@@ -225,6 +225,32 @@ def _decimate_graph(asset_id, with_upstream=True):
     return {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0, 'nodes': nodes, 'edges': edges}
 
 
+def _assembly_decimate_graph(asset_id='M1', with_mesh=False):
+    nodes = [
+        {'id': 'model', 'type': 'partModel', 'params': {},
+         'result': {'state': 'done',
+                    'providerTask': {'taskId': 'model_body', 'state': 'success',
+                                     'output': {'modelPath': 'outputs/model_body.glb'}},
+                    'output': {'assembly': {
+             'schemaVersion': 1, 'assemblyId': 'asm_partModel_body', 'assetId': asset_id,
+             'meshPath': 'outputs/model_body.glb',
+             'parts': [{'id': 'partModel_body', 'role': 'body',
+                        'meshPath': 'outputs/model_body.glb'}],
+             'connectors': [{'id': 'body:boom_base', 'pos': [0, 0, 0],
+                             'axis': [1, 0, 0]}],
+             'mates': [], 'warnings': []}}}},
+        {'id': 'dec', 'type': 'decimate', 'params': {'targetFaces': 900}},
+    ]
+    edges = [{'from': 'model', 'out': 'assembly', 'to': 'dec', 'in': 'assembly'}]
+    if with_mesh:
+        nodes.append({'id': 'mesh', 'type': 'imageTo3D', 'params': {},
+                      'result': {'providerTask': {'state': 'success',
+                                                  'output': {'modelPath': 'model_up.glb'}}}})
+        edges.append({'from': 'mesh', 'out': 'mesh', 'to': 'dec', 'in': 'mesh'})
+    return {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0,
+            'nodes': nodes, 'edges': edges}
+
+
 class PipelineDecimateTest(unittest.TestCase):
     def test_target_faces_falls_back_and_clamps(self):
         self.assertEqual(fw_pipeline._decimate_target(None), 900)
@@ -295,6 +321,71 @@ class PipelineDecimateTest(unittest.TestCase):
             node = next(item for item in result['graph']['nodes'] if item['type'] == 'decimate')
             self.assertEqual(node['result']['state'], 'blocked')
             self.assertIn('上游 GLB', node['result']['error'])
+
+    def test_decimate_rejects_mesh_and_assembly_inputs_together(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError) as ctx:
+                fw_pipeline.save_graph(directory, 'M1', _assembly_decimate_graph(with_mesh=True),
+                                       kind='machine')
+        self.assertTrue(str(ctx.exception).startswith('DECIMATE_INPUT_CONFLICT'))
+
+    def test_decimate_assembly_mode_preserves_connectors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = Path(directory) / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs'
+            outputs.mkdir(parents=True)
+            (outputs / 'model_body.glb').write_bytes(b'glb')
+            _save_ready(directory, _assembly_decimate_graph())
+
+            def fake_run(blender_path, source, output, target_faces):
+                self.assertTrue(source.endswith('model_body.glb'))
+                Path(output).write_bytes(b'decimated')
+                return {'valid': True, 'trianglesBefore': 12000, 'trianglesAfter': 900,
+                        'targetFaces': target_faces,
+                        'boundsBefore': [4.0, 2.0, 1.0],
+                        'boundsAfter': [4.0, 2.0, 1.0]}
+
+            with mock.patch.object(fw_pipeline, '_decimate_with_blender', side_effect=fake_run), \
+                    mock.patch.object(fw_pipeline, 'spec_for_node',
+                                      return_value=fw_spec.template_spec('M1')), \
+                    mock.patch.object(fw_pipeline, '_fit_is_current', return_value=True):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                   blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['id'] == 'dec')
+            self.assertEqual(node['result']['state'], 'done')
+            output = node['result']['output']
+            decimated = 'outputs/model_decimate_dec_900.glb'
+            self.assertEqual(output['assembly']['meshPath'], decimated)
+            self.assertEqual([part['meshPath'] for part in output['assembly']['parts']],
+                             [decimated])
+            self.assertEqual(output['assembly']['connectors'][0]['id'], 'body:boom_base')
+            self.assertEqual(output['bboxDrift'], 0.0)
+            self.assertEqual(output['warnings'], [])
+
+    def test_decimate_assembly_mode_warns_on_bbox_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = Path(directory) / '_Source' / '机器' / 'M1' / 'pipeline' / 'outputs'
+            outputs.mkdir(parents=True)
+            (outputs / 'model_body.glb').write_bytes(b'glb')
+            _save_ready(directory, _assembly_decimate_graph())
+
+            def fake_run(blender_path, source, output, target_faces):
+                Path(output).write_bytes(b'decimated')
+                return {'valid': True, 'trianglesBefore': 12000, 'trianglesAfter': 900,
+                        'targetFaces': target_faces,
+                        'boundsBefore': [4.0, 2.0, 1.0],
+                        'boundsAfter': [4.0, 2.04, 1.0]}
+
+            with mock.patch.object(fw_pipeline, '_decimate_with_blender', side_effect=fake_run), \
+                    mock.patch.object(fw_pipeline, 'spec_for_node',
+                                      return_value=fw_spec.template_spec('M1')), \
+                    mock.patch.object(fw_pipeline, '_fit_is_current', return_value=True):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                   blender_path='/fake/blender')
+            node = next(item for item in result['graph']['nodes'] if item['id'] == 'dec')
+            output = node['result']['output']
+            self.assertAlmostEqual(output['bboxDrift'], 0.02)
+            self.assertTrue(any(warning.startswith('DECIMATE_BBOX_DRIFT')
+                                for warning in output['warnings']))
 
 
 def _part_model_node(node_id, model_path='outputs/model_%s.glb'):
@@ -996,8 +1087,27 @@ class SpecExecutionTest(unittest.TestCase):
             'triangles': 1200,
         }
 
-    def _prepare(self, directory, spec):
-        saved = fw_pipeline.save_graph(directory, 'M1', self._graph(spec), kind='machine')
+    def _measure_graph(self, spec, size):
+        graph = self._graph(spec)
+        graph['nodes'].append({
+            'id': 'blueprint_body', 'type': 'blueprint',
+            'params': {'scope': 'part', 'role': 'body'},
+            'result': {'state': 'done', 'providerTask': {
+                'taskId': 'measure_1', 'state': 'success',
+                'output': {'role': 'body', 'measure': {
+                    'schemaVersion': 1, 'scope': 'part', 'role': 'body',
+                    'partId': 'blueprint_body', 'sizeM': list(size), 'forward': '+X',
+                    'confidence': 0.7,
+                    'anchor': {'overallLengthM': 7.2, 'template': 'excavator'},
+                    'views': {}, 'notes': ''}}}},
+        })
+        graph['edges'].append({'from': 'blueprint_body', 'out': 'measure',
+                               'to': 'partModel_body', 'in': 'measure'})
+        return graph
+
+    def _prepare(self, directory, spec, graph=None):
+        saved = fw_pipeline.save_graph(directory, 'M1', graph or self._graph(spec),
+                                       kind='machine')
         # 首次保存会把未签名结果打回 dirty；二次保存保留已执行状态，贴近真实运行后的图
         for node in saved['nodes']:
             node['result']['state'] = 'done'
@@ -1225,6 +1335,64 @@ class SpecExecutionTest(unittest.TestCase):
                                           blender_path='blender')
             self.assertEqual(fit.call_count, 2)
 
+    def test_part_model_measure_size_overrides_spec(self):
+        spec = fw_spec.template_spec('M1')
+        target = [value * 0.5 for value in spec['parts']['body']['sizeM']]
+        plans = []
+
+        def capture(_blender_path, plan):
+            plans.append(plan)
+            return self._fake_fit_report()
+
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, spec, self._measure_graph(spec, target))
+            with mock.patch.object(fw_pipeline, '_fit_with_blender', side_effect=capture):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                   blender_path='blender')
+        node = next(item for item in result['graph']['nodes']
+                    if item['id'] == 'partModel_body')
+        self.assertEqual(node['result']['state'], 'done')
+        self.assertEqual(plans[0]['targetSizeM'], target)
+        self.assertEqual(node['result']['output']['fit']['targetSource'], 'measure')
+        self.assertTrue(node['result']['output']['fitMeasureHash'])
+
+    def test_part_model_refits_when_measure_changes(self):
+        spec = fw_spec.template_spec('M1')
+        first_size = [value * 0.5 for value in spec['parts']['body']['sizeM']]
+        second_size = [value * 0.6 for value in spec['parts']['body']['sizeM']]
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = self._prepare(directory, spec, self._measure_graph(spec, first_size))
+            with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                   return_value=self._fake_fit_report()) as fit:
+                first = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                  blender_path='blender')
+                (outputs / 'model_fit_partModel_body.glb').write_bytes(b'glb')
+                node = next(item for item in first['graph']['nodes']
+                            if item['id'] == 'blueprint_body')
+                node['result']['providerTask']['output']['measure']['sizeM'] = second_size
+                fw_pipeline.save_graph(directory, 'M1', first['graph'], kind='machine')
+                fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                          blender_path='blender')
+            self.assertEqual(fit.call_count, 2)
+
+    def test_part_model_rejects_measure_with_other_role(self):
+        spec = fw_spec.template_spec('M1')
+        target = [value * 0.5 for value in spec['parts']['body']['sizeM']]
+        with tempfile.TemporaryDirectory() as directory:
+            graph = self._measure_graph(spec, target)
+            measure_node = next(item for item in graph['nodes']
+                                if item['id'] == 'blueprint_body')
+            measure_node['result']['providerTask']['output']['measure']['role'] = 'boom'
+            self._prepare(directory, spec, graph)
+            with mock.patch.object(fw_pipeline, '_fit_with_blender',
+                                   return_value=self._fake_fit_report()):
+                result = fw_pipeline.execute_local(directory, 'M1', kind='machine',
+                                                   blender_path='blender')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'partModel_body')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertTrue(node['result']['error'].startswith('SPEC_INVALID'))
+
 
 class FrontendMirrorTest(unittest.TestCase):
     def test_frontend_mirrors_p1_nodes_and_ports(self):
@@ -1234,12 +1402,15 @@ class FrontendMirrorTest(unittest.TestCase):
             "blueprint:{in:['image','spec','text'],out:['spec','measure']}",
             "threeView:{in:['image','spec','text'],out:['sheet','front','side','top']}",
             "partImage:{in:['text','image','spec'],out:['image','ports']}",
-            "partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']}",
+            "partModel:{in:['image','spec','ports','measure'],out:['part','mesh','assembly']}",
+            "decimate:{in:['mesh','assembly'],out:['mesh','part','assembly']}",
             "blueprint:'尺寸规格'",
             "threeView:'三视图'",
             "pipelineSpecPanel(node,taskOutput)",
             "'scope','分析范围'",
             "output.measure",
+            "fit.targetSource==='measure'",
+            "output.assembly.parts.length",
             "['textToImage','imageTo3D','partImage','partModel','blueprint','threeView']",
             "visionNode?'DoubaoVision'",
             "visionNode?'ark'",
