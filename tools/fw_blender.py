@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -11,7 +12,8 @@ import fw_spec
 def _arguments():
     values = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=('inspect', 'decimate', 'measure', 'assemble', 'cut', 'fit'),
+    parser.add_argument('--mode', choices=('inspect', 'decimate', 'measure', 'assemble',
+                                          'cut', 'fit', 'mate'),
                         default='inspect')
     parser.add_argument('--input')
     parser.add_argument('--inputs', nargs='+')
@@ -652,11 +654,119 @@ def _fit(args):
     return report
 
 
+def _mate(args):
+    import bpy
+    from mathutils import Matrix, Quaternion, Vector
+
+    report = {'valid': False, 'mode': 'mate', 'errors': []}
+    if not args.plan or not os.path.isfile(args.plan):
+        report['errors'].append('缺少装配计划')
+        return report
+    try:
+        with open(args.plan, encoding='utf-8') as stream:
+            plan = json.load(stream)
+        source_a = str(plan.get('a') or '')
+        source_b = str(plan.get('b') or '')
+        output = str(plan.get('output') or args.output or '')
+        if not source_a or not os.path.isfile(source_a):
+            raise RuntimeError('a 侧装配 GLB 不存在：%s' % source_a)
+        if not source_b or not os.path.isfile(source_b):
+            raise RuntimeError('b 侧装配 GLB 不存在：%s' % source_b)
+        if not output:
+            raise RuntimeError('mate 缺少输出路径')
+        rotation = plan.get('rotation') or [0, 0, 0, 1]
+        translation = plan.get('translation') or [0, 0, 0]
+        offset = float(plan.get('offsetM') or 0.0)
+
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.ops.import_scene.gltf(filepath=source_a)
+        objects_a = _mesh_objects()
+        known = {obj.name for obj in bpy.context.scene.objects}
+        bpy.ops.import_scene.gltf(filepath=source_b)
+        objects_b = [obj for obj in bpy.context.scene.objects
+                     if obj.name not in known and obj.type == 'MESH']
+        if not objects_a:
+            raise RuntimeError('a 侧 GLB 没有网格')
+        if not objects_b:
+            raise RuntimeError('b 侧 GLB 没有网格')
+
+        quat = Quaternion((rotation[3], rotation[0], rotation[1], rotation[2]))
+        move = Matrix.Translation(Vector(translation)) @ quat.to_matrix().to_4x4()
+        for obj in objects_b:
+            obj.matrix_world = move @ obj.matrix_world
+        bpy.context.view_layer.update()
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in objects_a + objects_b:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = objects_a[0]
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        bpy.context.view_layer.update()
+
+        frame_a = plan.get('frameA') or {}
+        frame_b = plan.get('frameB') or {}
+        axis_a = Vector(frame_a.get('axis') or [1, 0, 0]).normalized()
+        pos_b = quat @ Vector(frame_b.get('pos') or [0, 0, 0]) + Vector(translation)
+        axis_b = (quat @ Vector(frame_b.get('axis') or [1, 0, 0])).normalized()
+        target = Vector(frame_a.get('pos') or [0, 0, 0]) + axis_a * offset
+        gap = (target - pos_b).dot(axis_a)
+        applied = (Vector(frame_a.get('pos') or [0, 0, 0]) - pos_b).dot(axis_a)
+        axis_error = math.degrees(math.acos(max(-1.0, min(1.0, (-axis_b).dot(axis_a)))))
+
+        ground_shift = [0.0, 0.0, 0.0]
+        if plan.get('ground'):
+            lower, _upper = _bounds(objects_a + objects_b)
+            ground_shift = [0.0, 0.0, -lower[2]]
+            for obj in objects_a + objects_b:
+                obj.location.z += ground_shift[2]
+            bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
+            bpy.context.view_layer.update()
+
+        os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+        try:
+            bpy.ops.export_scene.gltf(filepath=output, export_format='GLB',
+                                      export_extras=True)
+        except TypeError:
+            bpy.ops.export_scene.gltf(filepath=output, export_format='GLB')
+        if not os.path.isfile(output):
+            raise RuntimeError('mate 未生成装配 GLB')
+
+        lower, upper = _bounds(objects_a + objects_b)
+        report.update({
+            'gapM': round(gap, 6),
+            'appliedOffsetM': round(applied, 6),
+            'axisErrorDeg': round(axis_error, 4),
+            'groundShift': [round(value, 6) for value in ground_shift],
+            'warnings': [],
+            'bounds': {'min': [round(value, 6) for value in lower],
+                       'max': [round(value, 6) for value in upper]},
+            'objects': [obj.name for obj in objects_a + objects_b],
+            'parts': [],
+            'triangles': _count_triangles(objects_a + objects_b),
+        })
+        for obj in objects_a + objects_b:
+            obj_lower, obj_upper = _object_bounds(obj)
+            report['parts'].append({'name': obj.name,
+                                    'min': [round(value, 6) for value in obj_lower],
+                                    'max': [round(value, 6) for value in obj_upper]})
+        if axis_error > 5:
+            report['errors'].append('MATE_AXIS_ERROR: 端口轴向偏差 %.1f°' % axis_error)
+        elif axis_error > 1:
+            report['warnings'].append('MATE_AXIS_ERROR: 端口轴向偏差 %.1f°' % axis_error)
+        if abs(applied + offset) > 0.0005:
+            report['warnings'].append('MATE_OFFSET_DRIFT: 落位偏差 %.1f mm'
+                                      % ((applied + offset) * 1000))
+        report['valid'] = not report['errors']
+    except Exception as error:
+        report['errors'].append(str(error))
+        report['valid'] = False
+    return report
+
+
 def main():
     args = _arguments()
     handlers = {'inspect': _inspect, 'decimate': _decimate,
                 'measure': _measure, 'assemble': _assemble, 'cut': _cut,
-                'fit': _fit}
+                'fit': _fit, 'mate': _mate}
     try:
         report = handlers[args.mode](args)
     except Exception as error:

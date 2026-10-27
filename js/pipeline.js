@@ -4,7 +4,7 @@ const PIPELINE_LAST_ASSET_KEY = 'fw.pipeline.lastAsset';
 
 const PIPELINE_NODE_LABELS = {
   prompt:'描述词', textToImage:'概念图生成', imageTo3D:'图生 3D', decimate:'减面',
-  blueprint:'尺寸规格', threeView:'三视图',
+  blueprint:'尺寸规格', threeView:'三视图', mate:'端口装配',
   partImage:'单件效果图', partModel:'单件模型', assemble:'组装',
   styleApply:'风格对齐', uv:'UV 展开', lod:'LOD 分级', collision:'碰撞体',
   animation:'动画', metadata:'元数据', validate:'质量门禁', manualEdit:'人工精修',
@@ -26,6 +26,7 @@ const PIPELINE_ZOOM_MAX = 1.8;
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
   decimate:{in:['mesh','assembly'],out:['mesh','part','assembly']},
+  mate:{in:['a','b','spec'],out:['assembly','mesh']},
   blueprint:{in:['image','spec','text'],out:['spec','measure']},
   threeView:{in:['image','spec','text'],out:['sheet','front','side','top']},
   partImage:{in:['text','image','spec'],out:['image','ports']},
@@ -930,6 +931,13 @@ function pipelineStageSummary(node){
     return output.trianglesBefore + ' → ' + output.trianglesAfter + ' 面'
       + (parts ? ' · 装配 ' + parts + ' 件' + drift : '');
   }
+  if(node.type === 'mate' && output.axisErrorDeg != null){
+    const parts = output.assembly && Array.isArray(output.assembly.parts) ? output.assembly.parts.length : 0;
+    const gap = output.gapM != null ? ' · gap ' + (Number(output.gapM) * 1000).toFixed(2) + ' mm' : '';
+    return (output.portA || '?') + ' ↔ ' + (output.portB || '?')
+      + (parts ? ' · ' + parts + ' 件' : '') + gap
+      + ' · 轴差 ' + Number(output.axisErrorDeg).toFixed(2) + '°';
+  }
   if(node.type === 'assemble' && output.parts != null){
     const layout = output.layoutPath ? output.layoutPath.split('/').pop() : '';
     const missing = Array.isArray(output.missingParts) ? output.missingParts.length : 0;
@@ -974,6 +982,15 @@ function pipelineApplyTaskFor(node){
       state:'success', provider:'blender',
       taskId:'assemble:' + node.id + ':' + (output.triangles != null ? output.triangles : '')
         + ':' + (output.updatedAt || ''),
+      output:{modelPath:output.meshPath},
+    };
+  }
+  if(node.type === 'mate'){
+    const output = node.result && node.result.state === 'done' ? node.result.output : null;
+    if(!output || !output.meshPath) return null;
+    return {
+      state:'success', provider:'blender',
+      taskId:'mate:' + node.id + ':' + (output.updatedAt || ''),
       output:{modelPath:output.meshPath},
     };
   }
@@ -1648,6 +1665,15 @@ function pipelineParamForm(node){
       <small class="pipeline-params-hint">由 Blender Decimate 执行；每次运行生成一个新 GLB，满意后手动「应用减面」。mesh 口接单件 GLB，或改接装配节点的 assembly 口来整体减面——两种输入不能同时接线，装配模式会保留端口与 mate 记录，包围盒漂移超过 1% 会告警。</small>
     </div>`;
   }
+  if(node.type === 'mate'){
+    return `<div class="pipeline-params">
+      ${pipelineParamText(node, 'connection', '连接 ID', '留空则按角色唯一匹配，如 c_roof_body')}
+      ${pipelineParamNumber(node, 'offsetM', '落位偏移（m）', 'step="0.001"', '-0.002')}
+      ${pipelineParamCheck(node, 'alignTwist', '用 normal 对齐扭转', true)}
+      ${pipelineParamCheck(node, 'ground', '对齐地面 Z=0', false)}
+      <small class="pipeline-params-hint">父装配接 a 口、子装配接 b 口；由 spec 连接确定两侧端口，Blender 按设计 §8.2 刚性对齐，负偏移表示重叠。端口轴必须相反：偏差 1° 以上告警、5° 以上报错；落位偏差超过 0.5 mm 也会告警。结果写入 parts/asm_&lt;节点&gt;.json，a 的坐标系保持不变。</small>
+    </div>`;
+  }
   return `<label>参数 <input data-param="json" value="${pipelineEscape(JSON.stringify(node.params || {}))}"></label>`;
 }
 
@@ -1683,6 +1709,14 @@ function pipelineSpecPanel(node, output){
       : '';
     return `<div class="pipeline-fit">校准 ${Number(fit.scale||0).toFixed(3)}× · 偏差 ${(Number(fit.aspectError||0)*100).toFixed(1)}% · 旋转 ${pipelineEscape(rotation)}°${target}</div>`;
   }
+  if(node.type==='mate' && output && output.axisErrorDeg != null){
+    const mm=value=>value!=null?Number(value*1000).toFixed(2)+' mm':'?';
+    const mates=(output.assembly&&Array.isArray(output.assembly.mates))?output.assembly.mates:[];
+    const warnings=Array.isArray(output.warnings)?output.warnings:[];
+    const rows=mates.map(mate=>`<li>${pipelineEscape(mate.a||'')} ↔ ${pipelineEscape(mate.b||'')} · gap ${mm(mate.gapM)} · 轴差 ${Number(mate.axisErrorDeg||0).toFixed(2)}° · ${pipelineEscape(mate.status||'')}</li>`).join('');
+    const warnHTML=warnings.length?`<ul>${warnings.map(item=>`<li>${pipelineEscape(item)}</li>`).join('')}</ul>`:'';
+    return `<details class="pipeline-spec"><summary>端口装配 · ${pipelineEscape(output.portA||'?')} ↔ ${pipelineEscape(output.portB||'?')} · 轴差 ${Number(output.axisErrorDeg).toFixed(2)}°</summary><p>gap ${mm(output.gapM)} · 落位 ${mm(output.appliedOffsetM)}${warnings.length?' · '+warnings.length+' 条告警':''}</p><ul>${rows}</ul>${warnHTML}</details>`;
+  }
   return '';
 }
 
@@ -1694,7 +1728,7 @@ function pipelineNodeCard(node){
   const applyTask = pipelineApplyTaskFor(node);
   const currentAsset = pipelineFindAsset(PIPELINE.kind, PIPELINE.assetId);
   const applySlot = node.type === 'textToImage' ? 'image'
-    : ((node.type === 'imageTo3D' || node.type === 'decimate' || node.type === 'assemble') && PIPELINE.kind !== 'element' ? 'model' : '');
+    : ((node.type === 'imageTo3D' || node.type === 'decimate' || node.type === 'assemble' || node.type === 'mate') && PIPELINE.kind !== 'element' ? 'model' : '');
   const generated = (currentAsset && currentAsset.generated) || {};
   const applied = !!(applySlot && applyTask && applyTask.taskId
     && generated[applySlot] && generated[applySlot].taskId === applyTask.taskId);
@@ -1730,10 +1764,10 @@ function pipelineNodeCard(node){
     media=previewURL
       ? `<figure class="pipeline-node-media"><img src="${pipelineEscape(previewURL)}" alt="生成图" loading="lazy"></figure>`
       : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='partImage'?'未生成单件效果图':(node.type==='threeView'?'未生成三视图':'未生成图像'))}</div>`;
-  }else if(node.type==='imageTo3D'||node.type==='partModel'||node.type==='decimate'||node.type==='assemble'){
+  }else if(node.type==='imageTo3D'||node.type==='partModel'||node.type==='decimate'||node.type==='assemble'||node.type==='mate'){
     media=modelURL
       ? `<figure class="pipeline-node-media model" data-node-model="${pipelineEscape(modelURL)}" data-node-model-id="${pipelineEscape(node.id)}" title="点击放大查看"><canvas aria-label="3D 模型预览"></canvas></figure><button class="pipeline-node-preview" data-preview-model="${pipelineEscape(modelURL)}">预览 3D 模型</button>`
-      : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='partModel'?'未生成单件模型':(node.type==='decimate'?'未生成减面模型':(node.type==='assemble'?'未生成组装模型':'未生成模型')))}</div>`;
+      : `<div class="pipeline-node-media empty">${busy?'生成中…':(node.type==='partModel'?'未生成单件模型':(node.type==='decimate'?'未生成减面模型':(node.type==='assemble'?'未生成组装模型':(node.type==='mate'?'未生成装配模型':'未生成模型'))))}</div>`;
   }
   const history=(node.result&&node.result.history||[]).slice().reverse();
   const historyHTML=history.length?`<details class="pipeline-history"><summary>历史版本 ${history.length}</summary><div class="pipeline-history-list">${history.map(item=>{
@@ -1756,7 +1790,7 @@ function pipelineNodeCard(node){
     ${inPorts}${outPorts}
     <header><b>${pipelineEscape(PIPELINE_NODE_LABELS[node.type] || node.type)}</b><span>${pipelineEscape(headerLabel)}</span></header>
     <small>${pipelineEscape(node.id)}${progress!=null?' · '+progress+'%':''}</small>${params}${media}${pipelineSpecPanel(node,taskOutput)}${stageSummary?`<small class="pipeline-stage">${pipelineEscape(stageSummary)}</small>`:''}
-    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D','partImage','partModel','blueprint','threeView'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : (node.type === 'assemble' ? '应用组装' : '应用结果'))}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
+    <div class="pipeline-node-actions"><button data-run="${pipelineEscape(node.id)}">运行</button><button data-through="${pipelineEscape(node.id)}">运行到此</button>${['textToImage','imageTo3D','partImage','partModel','blueprint','threeView'].includes(node.type)?`<button data-remote="${pipelineEscape(node.id)}">远程提交</button>${showPoll?`<button data-poll="${pipelineEscape(node.id)}">查询任务</button>`:''}`:''}<button data-delete-node="${pipelineEscape(node.id)}">删除</button>${applyReady ? `<button data-apply="${pipelineEscape(node.id)}">${applied ? '重新应用' : (node.type === 'decimate' ? '应用减面' : (node.type === 'assemble' ? '应用组装' : (node.type === 'mate' ? '应用装配' : '应用结果')))}</button>` : ''}${applied ? `<button data-open-asset="${pipelineEscape(node.id)}">打开资产</button>` : ''}</div>${outputLink}${historyHTML}
     ${exportOutput ? `<small class="pipeline-stage">已导出：${pipelineEscape(exportOutput.sourceDir)}</small>` : ''}
     ${applied
       ? `<small class="pipeline-stage">已应用到 ${pipelineEscape((currentAsset && currentAsset.name) || '资产')}${appliedWhen ? ' · ' + pipelineEscape(appliedWhen) : ''}</small>`

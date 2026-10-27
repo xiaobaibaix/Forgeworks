@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 bridge_args = sys.argv
 sys.argv = [sys.argv[0]]
 import bridge
+import fw_assembly
 import fw_parts
 sys.argv = bridge_args
 
@@ -519,6 +520,76 @@ class BlenderFitTest(unittest.TestCase):
             self.assertFalse(report['valid'])
             self.assertTrue(any('targetSizeM' in error for error in report['errors']), report)
             self.assertNotIn("'targetSizeM'", report['errors'])
+
+
+def _mate_box(role, mesh, pos, axis):
+    return {
+        'schemaVersion': 1, 'assemblyId': 'asm_' + role, 'assetId': 'M1',
+        'meshPath': mesh,
+        'parts': [{'partId': 'partModel_' + role, 'role': role, 'meshPath': mesh}],
+        'connectors': [{'id': role + ':mount', 'owner': role,
+                        'frame': {'pos': list(pos), 'axis': list(axis),
+                                  'normal': [1, 0, 0]}}],
+        'mates': [], 'warnings': [],
+    }
+
+
+class BlenderMateTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.blender = find_blender()
+        if not cls.blender:
+            raise unittest.SkipTest('Blender not installed')
+
+    def test_mate_places_child_port_on_parent_port(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            body = directory / 'body.glb'
+            roof = directory / 'roof.glb'
+            output = directory / 'mated.glb'
+            plan_path = directory / 'plan.json'
+            make_box_glb(body, size=(2, 2, 2))
+            make_box_glb(roof, size=(1, 1, 1))
+            body_assembly = _mate_box('body', str(body), [0, 0, 1], [0, 0, 1])
+            roof_assembly = _mate_box('roof', str(roof), [0, 0, 0.5], [0, 0, -1])
+            connection = {'id': 'c_roof_body', 'a': 'roof:mount', 'b': 'body:mount'}
+            plan = fw_assembly.mate_plan(connection, body_assembly, roof_assembly,
+                                         offset_m=-0.002)
+            plan.update({'a': str(body), 'b': str(roof), 'output': str(output),
+                         'ground': False})
+            plan_path.write_text(json.dumps(plan), encoding='utf-8')
+            report = run_blender(self.blender, [
+                '--mode', 'mate', '--plan', str(plan_path), '--output', str(output)])
+            self.assertTrue(report['valid'], report)
+            self.assertTrue(output.is_file())
+            self.assertAlmostEqual(report['gapM'], 0.0, places=3)
+            self.assertAlmostEqual(report['appliedOffsetM'], 0.002, places=3)
+            self.assertAlmostEqual(report['axisErrorDeg'], 0.0, places=3)
+            self.assertAlmostEqual(report['parts'][-1]['max'][2], 0.998, places=3)
+            self.assertAlmostEqual(report['parts'][-1]['min'][2], -0.002, places=3)
+            self.assertEqual(len(report['objects']), 2)
+
+    def test_mate_ground_puts_lowest_point_on_z_zero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            body = directory / 'body.glb'
+            roof = directory / 'roof.glb'
+            output = directory / 'mated.glb'
+            plan_path = directory / 'plan.json'
+            make_box_glb(body, size=(2, 2, 2))
+            make_box_glb(roof, size=(1, 1, 1))
+            body_assembly = _mate_box('body', str(body), [0, 0, 1], [0, 0, 1])
+            roof_assembly = _mate_box('roof', str(roof), [0, 0, 0.5], [0, 0, -1])
+            connection = {'id': 'c_roof_body', 'a': 'roof:mount', 'b': 'body:mount'}
+            plan = fw_assembly.mate_plan(connection, body_assembly, roof_assembly)
+            plan.update({'a': str(body), 'b': str(roof), 'output': str(output),
+                         'ground': True})
+            plan_path.write_text(json.dumps(plan), encoding='utf-8')
+            report = run_blender(self.blender, [
+                '--mode', 'mate', '--plan', str(plan_path), '--output', str(output)])
+            self.assertTrue(report['valid'], report)
+            self.assertAlmostEqual(report['bounds']['min'][2], 0.0, places=3)
+            self.assertAlmostEqual(report['groundShift'][2], 1.0, places=3)
 
 
 if __name__ == '__main__':

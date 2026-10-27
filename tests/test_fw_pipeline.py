@@ -1394,6 +1394,178 @@ class SpecExecutionTest(unittest.TestCase):
             self.assertTrue(node['result']['error'].startswith('SPEC_INVALID'))
 
 
+def _mate_assembly(node_id, role, mesh, port_id, pos, axis):
+    return {
+        'schemaVersion': 1, 'assemblyId': 'asm_' + node_id, 'assetId': 'M1',
+        'meshPath': mesh,
+        'parts': [{'partId': node_id, 'role': role, 'meshPath': mesh}],
+        'connectors': [{'id': '%s:%s' % (role, port_id), 'owner': role,
+                        'frame': {'pos': list(pos), 'axis': list(axis),
+                                  'normal': [1, 0, 0]}}],
+        'mates': [], 'warnings': [],
+    }
+
+
+def _mate_graph(asset_id='M1', with_spec=True):
+    body = _mate_assembly('partModel_body', 'body', 'outputs/model_body.glb',
+                          'roof_mount', [0, 0, 0.35], [0, 0, 1])
+    roof = _mate_assembly('partModel_roof', 'roof', 'outputs/model_roof.glb',
+                          'mount', [0, 0, 0.0], [0, 0, -1])
+    nodes = [
+        {'id': 'partModel_body', 'type': 'partModel', 'params': {},
+         'result': {'state': 'done',
+                    'providerTask': {'taskId': 'model_body', 'state': 'success',
+                                     'output': {'modelPath': 'outputs/model_body.glb'}},
+                    'output': {'assembly': body}}},
+        {'id': 'partModel_roof', 'type': 'partModel', 'params': {},
+         'result': {'state': 'done',
+                    'providerTask': {'taskId': 'model_roof', 'state': 'success',
+                                     'output': {'modelPath': 'outputs/model_roof.glb'}},
+                    'output': {'assembly': roof}}},
+        {'id': 'mate_body_roof', 'type': 'mate',
+         'params': {'offsetM': -0.002, 'alignTwist': True}},
+    ]
+    edges = [
+        {'from': 'partModel_body', 'out': 'assembly', 'to': 'mate_body_roof', 'in': 'a'},
+        {'from': 'partModel_roof', 'out': 'assembly', 'to': 'mate_body_roof', 'in': 'b'},
+    ]
+    if with_spec:
+        nodes.append({'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                      'result': {'state': 'done', 'providerTask': {
+                          'taskId': 'spec_1', 'state': 'success',
+                          'output': {'spec': fw_spec.template_spec('M1', template='car')}}}})
+        edges.append({'from': 'blueprint', 'out': 'spec', 'to': 'mate_body_roof',
+                      'in': 'spec'})
+    return {'schemaVersion': 1, 'assetId': asset_id, 'revision': 0,
+            'nodes': nodes, 'edges': edges}
+
+
+class PipelineMateTest(unittest.TestCase):
+    def _prepare(self, directory, graph):
+        saved = fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+        outputs = Path(fw_pipeline.pipeline_root(directory, 'M1'))
+        (outputs / 'outputs').mkdir(parents=True, exist_ok=True)
+        (outputs / 'outputs' / 'model_body.glb').write_bytes(b'glb')
+        (outputs / 'outputs' / 'model_roof.glb').write_bytes(b'glb')
+        return outputs
+
+    def _report(self):
+        return {'valid': True, 'gapM': 0.0, 'appliedOffsetM': 0.002,
+                'axisErrorDeg': 0.0, 'groundShift': [0, 0, 0], 'warnings': []}
+
+    def _fake_mate(self, blender_path, plan):
+        Path(plan['output']).write_bytes(b'glb')
+        return self._report()
+
+    def test_mate_merges_assemblies_and_writes_sidecar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self._prepare(directory, _mate_graph())
+            with mock.patch.object(fw_pipeline, 'spec_for_node',
+                                   return_value=fw_spec.template_spec('M1', template='car')), \
+                    mock.patch.object(fw_pipeline, '_mate_with_blender',
+                                      side_effect=self._fake_mate) as runner:
+                result = fw_pipeline.execute_local(directory, 'M1',
+                                                   target_id='mate_body_roof',
+                                                   kind='machine', blender_path='blender')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'mate_body_roof')
+            self.assertEqual(node['result']['state'], 'done')
+            output = node['result']['output']
+            self.assertEqual(output['meshPath'], 'model_mate_mate_body_roof.glb')
+            self.assertEqual(output['connection'], 'c_roof_body')
+            self.assertEqual(output['portA'], 'body:roof_mount')
+            self.assertEqual(output['portB'], 'roof:mount')
+            self.assertEqual(output['axisErrorDeg'], 0.0)
+            self.assertEqual(len(output['assembly']['parts']), 2)
+            self.assertEqual(output['assembly']['mates'][0]['id'], 'c_roof_body')
+            sidecar = root / 'parts' / 'asm_mate_body_roof.json'
+            self.assertTrue(sidecar.is_file())
+            saved = json.loads(sidecar.read_text(encoding='utf-8'))
+            self.assertEqual(saved['assemblyId'], 'asm_mate_body_roof')
+            plan = runner.call_args[0][1]
+            self.assertEqual(plan['output'],
+                             os.path.realpath(str(root / 'outputs' / output['meshPath'])))
+            self.assertAlmostEqual(plan['translation'][2], 0.348, places=6)
+            self.assertTrue((root / 'outputs' / output['meshPath']).is_file())
+
+    def test_mate_without_spec_is_blocked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, _mate_graph(with_spec=False))
+            with mock.patch.object(fw_pipeline, '_mate_with_blender') as runner:
+                result = fw_pipeline.execute_local(directory, 'M1',
+                                                   target_id='mate_body_roof',
+                                                   kind='machine', blender_path='blender')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'mate_body_roof')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertIn('MATE_CONNECTION_MISSING', node['result']['error'])
+            runner.assert_not_called()
+
+    def test_mate_without_inputs_is_blocked(self):
+        graph = _mate_graph()
+        graph['edges'] = [edge for edge in graph['edges']
+                          if not (edge['to'] == 'mate_body_roof' and edge['in'] == 'b')]
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, graph)
+            with mock.patch.object(fw_pipeline, 'spec_for_node',
+                                   return_value=fw_spec.template_spec('M1', template='car')), \
+                    mock.patch.object(fw_pipeline, '_mate_with_blender') as runner:
+                result = fw_pipeline.execute_local(directory, 'M1',
+                                                   target_id='mate_body_roof',
+                                                   kind='machine', blender_path='blender')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'mate_body_roof')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertIn('ASSEMBLY_MISSING', node['result']['error'])
+            runner.assert_not_called()
+
+    def test_mate_rerun_is_cached_by_signature(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, _mate_graph())
+            with mock.patch.object(fw_pipeline, 'spec_for_node',
+                                   return_value=fw_spec.template_spec('M1', template='car')), \
+                    mock.patch.object(fw_pipeline, '_mate_with_blender',
+                                      side_effect=self._fake_mate) as runner:
+                fw_pipeline.execute_local(directory, 'M1', target_id='mate_body_roof',
+                                          kind='machine', blender_path='blender')
+                self.assertEqual(runner.call_count, 1)
+                fw_pipeline.execute_local(directory, 'M1', target_id='mate_body_roof',
+                                          kind='machine', blender_path='blender')
+            self.assertEqual(runner.call_count, 1)
+
+    def test_mate_failure_blocks_with_error_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._prepare(directory, _mate_graph())
+            report = dict(self._report(), valid=False,
+                          errors=['MATE_AXIS_ERROR: 端口轴向偏差 12.0°'])
+            with mock.patch.object(fw_pipeline, 'spec_for_node',
+                                   return_value=fw_spec.template_spec('M1', template='car')), \
+                    mock.patch.object(fw_pipeline, '_mate_with_blender',
+                                      return_value=report):
+                result = fw_pipeline.execute_local(directory, 'M1',
+                                                   target_id='mate_body_roof',
+                                                   kind='machine', blender_path='blender')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'mate_body_roof')
+            self.assertEqual(node['result']['state'], 'blocked')
+            self.assertTrue(node['result']['error'].startswith('MATE_FAILED'))
+
+    def test_mate_cycle_is_reported(self):
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [{'id': 'mate_a', 'type': 'mate', 'params': {}},
+                      {'id': 'mate_b', 'type': 'mate', 'params': {}}],
+            'edges': [{'from': 'mate_a', 'out': 'assembly', 'to': 'mate_b', 'in': 'a'},
+                      {'from': 'mate_b', 'out': 'assembly', 'to': 'mate_a', 'in': 'a'}],
+        }
+        with self.assertRaises(ValueError) as context:
+            fw_pipeline.validate_graph(graph)
+        self.assertIn('ASSEMBLY_CYCLE', str(context.exception))
+
+
 class FrontendMirrorTest(unittest.TestCase):
     def test_frontend_mirrors_p1_nodes_and_ports(self):
         source = (ROOT / 'js' / 'pipeline.js').read_text(encoding='utf-8')
@@ -1404,8 +1576,10 @@ class FrontendMirrorTest(unittest.TestCase):
             "partImage:{in:['text','image','spec'],out:['image','ports']}",
             "partModel:{in:['image','spec','ports','measure'],out:['part','mesh','assembly']}",
             "decimate:{in:['mesh','assembly'],out:['mesh','part','assembly']}",
+            "mate:{in:['a','b','spec'],out:['assembly','mesh']}",
             "blueprint:'尺寸规格'",
             "threeView:'三视图'",
+            "mate:'端口装配'",
             "pipelineSpecPanel(node,taskOutput)",
             "'scope','分析范围'",
             "output.measure",

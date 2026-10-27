@@ -44,6 +44,8 @@ NODE_TYPES = {
     'assemble': {'in': {'text': 'text', 'part': 'part', 'image': 'image'}, 'out': {'mesh': 'mesh'}},
     'decimate': {'in': {'mesh': 'mesh', 'assembly': 'assembly'},
                  'out': {'mesh': 'mesh', 'part': 'part', 'assembly': 'assembly'}},
+    'mate': {'in': {'a': 'assembly', 'b': 'assembly', 'spec': 'spec'},
+             'out': {'assembly': 'assembly', 'mesh': 'mesh'}},
     'styleApply': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'uv': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
     'lod': {'in': {'mesh': 'mesh'}, 'out': {'mesh': 'mesh'}},
@@ -150,6 +152,8 @@ def validate_graph(graph):
     visiting, visited, order = set(), set(), []
     def visit(node_id):
         if node_id in visiting:
+            if by_id[node_id]['type'] == 'mate':
+                raise ValueError('ASSEMBLY_CYCLE: 装配节点 %s 出现在循环依赖中' % node_id)
             raise ValueError('流水线存在循环依赖')
         if node_id in visited:
             return
@@ -698,6 +702,66 @@ def _fit_with_blender(blender_path, plan):
         return report
 
 
+MATE_TIMEOUT = 300
+
+
+def _mate_with_blender(blender_path, plan):
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fw_blender.py')
+    with tempfile.TemporaryDirectory(prefix='forgeworks-mate-') as temp_dir:
+        plan_path = os.path.join(temp_dir, 'mate.json')
+        report_path = os.path.join(temp_dir, 'report.json')
+        with open(plan_path, 'w', encoding='utf-8') as stream:
+            json.dump(plan, stream, ensure_ascii=False)
+        try:
+            completed = subprocess.run([
+                blender_path, '--background', '--factory-startup', '--python-exit-code', '1',
+                '--python', script, '--', '--mode', 'mate', '--plan', plan_path,
+                '--output', plan['output'], '--report', report_path,
+            ], capture_output=True, text=True, timeout=MATE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            raise ValueError('MATE_FAILED: Blender 装配超时（%d 秒）' % MATE_TIMEOUT)
+        report = None
+        try:
+            with open(report_path, encoding='utf-8') as stream:
+                report = json.load(stream)
+        except (OSError, ValueError):
+            report = None
+        if not isinstance(report, dict):
+            tail = (completed.stderr or completed.stdout or 'Blender 无输出')[-1000:]
+            report = {'valid': False, 'errors': [tail]}
+        if completed.returncode != 0:
+            report['valid'] = False
+        return report
+
+
+def _mate_params(node):
+    params = node.get('params') or {}
+    raw = params.get('offsetM')
+    if raw in (None, ''):
+        offset = -0.002
+    else:
+        try:
+            offset = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError('MATE_PARAM_INVALID: offsetM 必须是数字') from None
+        if not math.isfinite(offset):
+            raise ValueError('MATE_PARAM_INVALID: offsetM 必须是有限数字')
+    return offset, bool(params.get('alignTwist', True)), bool(params.get('ground'))
+
+
+def _mate_signature(assembly_a, assembly_b, connection, offset, align_twist, ground):
+    return _digest({
+        'a': assembly_a.get('meshPath'),
+        'b': assembly_b.get('meshPath'),
+        'aConnectors': assembly_a.get('connectors') or [],
+        'bConnectors': assembly_b.get('connectors') or [],
+        'connection': str(connection.get('id') or ''),
+        'offsetM': offset,
+        'alignTwist': align_twist,
+        'ground': ground,
+    })
+
+
 def _attach_part_ports(forgeworks_root, asset_id, kind, graph, by_id, node_id):
     spec = spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
     if not spec:
@@ -1146,6 +1210,89 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                     output['warnings'] = warnings
                 result['output'] = output
                 result.pop('error', None)
+            except (ValueError, OSError) as error:
+                result['state'] = 'blocked'
+                result['error'] = str(error)
+        elif node['type'] == 'mate':
+            result = node.setdefault('result', {})
+            try:
+                if not blender_path:
+                    raise ValueError('未找到 Blender：请在 tools/bridge_config.json 配置 blender.path')
+                spec = spec_for_node(forgeworks_root, asset_id, kind, graph, by_id, node_id)
+                if not spec:
+                    raise ValueError('MATE_CONNECTION_MISSING: mate 节点需要 spec 输入')
+                assembly_a = fw_assembly.assembly_for_node(graph, by_id, node_id, port='a')
+                assembly_b = fw_assembly.assembly_for_node(graph, by_id, node_id, port='b')
+                if not assembly_a or not assembly_b:
+                    raise ValueError('ASSEMBLY_MISSING: mate 节点需要 a 与 b 两路装配输入')
+                role_a = fw_assembly.root_role(assembly_a)
+                role_b = fw_assembly.root_role(assembly_b)
+                connection = fw_assembly.connection_for(
+                    spec, str((node.get('params') or {}).get('connection') or '').strip(),
+                    role_a, role_b)
+                offset, align_twist, ground = _mate_params(node)
+                signature = _mate_signature(assembly_a, assembly_b, connection,
+                                            offset, align_twist, ground)
+                previous = result.get('output') or {}
+                if (previous.get('mateHash') == signature
+                        and isinstance(previous.get('assembly'), dict)
+                        and resolve_output(forgeworks_root, asset_id, kind,
+                                           os.path.basename(str(previous.get('meshPath') or '')))):
+                    result['state'] = 'done'
+                    result.pop('error', None)
+                else:
+                    source_a = resolve_output(
+                        forgeworks_root, asset_id, kind,
+                        os.path.basename(str(assembly_a.get('meshPath') or '')))
+                    source_b = resolve_output(
+                        forgeworks_root, asset_id, kind,
+                        os.path.basename(str(assembly_b.get('meshPath') or '')))
+                    if not source_a:
+                        raise ValueError('ASSEMBLY_MISSING: a 侧装配网格不可用：%s'
+                                         % assembly_a.get('meshPath'))
+                    if not source_b:
+                        raise ValueError('ASSEMBLY_MISSING: b 侧装配网格不可用：%s'
+                                         % assembly_b.get('meshPath'))
+                    root = os.path.realpath(pipeline_root(forgeworks_root, asset_id, kind))
+                    outputs_dir = os.path.join(root, 'outputs')
+                    os.makedirs(outputs_dir, exist_ok=True)
+                    filename = 'model_mate_%s.glb' % node_id
+                    plan = fw_assembly.mate_plan(connection, assembly_a, assembly_b,
+                                                 offset, align_twist)
+                    plan.update({'a': source_a, 'b': source_b,
+                                 'output': os.path.join(outputs_dir, filename),
+                                 'ground': ground})
+                    report = _mate_with_blender(blender_path, plan)
+                    if not report.get('valid'):
+                        errors = report.get('errors')
+                        message = '; '.join(str(item) for item in errors[:3]) \
+                            if isinstance(errors, list) else ''
+                        raise ValueError('MATE_FAILED: %s' % (message or 'Blender 装配失败'))
+                    merged = fw_assembly.merge_assembly(
+                        assembly_a, assembly_b, plan, report, ground=ground,
+                        assembly_id='asm_' + node_id)
+                    merged['meshPath'] = 'outputs/' + filename
+                    sidecar = os.path.join(root, 'parts', 'asm_%s.json' % node_id)
+                    os.makedirs(os.path.dirname(sidecar), exist_ok=True)
+                    with open(sidecar, 'w', encoding='utf-8') as stream:
+                        json.dump(merged, stream, ensure_ascii=False, indent=2)
+                    result['state'] = 'done'
+                    result['output'] = {
+                        'meshPath': filename,
+                        'assembly': merged,
+                        'assemblyPath': os.path.relpath(sidecar, root).replace(os.sep, '/'),
+                        'connection': plan.get('connection'),
+                        'portA': plan.get('portA'),
+                        'portB': plan.get('portB'),
+                        'gapM': report.get('gapM'),
+                        'appliedOffsetM': report.get('appliedOffsetM'),
+                        'axisErrorDeg': report.get('axisErrorDeg'),
+                        'warnings': merged['warnings'],
+                        'mateHash': signature,
+                        'engine': 'blender',
+                        'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                    }
+                    result.pop('error', None)
             except (ValueError, OSError) as error:
                 result['state'] = 'blocked'
                 result['error'] = str(error)
