@@ -30,7 +30,8 @@ NODE_TYPES = {
     'prompt': {'in': {}, 'out': {'text': 'text'}},
     'textToImage': {'in': {'text': 'text'}, 'out': {'image': 'image'}},
     'imageTo3D': {'in': {'image': 'image'}, 'out': {'mesh': 'mesh'}},
-    'blueprint': {'in': {'image': 'image', 'text': 'text'}, 'out': {'spec': 'spec'}},
+    'blueprint': {'in': {'image': 'image', 'spec': 'spec', 'text': 'text'},
+                  'out': {'spec': 'spec', 'measure': 'measure'}},
     'threeView': {'in': {'image': 'image', 'spec': 'spec', 'text': 'text'},
                   'out': {'sheet': 'image', 'front': 'image', 'side': 'image',
                           'top': 'image'}},
@@ -908,10 +909,16 @@ def execute_local(forgeworks_root, asset_id, target_id=None, through=False, kind
                 if node['result'].get('state') != 'dirty':
                     node['result']['state'] = 'done'
                 task_output = task.get('output') if isinstance(task.get('output'), dict) else {}
-                if node['type'] == 'blueprint' and isinstance(task_output.get('spec'), dict):
-                    node['result']['output'] = dict(node['result'].get('output') or {},
-                                                    spec=task_output['spec'],
-                                                    specPath=task_output.get('specPath', 'spec.json'))
+                if node['type'] == 'blueprint':
+                    output = dict(node['result'].get('output') or {})
+                    if isinstance(task_output.get('spec'), dict):
+                        output.update(spec=task_output['spec'],
+                                      specPath=task_output.get('specPath', 'spec.json'))
+                    if isinstance(task_output.get('measure'), dict):
+                        output['measure'] = task_output['measure']
+                        output['scope'] = 'part'
+                        output['role'] = task_output.get('role') or output.get('role', '')
+                    node['result']['output'] = output
                 if node['type'] == 'partImage':
                     try:
                         _attach_part_ports(forgeworks_root, asset_id, kind, graph, by_id, node_id)

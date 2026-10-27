@@ -317,46 +317,69 @@ def analyze_layout(config, image_path, parts, prompt='', model=''):
     return hints, {'model': name, 'notes': str(raw.get('notes') or '').strip()[:500]}
 
 
-def analyze_spec(config, image_path, parts, prompt='', model='',
-                 overall_length=0.0, template='excavator'):
-    """让 Ark 视觉模型把整机效果图整理成结构化 spec 候选 JSON。"""
+def analyze_dimensions(config, image_path, parts, scope='overall', role='', label='',
+                       overall_length=0.0, template='excavator', prompt='', model=''):
+    """让 Ark 视觉模型把三视图/效果图整理成整机 spec 或单件 measure 候选 JSON。"""
+    scope = str(scope or 'overall')
+    if scope not in ('overall', 'part'):
+        raise ValueError('SPEC_INVALID: scope 只能是 overall/part')
     name = str(model or _provider_config(config, 'ark').get('vision_model')
                or ARK_VISION_MODEL).strip()
     if not name:
         raise ValueError('未配置 Ark 视觉模型')
     _key(config, 'ark')
     image_uri = _vision_image_uri(image_path)
-    part_lines = []
-    for part in parts or []:
-        if not isinstance(part, dict):
-            continue
-        title = str(part.get('name') or part.get('id') or '部件').strip()
-        description = str(part.get('description') or '').strip()
-        part_lines.append('- %s%s' % (title, ('：' + description[:160]) if description else ''))
-    if not part_lines:
-        raise ValueError('没有可用于尺寸规格的部件')
     try:
         anchor = float(overall_length or 0)
     except (TypeError, ValueError):
         anchor = 0.0
-    anchor_text = ('整机长度锚：%.3f 米' % anchor) if anchor > 0 else '整机长度锚：未提供'
     instruction = str(prompt or '').strip()[:1200]
-    user_text = (
-        '参考图是一台机械的整体效果图。已经拆出的部件：\n%s\n'
-        '机型模板：%s；%s。\n'
-        '额外说明：%s\n'
-        '请只输出 JSON，不要解释。字段：\n'
-        '{"overall":{"lengthM":7.2,"widthM":2.4,"heightM":3.1},'
-        '"assembly":{"rootRole":"body"},'
-        '"parts":{"bucket":{"sizeM":[1.15,1.2,1.05],"forward":"+X","confidence":0.7,'
-        '"ports":[{"id":"ear_pin","type":"pin","anchor":[0.02,0.5,0.78],'
-        '"axis":[-1,0,0],"normal":[0,0,1],"radiusM":0.06}]}},'
-        '"connections":[{"id":"c_bucket_boom","a":"bucket:ear_pin",'
-        '"b":"boom:tip_pin","joint":"pin"}],"notes":["一句话"]}\n'
-        '角色只能用 body/track/wheel/boom/bucket/cab/roof/door/window；'
-        'sizeM 是 [X,Y,Z] 米；anchor 是 [0,1] 包围盒归一化坐标；'
-        'forward 只能是 +X/-X/+Y/-Y/+Z/-Z。看不出的尺寸给合理估计。'
-        % ('\n'.join(part_lines[:30]), template, anchor_text, instruction or '（无）'))
+    max_tokens = 1800
+    if scope == 'part':
+        role = str(role or '').strip()
+        if not role:
+            raise ValueError('SPEC_INVALID: 单件尺寸分析缺少部件角色')
+        if anchor <= 0:
+            raise ValueError('SPEC_UNANCHORED: 单件尺寸分析需要整机长度锚')
+        label = str(label or '').strip() or role
+        user_text = (
+            '参考图是「%s」（角色 %s）的正交三视图（前|侧|顶），三格同比例。\n'
+            '整机长度锚：%.3f 米；机型模板：%s。\n'
+            '额外说明：%s\n'
+            '请只输出 JSON，不要解释。字段：\n'
+            '{"parts":{"%s":{"sizeM":[4.0,1.7,0.7],"forward":"+X","confidence":0.7}},'
+            '"notes":["一句话"]}\n'
+            'sizeM 是 [X,Y,Z] 米；forward 只能是 +X/-X/+Y/-Y/+Z/-Z；'
+            '只输出这一个部件，不要输出端口、连接或其它部件。看不出的尺寸给合理估计。'
+            % (label, role, anchor, template, instruction or '（无）', role))
+        max_tokens = 600
+    else:
+        part_lines = []
+        for part in parts or []:
+            if not isinstance(part, dict):
+                continue
+            title = str(part.get('name') or part.get('id') or '部件').strip()
+            description = str(part.get('description') or '').strip()
+            part_lines.append('- %s%s' % (title, ('：' + description[:160]) if description else ''))
+        if not part_lines:
+            raise ValueError('没有可用于尺寸规格的部件')
+        anchor_text = ('整机长度锚：%.3f 米' % anchor) if anchor > 0 else '整机长度锚：未提供'
+        user_text = (
+            '参考图是一台机械的整体效果图（优先按正交三视图理解比例）。已经拆出的部件：\n%s\n'
+            '机型模板：%s；%s。\n'
+            '额外说明：%s\n'
+            '请只输出 JSON，不要解释。字段：\n'
+            '{"overall":{"lengthM":7.2,"widthM":2.4,"heightM":3.1},'
+            '"assembly":{"rootRole":"body"},'
+            '"parts":{"bucket":{"sizeM":[1.15,1.2,1.05],"forward":"+X","confidence":0.7,'
+            '"ports":[{"id":"ear_pin","type":"pin","anchor":[0.02,0.5,0.78],'
+            '"axis":[-1,0,0],"normal":[0,0,1],"radiusM":0.06}]}},'
+            '"connections":[{"id":"c_bucket_boom","a":"bucket:ear_pin",'
+            '"b":"boom:tip_pin","joint":"pin"}],"notes":["一句话"]}\n'
+            '角色只能用 body/track/wheel/boom/bucket/cab/roof/door/window；'
+            'sizeM 是 [X,Y,Z] 米；anchor 是 [0,1] 包围盒归一化坐标；'
+            'forward 只能是 +X/-X/+Y/-Y/+Z/-Z。看不出的尺寸给合理估计。'
+            % ('\n'.join(part_lines[:30]), template, anchor_text, instruction or '（无）'))
     body = {
         'model': name,
         'messages': [
@@ -369,7 +392,7 @@ def analyze_spec(config, image_path, parts, prompt='', model='',
             ]},
         ],
         'temperature': 0.2,
-        'max_tokens': 1800,
+        'max_tokens': max_tokens,
     }
     result = _ark_request(config, '/chat/completions', body, timeout=120)
     choices = result.get('choices')
@@ -383,6 +406,12 @@ def analyze_spec(config, image_path, parts, prompt='', model='',
     if isinstance(notes, list):
         notes = '; '.join(str(item) for item in notes)
     return raw, {'model': name, 'notes': str(notes or '')[:500]}
+
+
+def analyze_spec(config, image_path, parts, prompt='', model='',
+                 overall_length=0.0, template='excavator'):
+    return analyze_dimensions(config, image_path, parts, scope='overall', prompt=prompt,
+                              model=model, overall_length=overall_length, template=template)
 
 
 def submit(config, kind, params, prompt='', input_task_id=None, image_data=None, fallback=False):

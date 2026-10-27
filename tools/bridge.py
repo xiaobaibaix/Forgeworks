@@ -596,22 +596,24 @@ def _part_reference_image(root, asset_id, kind, nodes, incoming):
     return data
 
 
-def _upstream_image_path(root, asset_id, kind, incoming, nodes):
+def _upstream_image_path(root, asset_id, kind, incoming, nodes, label='整机效果图'):
     edge = next((edge for edge in incoming if edge.get('in') == 'image'), None)
     if not edge:
-        raise ValueError('尺寸规格需要整机效果图：请把整体效果图节点连到 image 口')
+        raise ValueError('%s需要参考图：请把%s节点连到 image 口' % (label, label))
     source = nodes.get(edge.get('from')) or {}
     result = source.get('result') or {}
-    # 上游图被改动后会打回 dirty，旧图不能再当整机参考
+    # 上游图被改动后会打回 dirty，旧图不能再当尺寸参考
     if result.get('state') not in ('done', None):
-        raise ValueError('整机效果图尚未生成或已变更：请先运行上游整体效果图节点')
+        raise ValueError('%s尚未生成或已变更：请先运行上游%s节点' % (label, label))
     provider = result.get('providerTask') if isinstance(result.get('providerTask'), dict) else {}
     task_output = provider.get('output') if isinstance(provider.get('output'), dict) else {}
-    image_path = task_output.get('imagePath') or (result.get('output') or {}).get('imagePath')
+    output = result.get('output') or {}
+    image_path = (task_output.get('imagePath') or output.get('sheetPath')
+                  or output.get('imagePath'))
     absolute = fw_pipeline.resolve_output(
         root, asset_id, kind, os.path.basename(str(image_path or '')))
     if not absolute:
-        raise ValueError('整机效果图文件不可用，无法生成尺寸规格')
+        raise ValueError('%s文件不可用，无法分析尺寸' % label)
     return absolute
 
 
@@ -1855,17 +1857,25 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                     root = fw_pipeline.pipeline_root(fw_dir(), asset_id, kind)
                     spec_path = os.path.join(root, 'spec.json')
                     params_snapshot = copy.deepcopy(params)
-                    if bool(params.get('specLocked')) and not os.path.isfile(spec_path):
-                        raise ValueError('SPEC_MISSING: 已锁定规格但 spec.json 不存在')
-                    if bool(params.get('specLocked')):
-                        spec = fw_spec.read_spec(spec_path)
-                        task = {'taskId': 'spec_locked', 'provider': 'ark',
-                                'state': 'success', 'requestType': 'blueprint',
-                                'output': {'spec': spec, 'specPath': 'spec.json'}}
-                    else:
+                    scope = str(params.get('scope') or 'overall')
+                    if scope not in ('overall', 'part'):
+                        raise ValueError('SPEC_INVALID: scope 只能是 overall/part')
+                    measure = None
+                    role = ''
+                    if scope == 'part':
+                        if bool(params.get('specLocked')):
+                            raise ValueError('SPEC_INVALID: specLocked 只适用于整体尺寸分析')
+                        incoming_spec = _spec_from_incoming(fw_dir(), asset_id, kind,
+                                                            nodes, incoming)
+                        if not incoming_spec:
+                            raise ValueError('SPEC_MISSING: 单件尺寸分析需要先连整体规格 spec 口')
+                        role = str(params.get('role') or '').strip() or fw_spec.role_for_node(node_id)
+                        if not role:
+                            raise ValueError('SPEC_INVALID: 单件尺寸分析缺少部件角色')
+                        if role not in incoming_spec['parts']:
+                            raise ValueError('SPEC_INVALID: 规格中没有部件角色 %s' % role)
                         image_path = _upstream_image_path(fw_dir(), asset_id, kind,
-                                                          incoming, nodes)
-                        overall = params.get('overallLengthM')
+                                                          incoming, nodes, label='单件三视图')
                         template = str(params.get('template') or 'excavator')
                         prompt_edge = next((edge for edge in incoming
                                             if edge.get('in') == 'text'), None)
@@ -1874,19 +1884,59 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                             source = nodes.get(prompt_edge['from']) or {}
                             prompt_text = str((((source.get('result') or {}).get('output') or {})
                                                .get('text')) or '')
-                        raw, _meta = fw_providers.analyze_spec(
-                            read_json(CONFIG_FILE, {}) or {}, image_path,
-                            [{'name': role, 'description': fw_spec.ROLE_LABELS.get(role, '')}
-                             for role in fw_spec.PART_ROLES],
-                            prompt=prompt_text or str(params.get('prompt') or ''),
-                            overall_length=overall, template=template)
-                        spec = fw_spec.from_vision(raw, overall_length_m=overall,
-                                                   template=template, asset_id=asset_id)
+                        raw, _meta = fw_providers.analyze_dimensions(
+                            read_json(CONFIG_FILE, {}) or {}, image_path, [],
+                            scope='part', role=role,
+                            label=fw_spec.ROLE_LABELS.get(role, role),
+                            overall_length=incoming_spec['overall']['lengthM'],
+                            template=template,
+                            prompt=prompt_text or str(params.get('prompt') or ''))
+                        measure = fw_spec.measure_from_vision(raw, role, incoming_spec,
+                                                              part_id=node_id, template=template)
                         digest = hashlib.sha1(json.dumps(
-                            spec, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-                        task = {'taskId': 'spec_' + digest, 'provider': 'ark',
-                                'state': 'success', 'requestType': 'blueprint',
-                                'output': {'spec': spec, 'specPath': 'spec.json'}}
+                            measure, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+                        task = {'taskId': 'measure_' + digest, 'provider': 'ark',
+                                'state': 'success', 'requestType': 'measure',
+                                'output': {'measure': measure, 'role': role}}
+                    else:
+                        if bool(params.get('specLocked')) and not os.path.isfile(spec_path):
+                            raise ValueError('SPEC_MISSING: 已锁定规格但 spec.json 不存在')
+                        if bool(params.get('specLocked')):
+                            spec = fw_spec.read_spec(spec_path)
+                            task = {'taskId': 'spec_locked', 'provider': 'ark',
+                                    'state': 'success', 'requestType': 'blueprint',
+                                    'output': {'spec': spec, 'specPath': 'spec.json'}}
+                        else:
+                            image_path = _upstream_image_path(fw_dir(), asset_id, kind,
+                                                              incoming, nodes)
+                            overall = params.get('overallLengthM')
+                            template = str(params.get('template') or 'excavator')
+                            prompt_edge = next((edge for edge in incoming
+                                                if edge.get('in') == 'text'), None)
+                            prompt_text = ''
+                            if prompt_edge:
+                                source = nodes.get(prompt_edge['from']) or {}
+                                prompt_text = str((((source.get('result') or {}).get('output') or {})
+                                                   .get('text')) or '')
+                            raw, _meta = fw_providers.analyze_spec(
+                                read_json(CONFIG_FILE, {}) or {}, image_path,
+                                [{'name': part_role,
+                                  'description': fw_spec.ROLE_LABELS.get(part_role, '')}
+                                 for part_role in fw_spec.PART_ROLES],
+                                prompt=prompt_text or str(params.get('prompt') or ''),
+                                overall_length=overall, template=template)
+                            spec = fw_spec.from_vision(raw, overall_length_m=overall,
+                                                       template=template, asset_id=asset_id)
+                            digest = hashlib.sha1(json.dumps(
+                                spec, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+                            task = {'taskId': 'spec_' + digest, 'provider': 'ark',
+                                    'state': 'success', 'requestType': 'blueprint',
+                                    'output': {'spec': spec, 'specPath': 'spec.json'}}
+                    duplicate_writers = [] if scope == 'part' else [
+                        other['id'] for other in graph['nodes']
+                        if other.get('type') == 'blueprint' and other['id'] != node_id
+                        and str((other.get('params') or {}).get('scope') or 'overall') != 'part']
+
                     def apply_blueprint(latest):
                         latest_nodes, _ = fw_pipeline.validate_graph(latest)
                         latest_node = latest_nodes.get(node_id)
@@ -1894,14 +1944,25 @@ class BridgeHandler(SimpleHTTPRequestHandler):
                             raise ValueError('提交期间节点已被删除或修改')
                         if (latest_node.get('params') or {}) != params_snapshot:
                             raise ValueError('提交期间尺寸规格参数已修改，本次结果未写入，请重新提交')
-                        fw_spec.write_spec(spec_path, spec)
                         state = latest_node.setdefault('result', {})
                         previous = state.get('providerTask')
                         if previous:
                             history = (state.get('history') or [])[-(PIPELINE_HISTORY_LIMIT - 1):]
                             state['history'] = history + [previous]
                         state['providerTask'] = task
-                        state['output'] = {'spec': spec, 'specPath': 'spec.json'}
+                        if scope == 'part':
+                            state['output'] = {'measure': measure, 'role': role, 'scope': 'part'}
+                        else:
+                            fw_spec.write_spec(spec_path, spec)
+                            state['output'] = {'spec': spec, 'specPath': 'spec.json'}
+                            if duplicate_writers:
+                                warnings = list(state.get('warnings') or [])
+                                warning = ('SPEC_WRITER_DUPLICATE: %s 也在写 spec.json，'
+                                           '同一资产只应保留一个整体尺寸节点'
+                                           % ', '.join(duplicate_writers))
+                                if warning not in warnings:
+                                    warnings.append(warning)
+                                state['warnings'] = warnings
                         state['state'] = 'done'
                         state.pop('error', None)
                         return latest

@@ -26,7 +26,7 @@ const PIPELINE_ZOOM_MAX = 1.8;
 const PIPELINE_PORTS = {
   prompt:{out:['text']}, textToImage:{in:['text'],out:['image']}, imageTo3D:{in:['image'],out:['mesh']},
   decimate:{in:['mesh'],out:['mesh','part']},
-  blueprint:{in:['image','text'],out:['spec']},
+  blueprint:{in:['image','spec','text'],out:['spec','measure']},
   threeView:{in:['image','spec','text'],out:['sheet','front','side','top']},
   partImage:{in:['text','image','spec'],out:['image','ports']},
   partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']},
@@ -1280,6 +1280,13 @@ function pipelineWireCard(card){
     }
     pipelineSave({quiet:true}).catch(error=>toast(error.message));
   });
+  card.querySelectorAll('[data-param="scope"]').forEach(select=>select.addEventListener('change',()=>{
+    const isPart = select.value === 'part';
+    const roleRow = card.querySelector('[data-role-row]');
+    const overallRows = card.querySelector('[data-overall-only]');
+    if(roleRow) roleRow.hidden = !isPart;
+    if(overallRows) overallRows.hidden = isPart;
+  }));
 }
 
 let _pipelinePreview = null;
@@ -1526,6 +1533,13 @@ function pipelineOutputURL(file){
 
 const PIPELINE_PROVIDER_OPTIONS = [{value:'',label:'自动'},{value:'tripo',label:'Tripo'},{value:'ark',label:'Ark'}];
 const PIPELINE_MODEL_OPTIONS = [{value:'',label:'默认'},{value:'v3.1-20260211',label:'v3.1'},{value:'v3.0-20250812',label:'v3.0'}];
+const PIPELINE_PART_ROLE_OPTIONS = [
+  {value:'',label:'自动（按节点名）'},
+  {value:'body',label:'车身 body'},{value:'track',label:'履带 track'},
+  {value:'wheel',label:'车轮 wheel'},{value:'boom',label:'动臂 boom'},
+  {value:'bucket',label:'铲斗 bucket'},{value:'cab',label:'驾驶室 cab'},
+  {value:'roof',label:'车顶 roof'},{value:'door',label:'车门 door'},
+  {value:'window',label:'车窗 window'}];
 
 function pipelineParamRow(label, control){
   return `<label><span>${pipelineEscape(label)}</span>${control}</label>`;
@@ -1549,13 +1563,18 @@ function pipelineParamSelect(node, key, label, options, fallback){
 }
 function pipelineParamForm(node){
   if(node.type === 'blueprint'){
+    const scope = String(node.params.scope || 'overall');
     return `<div class="pipeline-params">
       ${pipelineParamSelect(node, 'provider', '平台', [{value:'ark',label:'Ark'}], 'ark')}
-      ${pipelineParamNumber(node, 'overallLengthM', '整机长度（m）', 'min="0" step="0.1"', '')}
+      ${pipelineParamSelect(node, 'scope', '分析范围', [{value:'overall',label:'整体尺寸'},{value:'part',label:'单件尺寸'}], 'overall')}
+      <div data-role-row ${scope === 'part' ? '' : 'hidden'}>${pipelineParamSelect(node, 'role', '部件角色', PIPELINE_PART_ROLE_OPTIONS, '')}</div>
       ${pipelineParamSelect(node, 'template', '机型模板', [{value:'excavator',label:'挖掘机'},{value:'car',label:'小汽车'}], 'excavator')}
+      <div data-overall-only ${scope === 'part' ? 'hidden' : ''}>
+        ${pipelineParamNumber(node, 'overallLengthM', '整机长度（m）', 'min="0" step="0.1"', '')}
+        ${pipelineParamCheck(node, 'specLocked', '锁定现有规格', false)}
+      </div>
       ${pipelineParamText(node, 'prompt', '额外视觉提示', '')}
-      ${pipelineParamCheck(node, 'specLocked', '锁定现有规格', false)}
-      <small class="pipeline-params-hint">调用一次 Ark 视觉模型生成 spec.json；整机长度是绝对尺寸锚，模板补全其余部件。锁定后若 spec 已存在则不再请求 Provider。</small>
+      <small class="pipeline-params-hint">整体：Ark 视觉模型按整体三视图估算整机与各件尺寸并写 spec.json；整机长度是绝对锚，锁定后若 spec 已存在则不再请求 Provider。单件：吃上游单件三视图和上游 spec 锚，只产出该件 measure，不写 spec.json。</small>
     </div>`;
   }
   if(node.type === 'textToImage'){
@@ -1632,6 +1651,14 @@ function pipelineParamForm(node){
 function pipelineSpecPanel(node, output){
   const own = (node.result && node.result.output) || {};
   output = Object.assign({}, output || {}, own);
+  if(node.type==='blueprint' && output && output.measure){
+    const measure=output.measure;
+    const size=Array.isArray(measure.sizeM)?measure.sizeM.map(value=>Number(value).toFixed(2)).join(' × '):'';
+    const confidence=measure.confidence!=null?` · ${Math.round(Number(measure.confidence)*100)}%`:'';
+    const anchor=measure.anchor&&measure.anchor.overallLengthM!=null&&Number(measure.anchor.overallLengthM)>0
+      ?` · 整机锚 ${Number(measure.anchor.overallLengthM).toFixed(2)} m`:'';
+    return `<details class="pipeline-spec"><summary>单件尺寸 · ${pipelineEscape(measure.role||'')} ${pipelineEscape(size)} m</summary><p>forward ${pipelineEscape(measure.forward||'')}${confidence}${anchor}</p><pre>${pipelineEscape(JSON.stringify(measure,null,2))}</pre></details>`;
+  }
   if(node.type==='blueprint' && output && output.spec){
     const parts=(output.spec.parts&&typeof output.spec.parts==='object')?output.spec.parts:{};
     const rows=Object.entries(parts).map(([role,part])=>{

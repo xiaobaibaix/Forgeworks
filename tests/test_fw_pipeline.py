@@ -1016,6 +1016,49 @@ class SpecExecutionTest(unittest.TestCase):
                              if node['id'] == 'blueprint')
             self.assertEqual(blueprint['result']['output']['spec']['assetId'], 'M1')
 
+    def test_blueprint_part_measure_is_attached_without_spec(self):
+        spec = fw_spec.template_spec('M1', template='car')
+        measure = {
+            'schemaVersion': 1, 'scope': 'part', 'role': 'wheel',
+            'partId': 'blueprint_wheel', 'sizeM': [4.0, 1.7, 0.7], 'forward': '+X',
+            'confidence': 0.8, 'anchor': {'overallLengthM': 4.2, 'template': 'car'},
+            'views': {}, 'notes': '',
+        }
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'spec_1', 'state': 'success',
+                     'output': {'spec': spec, 'specPath': 'spec.json'}}}},
+                {'id': 'sheet', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/sheet.png'}}}},
+                {'id': 'blueprint_wheel', 'type': 'blueprint',
+                 'params': {'scope': 'part', 'role': 'wheel'},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'measure_1', 'state': 'success',
+                     'output': {'measure': measure, 'role': 'wheel'}}}},
+            ],
+            'edges': [
+                {'from': 'blueprint', 'out': 'spec', 'to': 'blueprint_wheel', 'in': 'spec'},
+                {'from': 'sheet', 'out': 'image', 'to': 'blueprint_wheel', 'in': 'image'},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            saved = fw_pipeline.save_graph(directory, 'M1', graph, kind='machine')
+            for node in saved['nodes']:
+                node['result']['state'] = 'done'
+            fw_pipeline.save_graph(directory, 'M1', saved, kind='machine')
+            result = fw_pipeline.execute_local(directory, 'M1', kind='machine')
+            node = next(item for item in result['graph']['nodes']
+                        if item['id'] == 'blueprint_wheel')
+            output = node['result']['output']
+            self.assertEqual(output['measure']['sizeM'], [4.0, 1.7, 0.7])
+            self.assertEqual(output['role'], 'wheel')
+            self.assertNotIn('spec', output)
+
     def test_part_image_gets_role_and_anchor_ports_from_spec(self):
         spec = fw_spec.template_spec('M1')
         with tempfile.TemporaryDirectory() as directory:
@@ -1188,13 +1231,15 @@ class FrontendMirrorTest(unittest.TestCase):
         source = (ROOT / 'js' / 'pipeline.js').read_text(encoding='utf-8')
         compact = ''.join(source.split())
         for expected in (
-            "blueprint:{in:['image','text'],out:['spec']}",
+            "blueprint:{in:['image','spec','text'],out:['spec','measure']}",
             "threeView:{in:['image','spec','text'],out:['sheet','front','side','top']}",
             "partImage:{in:['text','image','spec'],out:['image','ports']}",
             "partModel:{in:['image','spec','ports'],out:['part','mesh','assembly']}",
             "blueprint:'尺寸规格'",
             "threeView:'三视图'",
             "pipelineSpecPanel(node,taskOutput)",
+            "'scope','分析范围'",
+            "output.measure",
             "['textToImage','imageTo3D','partImage','partModel','blueprint','threeView']",
             "visionNode?'DoubaoVision'",
             "visionNode?'ark'",

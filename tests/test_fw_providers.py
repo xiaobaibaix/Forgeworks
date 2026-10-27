@@ -273,5 +273,80 @@ class ArkSpecTest(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class AnalyzeDimensionsTest(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        self.original = fw_providers._ark_request
+
+    def tearDown(self):
+        fw_providers._ark_request = self.original
+
+    def _image(self, directory):
+        path = pathlib.Path(directory) / 'wheel.png'
+        path.write_bytes(b'\x89PNG\r\n\x1a\n')
+        return str(path)
+
+    def _fake(self, content):
+        def fake(config, route, payload=None, timeout=60):
+            self.calls.append((route, payload))
+            return {'choices': [{'message': {'content': content}}]}
+        return fake
+
+    def test_part_scope_prompt_carries_role_label_and_anchor(self):
+        fw_providers._ark_request = self._fake(
+            '{"parts":{"wheel":{"sizeM":[4.0,1.7,0.7],"forward":"+X","confidence":0.8}},"notes":["ok"]}')
+        with tempfile.TemporaryDirectory() as directory:
+            raw, meta = fw_providers.analyze_dimensions(
+                ARK_CONFIG, self._image(directory), [], scope='part', role='wheel',
+                label='轮组', overall_length=4.2, template='car', prompt='圆轮')
+        self.assertEqual(raw['parts']['wheel']['sizeM'], [4.0, 1.7, 0.7])
+        self.assertEqual(meta['notes'], 'ok')
+        route, payload = self.calls[0]
+        self.assertEqual(route, '/chat/completions')
+        self.assertEqual(payload['max_tokens'], 600)
+        text = payload['messages'][1]['content'][0]['text']
+        self.assertIn('轮组', text)
+        self.assertIn('wheel', text)
+        self.assertIn('4.200', text)
+        self.assertIn('car', text)
+        self.assertIn('三视图', text)
+
+    def test_part_scope_requires_anchor_before_request(self):
+        calls = []
+
+        def fail(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError('unanchored part analysis must not request')
+        fw_providers._ark_request = fail
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'SPEC_UNANCHORED'):
+                fw_providers.analyze_dimensions(
+                    ARK_CONFIG, self._image(directory), [], scope='part', role='wheel')
+        self.assertEqual(calls, [])
+
+    def test_part_scope_requires_role(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+                fw_providers.analyze_dimensions(
+                    ARK_CONFIG, self._image(directory), [], scope='part', overall_length=4.2)
+
+    def test_unknown_scope_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+            fw_providers.analyze_dimensions(ARK_CONFIG, 'x.png', [], scope='assembly')
+
+    def test_overall_scope_still_lists_parts_and_anchor(self):
+        fw_providers._ark_request = self._fake(
+            '{"parts":{"bucket":{"sizeM":[1.0,1.0,1.0],"forward":"+X","confidence":0.5}}}')
+        with tempfile.TemporaryDirectory() as directory:
+            fw_providers.analyze_dimensions(
+                ARK_CONFIG, self._image(directory), [{'name': '铲斗'}],
+                scope='overall', overall_length=7.2, template='excavator')
+        payload = self.calls[0][1]
+        self.assertEqual(payload['max_tokens'], 1800)
+        text = payload['messages'][1]['content'][0]['text']
+        self.assertIn('7.200', text)
+        self.assertIn('铲斗', text)
+
+
 if __name__ == '__main__':
     unittest.main()

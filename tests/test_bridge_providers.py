@@ -645,6 +645,116 @@ class BlueprintBridgeTest(unittest.TestCase):
         self.assertIn('参数已修改', result['error'])
         self.assertFalse((self.pipeline / 'spec.json').exists())
 
+    def test_overall_scope_warns_when_multiple_spec_writers(self):
+        def add_copy(latest):
+            latest['nodes'].append({'id': 'blueprint_copy', 'type': 'blueprint',
+                                    'params': {'overallLengthM': 7.2}})
+            return latest
+        fw_pipeline.update_graph(str(self.root), 'M1', 'machine', add_copy)
+
+        def fake(config, image_path, parts, prompt='', model='', overall_length=0.0,
+                 template='excavator'):
+            return {'parts': {}, 'connections': []}, {'model': 'vision', 'notes': ''}
+
+        with mock.patch.object(bridge.fw_providers, 'analyze_spec', side_effect=fake):
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint',
+                'confirmRemote': True})
+        self.assertTrue(result['ok'], result)
+        graph = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        node = next(node for node in graph['nodes'] if node['id'] == 'blueprint')
+        warnings = node['result'].get('warnings') or []
+        self.assertTrue(any('SPEC_WRITER_DUPLICATE' in item for item in warnings), warnings)
+
+    def _save_part_measure_graph(self, params=None):
+        (self.pipeline / 'outputs' / 'sheet.png').write_bytes(b'\x89PNG\r\n\x1a\n')
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'sheet', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/sheet.png'}}}},
+                {'id': 'blueprint', 'type': 'blueprint', 'params': {},
+                 'result': {'state': 'done',
+                            'output': {'spec': self.spec, 'specPath': 'spec.json'}}},
+                {'id': 'blueprint_body', 'type': 'blueprint',
+                 'params': dict({'provider': 'ark', 'scope': 'part'}, **(params or {}))},
+            ],
+            'edges': [
+                {'from': 'sheet', 'out': 'image', 'to': 'blueprint_body', 'in': 'image'},
+                {'from': 'blueprint', 'out': 'spec', 'to': 'blueprint_body', 'in': 'spec'},
+            ],
+        }
+        saved = fw_pipeline.save_graph(str(self.root), 'M1', graph, kind='machine')
+        # 首次保存会把未签名结果打回 dirty；二次保存保留已执行状态，贴近真实运行后的图
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(str(self.root), 'M1', saved, kind='machine')
+
+    def test_part_scope_writes_measure_without_spec(self):
+        self._save_part_measure_graph()
+
+        def fake(config, image_path, parts, scope='overall', role='', label='',
+                 overall_length=0.0, template='excavator', prompt='', model=''):
+            return ({'parts': {'body': {'sizeM': [1.2, 0.6, 0.5],
+                                        'forward': '+X', 'confidence': 0.7}},
+                     'notes': ['ok']}, {'model': 'vision', 'notes': 'ok'})
+
+        with mock.patch.object(bridge.fw_providers, 'analyze_dimensions', side_effect=fake):
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint_body',
+                'confirmRemote': True})
+        self.assertTrue(result['ok'], result)
+        self.assertFalse((self.pipeline / 'spec.json').exists())
+        graph = fw_pipeline.load_graph(str(self.root), 'M1', kind='machine')
+        node = next(node for node in graph['nodes'] if node['id'] == 'blueprint_body')
+        self.assertEqual(node['result']['state'], 'done')
+        output = node['result']['output']
+        self.assertEqual(output['measure']['role'], 'body')
+        self.assertEqual(output['measure']['sizeM'], [1.2, 0.6, 0.5])
+        self.assertEqual(output['measure']['anchor']['overallLengthM'], 7.2)
+        self.assertNotIn('spec', output)
+        self.assertTrue(node['result']['providerTask']['taskId'].startswith('measure_'))
+
+    def test_part_scope_requires_upstream_spec(self):
+        (self.pipeline / 'outputs' / 'sheet.png').write_bytes(b'\x89PNG\r\n\x1a\n')
+        graph = {
+            'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
+            'nodes': [
+                {'id': 'sheet', 'type': 'textToImage', 'params': {},
+                 'result': {'state': 'done', 'providerTask': {
+                     'taskId': 'img_1', 'state': 'success',
+                     'output': {'imagePath': 'outputs/sheet.png'}}}},
+                {'id': 'blueprint_body', 'type': 'blueprint',
+                 'params': {'provider': 'ark', 'scope': 'part', 'role': 'body'}},
+            ],
+            'edges': [
+                {'from': 'sheet', 'out': 'image', 'to': 'blueprint_body', 'in': 'image'},
+            ],
+        }
+        saved = fw_pipeline.save_graph(str(self.root), 'M1', graph, kind='machine')
+        for node in saved['nodes']:
+            node['result']['state'] = 'done'
+        fw_pipeline.save_graph(str(self.root), 'M1', saved, kind='machine')
+        with mock.patch.object(bridge.fw_providers, 'analyze_dimensions') as analyze:
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint_body',
+                'confirmRemote': True})
+        self.assertFalse(result['ok'], result)
+        self.assertIn('SPEC_MISSING', result['error'])
+        analyze.assert_not_called()
+
+    def test_part_scope_rejects_spec_locked(self):
+        self._save_part_measure_graph({'specLocked': True})
+        with mock.patch.object(bridge.fw_providers, 'analyze_dimensions') as analyze:
+            result = self._post('pipeline/provider/submit', {
+                'assetId': 'M1', 'kind': 'machine', 'nodeId': 'blueprint_body',
+                'confirmRemote': True})
+        self.assertFalse(result['ok'], result)
+        self.assertIn('specLocked', result['error'])
+        analyze.assert_not_called()
+
     def _save_spec_input_graph(self):
         graph = {
             'schemaVersion': 1, 'assetId': 'M1', 'revision': 0,
