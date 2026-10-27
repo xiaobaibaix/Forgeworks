@@ -27,8 +27,25 @@ class SpecValidationTest(unittest.TestCase):
         self.assertEqual(set(spec['parts']), {'body', 'roof', 'wheel'})
         self.assertAlmostEqual(spec['overall']['lengthM'], 4.2)
         self.assertAlmostEqual(spec['parts']['body']['sizeM'][2], 0.7)
-        ports = {connection['id'] for connection in spec['connections']}
-        self.assertEqual(ports, {'c_roof_body', 'c_wheel_body_front', 'c_wheel_body_rear'})
+        connections = {connection['id'] for connection in spec['connections']}
+        self.assertEqual(connections, {'c_roof_body', 'c_wheel_body'})
+
+    def test_car_template_ports_mate_along_opposing_axes(self):
+        spec = fw_spec.template_spec('MC_CAR', template='car')
+        body_ports = {port['id']: port for port in spec['parts']['body']['ports']}
+        wheel_ports = {port['id']: port for port in spec['parts']['wheel']['ports']}
+        roof_ports = {port['id']: port for port in spec['parts']['roof']['ports']}
+        self.assertEqual(set(body_ports), {'roof_mount', 'wheel_mount'})
+        self.assertEqual(body_ports['wheel_mount']['axis'], [0.0, 1.0, 0.0])
+        self.assertEqual(wheel_ports['wheel_mount']['axis'], [0.0, -1.0, 0.0])
+        self.assertEqual(body_ports['roof_mount']['axis'], [0.0, 0.0, 1.0])
+        self.assertEqual(roof_ports['mount']['axis'], [0.0, 0.0, -1.0])
+        self.assertEqual(wheel_ports['wheel_mount']['anchor'], [0.5, 0.5, 0.5])
+        tree = fw_spec.build_mate_tree(spec)
+        self.assertEqual([node['id'] for node in tree['nodes']],
+                         ['mate_body_roof', 'mate_body_wheel'])
+        self.assertEqual(tree['nodes'][1]['a'], 'mate_body_roof')
+        self.assertEqual(tree['warnings'], [])
 
     def test_unknown_template_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'SPEC_UNANCHORED'):
@@ -158,12 +175,73 @@ class SpecValidationTest(unittest.TestCase):
         self.assertEqual(fw_spec.role_for_node('partModel_boom', '动臂'), 'boom')
         self.assertEqual(fw_spec.role_for_node('mystery'), '')
 
+    def test_role_for_node_handles_threeview_and_blueprint_prefixes(self):
+        self.assertEqual(fw_spec.role_for_node('threeView_wheel'), 'wheel')
+        self.assertEqual(fw_spec.role_for_node('threeview_roof'), 'roof')
+        self.assertEqual(fw_spec.role_for_node('blueprint_wheel'), 'wheel')
+        self.assertEqual(fw_spec.role_for_node('blueprint_overall'), '')
+
     def test_anchor_ports_keep_anchor_but_have_no_metric_pos(self):
         part = fw_spec.template_spec('M1')['parts']['bucket']
         ports = fw_spec.anchor_ports(part)
         self.assertEqual(ports[0]['id'], 'ear_pin')
         self.assertEqual(ports[0]['anchorNorm'], [0.02, 0.5, 0.78])
         self.assertNotIn('pos', ports[0])
+
+
+class MeasureTest(unittest.TestCase):
+    def car_spec(self):
+        return fw_spec.template_spec('MC_CAR', template='car')
+
+    def test_measure_from_vision_reads_requested_role(self):
+        raw = {'parts': {
+            'body': {'sizeM': [4.1, 1.8, 0.7]},
+            'wheel': {'sizeM': [3.9, 1.6, 0.7], 'forward': '+Y', 'confidence': 0.7},
+        }}
+        measure = fw_spec.measure_from_vision(
+            raw, 'wheel', self.car_spec(), part_id='partImage_wheel', template='car')
+        self.assertEqual(measure['schemaVersion'], 1)
+        self.assertEqual(measure['scope'], 'part')
+        self.assertEqual(measure['role'], 'wheel')
+        self.assertEqual(measure['partId'], 'partImage_wheel')
+        self.assertEqual(measure['sizeM'], [3.9, 1.6, 0.7])
+        self.assertEqual(measure['forward'], '+Y')
+        self.assertAlmostEqual(measure['confidence'], 0.7)
+        self.assertEqual(measure['anchor'], {'overallLengthM': 4.2, 'template': 'car'})
+
+    def test_measure_from_vision_rejects_missing_or_bad_role(self):
+        with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+            fw_spec.measure_from_vision({'parts': {'body': {}}}, 'wheel', self.car_spec())
+        with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+            fw_spec.measure_from_vision({'parts': {}}, 'engine', self.car_spec())
+
+    def test_measure_from_vision_rejects_bad_size(self):
+        for size in ([0, 1, 1], [1, 1], ['a', 1, 1]):
+            with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+                fw_spec.measure_from_vision(
+                    {'parts': {'wheel': {'sizeM': size}}}, 'wheel', self.car_spec())
+
+    def test_validate_measure_accepts_template_sizes(self):
+        spec = self.car_spec()
+        measure = fw_spec.measure_from_vision(
+            {'parts': {'wheel': {'sizeM': list(spec['parts']['wheel']['sizeM'])}}},
+            'wheel', spec)
+        validated = fw_spec.validate_measure(measure, spec)
+        self.assertEqual(validated['role'], 'wheel')
+
+    def test_validate_measure_rejects_oversized_part(self):
+        raw = {'parts': {'wheel': {'sizeM': [5.0, 1.6, 0.7]}}}
+        with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+            fw_spec.measure_from_vision(raw, 'wheel', self.car_spec())
+
+    def test_validate_measure_rejects_wrong_scope(self):
+        measure = {
+            'schemaVersion': 1, 'scope': 'overall', 'role': 'wheel',
+            'sizeM': [4.0, 1.7, 0.7], 'forward': '+X', 'confidence': 0.7,
+            'anchor': {'overallLengthM': 4.2, 'template': 'car'},
+        }
+        with self.assertRaisesRegex(ValueError, 'SPEC_INVALID'):
+            fw_spec.validate_measure(measure, self.car_spec())
 
 
 class FitMathTest(unittest.TestCase):

@@ -8,6 +8,7 @@ import os
 import tempfile
 
 SPEC_SCHEMA_VERSION = 1
+MEASURE_SCHEMA_VERSION = 1
 UNITS = 'm'
 PART_ROLES = ('body', 'track', 'wheel', 'boom', 'bucket', 'cab', 'roof', 'door', 'window')
 ROLE_LABELS = {
@@ -101,19 +102,15 @@ CAR_TEMPLATE = {
             'ports': [
                 {'id': 'roof_mount', 'type': 'fixed', 'anchor': [0.5, 0.5, 1.0],
                  'axis': [0, 0, 1], 'normal': [0, 0, 1], 'radiusM': 0.05},
-                {'id': 'axle_front', 'type': 'pin', 'anchor': [0.72, 0.5, 0.0],
-                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
-                {'id': 'axle_rear', 'type': 'pin', 'anchor': [0.28, 0.5, 0.0],
-                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
+                {'id': 'wheel_mount', 'type': 'fixed', 'anchor': [0.5, 0.5, 0.5],
+                 'axis': [0, 1, 0], 'normal': [1, 0, 0], 'radiusM': 0.3},
             ],
         },
         'wheel': {
-            'role': 'wheel', 'sizeM': [4.0, 1.7, 0.6], 'forward': '+X', 'confidence': 0.5,
+            'role': 'wheel', 'sizeM': [4.0, 1.7, 0.7], 'forward': '+X', 'confidence': 0.5,
             'ports': [
-                {'id': 'axle_front', 'type': 'fixed', 'anchor': [0.72, 0.5, 1.0],
-                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
-                {'id': 'axle_rear', 'type': 'fixed', 'anchor': [0.28, 0.5, 1.0],
-                 'axis': [0, 1, 0], 'normal': [0, 0, 1], 'radiusM': 0.3},
+                {'id': 'wheel_mount', 'type': 'fixed', 'anchor': [0.5, 0.5, 0.5],
+                 'axis': [0, -1, 0], 'normal': [1, 0, 0], 'radiusM': 0.3},
             ],
         },
         'roof': {
@@ -126,8 +123,7 @@ CAR_TEMPLATE = {
     },
     'connections': [
         {'id': 'c_roof_body', 'a': 'roof:mount', 'b': 'body:roof_mount', 'joint': 'fixed'},
-        {'id': 'c_wheel_body_front', 'a': 'wheel:axle_front', 'b': 'body:axle_front', 'joint': 'fixed'},
-        {'id': 'c_wheel_body_rear', 'a': 'wheel:axle_rear', 'b': 'body:axle_rear', 'joint': 'fixed'},
+        {'id': 'c_wheel_body', 'a': 'wheel:wheel_mount', 'b': 'body:wheel_mount', 'joint': 'fixed'},
     ],
     'notes': [],
 }
@@ -389,6 +385,98 @@ def from_vision(raw, overall_length_m=0.0, template='excavator', asset_id=''):
     return validate_spec(spec)
 
 
+def validate_measure(measure, spec=None):
+    if not isinstance(measure, dict):
+        raise ValueError('SPEC_INVALID: measure 必须是 JSON 对象')
+    if measure.get('schemaVersion') != MEASURE_SCHEMA_VERSION:
+        raise ValueError('SPEC_INVALID: measure.schemaVersion 必须是 %d' % MEASURE_SCHEMA_VERSION)
+    if measure.get('scope') != 'part':
+        raise ValueError('SPEC_INVALID: measure.scope 必须是 part')
+    role = str(measure.get('role') or '').strip()
+    if not role:
+        raise ValueError('SPEC_INVALID: measure.role 不能为空')
+    validated_spec = validate_spec(spec) if spec is not None else None
+    if validated_spec is not None and role not in validated_spec['parts']:
+        raise ValueError('SPEC_INVALID: measure.role=%s 不在 spec 中' % role)
+    size = _vec3(measure.get('sizeM'), 'measure.sizeM')
+    if any(value <= 0 for value in size):
+        raise ValueError('SPEC_INVALID: measure.sizeM 必须全部大于 0')
+    forward = str(measure.get('forward') or '+X').upper()
+    if forward not in FORWARDS:
+        raise ValueError('SPEC_INVALID: measure.forward 非法')
+    confidence = _number(measure.get('confidence', 0.5), 'measure.confidence')
+    if not 0 <= confidence <= 1:
+        raise ValueError('SPEC_INVALID: measure.confidence 必须在 0..1')
+    anchor = measure.get('anchor') if isinstance(measure.get('anchor'), dict) else {}
+    overall_length = _positive(anchor.get('overallLengthM'))
+    if validated_spec is not None:
+        overall_length = overall_length or validated_spec['overall']['lengthM']
+        # 单件按尺寸降序与整机包络比对，避免视觉把某一件放大到整机之外
+        limits = sorted((validated_spec['overall']['lengthM'],
+                         validated_spec['overall']['widthM'],
+                         validated_spec['overall']['heightM']), reverse=True)
+        for index, part_axis in enumerate(sorted(size, reverse=True)):
+            if part_axis > limits[index] * 1.05:
+                raise ValueError(
+                    'SPEC_INVALID: measure.sizeM 超出整机包络（第 %d 大轴 %.3f > %.3f）'
+                    % (index + 1, part_axis, limits[index] * 1.05))
+    elif overall_length is None:
+        raise ValueError('SPEC_UNANCHORED: measure 缺少 anchor.overallLengthM')
+    views = measure.get('views') if isinstance(measure.get('views'), dict) else {}
+    return {
+        'schemaVersion': MEASURE_SCHEMA_VERSION,
+        'scope': 'part',
+        'role': role,
+        'partId': str(measure.get('partId') or ''),
+        'sizeM': size,
+        'forward': forward,
+        'confidence': confidence,
+        'anchor': {
+            'overallLengthM': overall_length,
+            'template': str(anchor.get('template') or ''),
+        },
+        'views': {str(key): str(value) for key, value in views.items()},
+        'notes': str(measure.get('notes') or ''),
+    }
+
+
+def measure_from_vision(raw, role, spec, part_id='', template=''):
+    if isinstance(raw, dict) and isinstance(raw.get('measure'), dict):
+        raw = raw['measure']
+    if not isinstance(raw, dict):
+        raise ValueError('SPEC_INVALID: 视觉结果不是 JSON 对象')
+    validated_spec = validate_spec(spec) if spec is not None else None
+    role = str(role or '').strip()
+    raw_parts = raw.get('parts') if isinstance(raw.get('parts'), dict) else {}
+    incoming = raw_parts.get(role)
+    if validated_spec is not None and role not in validated_spec['parts']:
+        raise ValueError('SPEC_INVALID: 角色 %s 不在 spec 中' % role)
+    if not isinstance(incoming, dict):
+        raise ValueError('SPEC_INVALID: 视觉结果缺少部件 %s' % role)
+    size = incoming.get('sizeM')
+    if not isinstance(size, (list, tuple)) or len(size) != 3:
+        raise ValueError('SPEC_INVALID: parts.%s.sizeM 必须是三个数字' % role)
+    overall_length = 0.0
+    if validated_spec is not None:
+        overall_length = validated_spec['overall']['lengthM']
+    measure = {
+        'schemaVersion': MEASURE_SCHEMA_VERSION,
+        'scope': 'part',
+        'role': role,
+        'partId': str(part_id or ''),
+        'sizeM': list(size),
+        'forward': str(incoming.get('forward') or '+X').upper(),
+        'confidence': incoming.get('confidence', 0.5),
+        'anchor': {
+            'overallLengthM': overall_length,
+            'template': str(template or ''),
+        },
+        'views': {},
+        'notes': '',
+    }
+    return validate_measure(measure, validated_spec)
+
+
 def read_spec(path):
     try:
         with open(path, encoding='utf-8') as stream:
@@ -419,7 +507,8 @@ def write_spec(path, spec):
 
 def role_for_node(node_id, part_name=''):
     text = str(node_id or '')
-    for prefix in ('partModel_', 'partImage_', 'decimate_', 'assembly_', 'mate_'):
+    for prefix in ('partModel_', 'partImage_', 'decimate_', 'assembly_', 'mate_',
+                   'threeview_', 'threeView_', 'blueprint_'):
         if text.startswith(prefix):
             text = text[len(prefix):]
             break
