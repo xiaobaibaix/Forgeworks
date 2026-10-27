@@ -32,7 +32,8 @@
 
 ### 2.2 非目标
 
-- 不把视觉模型当作精确量具；vision 只提供比例、角色和连接关系。
+- 不把视觉模型当作精确量具；vision 只提供比例、角色和连接关系。三视图是尺寸节点唯一的图像输入，用于比例估计，仍不做像素测量。
+- 尺寸不再来自模板预设或单张 3/4 效果图：整体概念图 → 整体三视图 → `blueprint(scope=overall)`；单件图 → 单件三视图 → 同一个 `blueprint(scope=part)`。
 - 不做自动 CAD 重建，不生成工程级制造图。
 - 不支持任意曲面接触和柔性连接；P3 只支持销轴、法兰、贴合面三类端口。
 - 不改变 Provider 协议，不新增远程模型服务。
@@ -298,6 +299,16 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
 {"output": {"generated_image_url": "...", "ports": [ /* 端口列表；此阶段只有 anchorNorm/axis/normal/radiusM，无米制 pos */ ]}}
 ```
 
+`blueprint(scope=part)` 结果新增：
+
+```json
+{"output": {"measure": {
+  "schemaVersion": 1, "scope": "part", "role": "wheel", "partId": "threeView_wheel",
+  "sizeM": [4.0, 1.7, 0.7], "forward": "+X", "confidence": 0.7,
+  "anchor": {"overallLengthM": 4.2, "template": "car"},
+  "views": {"sheet": "outputs/threeview_wheel_sheet.png"}, "notes": ""}}}
+```
+
 `partModel` 结果新增：
 
 ```json
@@ -305,7 +316,9 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
   "output": {
     "model_url": "...",
     "localPath": "outputs/model_<taskId>.glb",
-    "fit": { /* 同 5.2 */ },
+    "measure": { /* 上游 measure；无则为 null */ },
+    "measureHash": "<sha256>",
+    "fit": { /* 同 5.2；targetSizeM 记录实际目标尺寸 */ },
     "ports": [ /* 同 5.2 */ ],
     "assembly": { /* 单件 assembly，见 5.3 */ }
   }
@@ -318,24 +331,38 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
 {"output": {"meshPath": "outputs/bucket_10k.glb", "assembly": { /* 端口保留 */ }}}
 ```
 
+`mate` 结果新增：
+
+```json
+{"output": {"meshPath": "model_mate_<nodeId>.glb", "assembly": { /* a.parts+b.parts */ },
+  "assemblyPath": "parts/asm_<nodeId>.json", "connection": "c_roof_body",
+  "portA": "body:roof_mount", "portB": "roof:mount",
+  "gapM": 0.0, "appliedOffsetM": 0.002, "axisErrorDeg": 0.0,
+  "warnings": [], "mateHash": "<sha256>", "engine": "blender"}}
+```
+
 ### 5.5 节点参数
 
 | 节点 | 新参数 | 默认值 | 说明 |
 |---|---|---|---|
 | `blueprint` | `provider` | `ark` | 视觉 Provider |
+| | `scope` | `overall` | `overall` 写 `spec.json`；`part` 只产出 `measure` |
+| | `role` | 空 | `scope=part` 时的部件角色 |
 | | `overallLengthM` | 空 | 整机长度锚；空则查机型模板 |
 | | `template` | `excavator` | 机型模板名 |
 | | `prompt` | 空 | 额外视觉提示 |
-| | `specLocked` | `false` | 锁定时保留现有 `spec.json` |
+| | `specLocked` | `false` | 锁定时保留现有 `spec.json`（仅整体） |
 | `threeView` | `provider` | `ark` | 图像 Provider |
 | | `prompt` | 空 | 三视图风格提示 |
-| | `annotate` | `true` | 是否用 Pillow 叠加标注 |
+| | `annotate` | `false` | 是否用 Pillow 叠加标注 |
 | `partImage` | 无新增 | | 从 spec/ports 输入读取 |
 | `partModel` | `fitMode` | `uniform` | `uniform` 或 `perAxis` |
 | | `ground` | `false` | 是否把包围盒最低点落到 z=0 |
-| `mate` | `connection` | 空 | 使用 spec 中的 connection id |
+| | `measure` | 无 | 尺寸优先取上游 measure，其次 `spec.parts[role].sizeM` |
+| `mate` | `connection` | 空 | 使用 spec 中的 connection id；空则按角色唯一匹配 |
 | | `offsetM` | `-0.002` | 负值为重叠，正值为间隙 |
 | | `alignTwist` | `true` | 是否用 normal 约束绕轴旋转 |
+| | `ground` | `false` | 装配后整体落到 z=0 |
 | `decimate` | `preserveAssembly` | `true` | assembly 输入时保留端口 |
 
 ### 5.6 文件布局
@@ -376,19 +403,22 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
 在 `tools/fw_pipeline.py` 的 `NODE_TYPES` 中新增/修改：
 
 ```python
-'blueprint': {'in': {'image': 'image', 'text': 'text'}, 'out': {'spec': 'spec'}},
-'threeView': {'in': {'image': 'image', 'spec': 'spec'},
+'blueprint': {'in': {'image': 'image', 'spec': 'spec', 'text': 'text'},
+              'out': {'spec': 'spec', 'measure': 'measure'}},
+'threeView': {'in': {'image': 'image', 'spec': 'spec', 'text': 'text'},
               'out': {'sheet': 'image', 'front': 'image', 'side': 'image', 'top': 'image'}},
 'partImage': {'in': {'text': 'text', 'image': 'image', 'spec': 'spec'},
               'out': {'image': 'image', 'ports': 'ports'}},
-'partModel': {'in': {'image': 'image', 'spec': 'spec', 'ports': 'ports'},
+'partModel': {'in': {'image': 'image', 'spec': 'spec', 'ports': 'ports', 'measure': 'measure'},
               'out': {'part': 'part', 'mesh': 'mesh', 'assembly': 'assembly'}},
 'decimate': {'in': {'mesh': 'mesh', 'assembly': 'assembly'},
              'out': {'mesh': 'mesh', 'part': 'part', 'assembly': 'assembly'}},
-'mate': {'in': {'a': 'assembly', 'b': 'assembly'},
+'mate': {'in': {'a': 'assembly', 'b': 'assembly', 'spec': 'spec'},
          'out': {'assembly': 'assembly', 'mesh': 'mesh'}},
-'validate': {'in': {'mesh': 'mesh', 'assembly': 'assembly'}, 'out': {'report': 'report'}},
+'validate': {'in': {'mesh': 'mesh'}, 'out': {'report': 'report'}},
 ```
+
+`scope=part` 的 `blueprint` 只写 `measure`，绝不写 `spec.json`；多个 `scope=overall` 写者会产生 `SPEC_WRITER_DUPLICATE` 警告。小汽车模板的端口成对取相反轴向（`body:roof_mount` 与 `roof:mount`、`body:wheel_mount` 与 `wheel:wheel_mount`），轮组只保留一个中心港，`mate` 每对部件只走一条 connection。
 
 `PROVIDER_TYPES` 增加 `blueprint`、`threeView`；`LOCAL_STAGE_TYPES` 不变。`MULTI_INPUTS` 不变，`mate` 使用两个单输入端口。Provider 类型映射增加 `threeView → textToImage`、`blueprint → vision`；`partImage`/`partModel` 保持现有映射。
 
@@ -437,6 +467,7 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
 5. 写入 `<asset>/pipeline/spec.json`；一个资产只保留一份 spec，多个 `blueprint` 节点时以最后成功且未锁定的结果为准，并在结果中告警；`specLocked` 为 true 时只校验不覆盖。
 6. 节点结果保存 `spec`、`providerTask`、`warnings`、`confidence`；spec 内容哈希一并保存，下游节点用该哈希参与 dirty 判断。
 7. 任何字段缺失用模板补齐，并在 `notes` 中标注来源；无法补齐则报错。
+8. `scope=part` 时改用 `fw_providers.analyze_dimensions`：输入是上游单件三视图 sheet，prompt 带整机锚与角色，只返回 `sizeM`/`forward`/`confidence`；结果写入节点 `output.measure`，不写 `spec.json`。`spec.parts[role].sizeM` 只作为锚与校验上限，不覆盖 measure。
 
 ### 7.2 `threeView`
 
@@ -450,7 +481,7 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
    - 部件尺寸表（从 spec 读取，精确数字）；
    - 端口标记：按 `anchor` 在视图框内画示意圆点和 id；这是示意位置，不是从图像像素测量的真实位置。
 6. 输出 `threeview_<nodeId>_sheet.png`、`_annotated.png`、`_front/side/top.png`。
-7. 三视图是**参考图**，不参与尺寸计算；不做像素测量。
+7. 三视图是尺寸节点**唯一**的图像输入：`blueprint` 用它估计比例，再把比例乘到整机绝对锚上；仍然不做像素测量，也不把面板外框当作量具。
 
 ### 7.3 `partImage`
 
@@ -588,7 +619,7 @@ spec 由 `blueprint` 节点产出，保存到 `<asset>/pipeline/spec.json`，也
 - 一次生成三格横排拼图，减少付费调用。
 - 提示词要求：orthographic front/side/top、same scale、plain white background、no perspective、no text、three equal panels。
 - 本地裁切为三张；若模型没有严格三等分，保留原图并在结果中告警。
-- 用途：`partImage` 参考图、人工理解结构；**不用于尺寸测量**。
+- 用途：`blueprint` 的唯一图像输入（整体与单件共用同一节点类型）、`partImage` 参考图、人工理解结构；只做比例估计，**不做像素测量**。
 
 ### 9.2 标注
 

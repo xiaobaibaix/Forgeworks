@@ -683,3 +683,12 @@ cd /Users/a260420/workspace/WorkBuddy/2026-10-20-14-48-15/Forgeworks
 - **限制**：这是真终端，能拿到 token 的本机进程即可执行命令，不做命令白名单或沙箱。Windows 路径尚未在真机验证（开发机是 macOS），首次在 Windows 上使用后请回报问题。
 - **验证**：`tests/test_fw_terminal.py` 覆盖 POSIX shell 往返、resize、停止回收、历史重放、错误 token、会话上限、`shutdown_all`、claude 命令内容，以及 HTTP 层 Origin/Host/token 拒绝与 SSE 端到端；`tests/test_fw_terminal_win.py` 用假 `winpty` 模块覆盖 Windows 会话的 spawn/write/resize/退出/停树、shell 选择与 MCP 配置文件；`tests/smoke.html` 覆盖 vendor 全局、工具条按钮与 base64 中文往返。
 - **手工验收**：管线视图点「终端」→ dock 出现并显示提示符 → 输入 `echo FW_TERM_OK` 有回显 → 点「启动 Claude」进入 TUI（确认中文输入）→ `/mcp` 能看到 `forgeworks` → 关闭后 `pgrep -f fw_pty_exec` 无残留。
+
+## 23. 三视图尺寸 + 端口装配（2026-10-27）
+
+- **尺寸链路**：整体描述 → `textToImage` 整体概念图 → `threeView_overall`（一次生成「前|侧|顶」横排 sheet，Pillow 本地三等分裁切）→ `blueprint_overall`（`scope=overall`，读三视图估比例，乘整机长度锚后写 `spec.json`）。单件链路：`partImage_<role>` → `threeView_<role>` → `blueprint_<role>`（`scope=part`，同一个节点类型）→ `output.measure`，不写 spec。`partModel` 的 `measure` 口优先于 `spec.parts[role].sizeM`，并把 `measureHash` 纳入幂等判断；模型提示词也会带上目标尺寸。
+- **绝对锚**：仍由 `blueprint.params.overallLengthM` 或机型模板提供；三视图只给比例，不做像素测量。缺锚报 `SPEC_UNANCHORED`，不回退模板静默补齐。多个 `scope=overall` 写者会产生 `SPEC_WRITER_DUPLICATE`。
+- **端口装配**：新增 `mate` 节点（`a`/`b` 两路 `assembly` + `spec`）。Python 侧 `fw_assembly.mate_plan` 按设计 §8.2 解算四元数与落位平移（`A.axis` 对齐 `-B.axis`，可选 normal 扭转），`merge_assembly` 保持 a 的坐标系并合并 parts/connectors/mates；Blender `--mode mate` 只负责应用与复核，输出多对象 GLB 与逐对象包围盒，`ground=true` 时整体落到 z=0。结果写 `parts/asm_<节点>.json`，配对重复运行由 `mateHash` 短路。
+- **端口约定**：父子件端口轴向相反，`mate` 用 connection id 或角色唯一匹配取端口。轴差 >1° 告警、>5° 报 `MATE_AXIS_ERROR`；`|applied + offset| > 0.5 mm` 报 `MATE_OFFSET_DRIFT`。缺连接/端口分别报 `MATE_CONNECTION_MISSING`、`MATE_CONNECTOR_MISSING`；装配环报 `ASSEMBLY_CYCLE`。旧 `assemble` 路径原样保留。
+- **小车重接**：`python3 tools/build_car_graph.py` 默认只打印，加 `--write` 会先备份 `graph.json` 再写入；脚本把 MC_CAR 改为 `threeView_overall → blueprint_overall`，每件加 `threeView_<role> → blueprint_<role>`，`decimate_<role>` 改吃 `partModel.assembly`，组装段换成 `mate_body_roof → mate_body_wheel`（后序），最后接回 `styleApply_1`。不触发任何付费调用。
+- **验证**：`python3 -m unittest discover -s tests -p 'test_*.py'` 覆盖 mate 数学/合并/缓存/失败/环路与 Blender 两盒装配；`bash tests/run.sh` 覆盖新节点、端口、参数与报告面板。手工验收：Bridge 起来后按 order 依次运行整体三视图、整体尺寸、单件三视图、单件尺寸，确认 `fit.targetSizeM` 与 mate 报告的 gap/轴差，再依次跑两个 mate，最后 `pgrep -f fw_blender` 确认无残留。
