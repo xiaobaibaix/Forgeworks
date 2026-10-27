@@ -17,6 +17,10 @@ import fw_spec
 
 ROLES = ('body', 'roof', 'wheel')
 ROW_Y = {'body': 420, 'roof': 840, 'wheel': 1260}
+# 三视图主体描述要与拆件长指令区分，长指令只用于 partImage 生成单件图。
+PART_SUBJECTS = {'body': '方正车壳，不含车轮与车顶',
+                 'roof': '车顶板，仅顶板与边缘倒角',
+                 'wheel': '四轮轮组，前后两排左右对称'}
 PART_COLUMNS = {'prompt': 60, 'partImage': 380, 'threeView': 680,
                 'blueprint': 980, 'partModel': 1280, 'decimate': 1580}
 MATE_X = 1880
@@ -47,10 +51,10 @@ def _part_blueprint(role, x, y, template):
         'overallLengthM': None, 'specLocked': False, 'prompt': ''})
 
 
-def _mate_node(mate_id, connection, x, y):
+def _mate_node(mate_id, connection, x, y, ground=False):
     return _node(mate_id, 'mate', x, y, {
         'connection': connection, 'offsetM': -0.002,
-        'alignTwist': True, 'ground': False})
+        'alignTwist': True, 'ground': ground})
 
 
 def _existing(graph, node_id):
@@ -107,7 +111,7 @@ def rewire(graph, spec):
                                  PART_COLUMNS['partImage'], row,
                                  dict(part_image.get('params') or {})), part_image),
             _carry_results(_three_view('threeView_' + role, PART_COLUMNS['threeView'], row,
-                                       {'prompt': (prompt.get('params') or {}).get('text', '')}),
+                                       {'prompt': PART_SUBJECTS[role]}),
                            previous.get('threeView_' + role)),
             _carry_results(_part_blueprint(role, PART_COLUMNS['blueprint'], row,
                                            overall_params.get('template') or 'car'),
@@ -124,7 +128,6 @@ def rewire(graph, spec):
             _edge('prompt_' + role, 'text', 'partImage_' + role, 'text'),
             _edge('blueprint_overall', 'spec', 'partImage_' + role, 'spec'),
             _edge('partImage_' + role, 'image', 'threeView_' + role, 'image'),
-            _edge('prompt_' + role, 'text', 'threeView_' + role, 'text'),
             _edge('threeView_' + role, 'sheet', 'blueprint_' + role, 'image'),
             _edge('blueprint_overall', 'spec', 'blueprint_' + role, 'spec'),
             _edge('prompt_' + role, 'text', 'blueprint_' + role, 'text'),
@@ -137,11 +140,13 @@ def rewire(graph, spec):
 
     tree = fw_spec.build_mate_tree(spec)
     mate_ids = {}
+    last_index = len(tree['nodes']) - 1
     for index, item in enumerate(tree['nodes']):
         mate_id = item['id']
         mate_ids[item['b']] = mate_id
         node = _carry_results(
-            _mate_node(mate_id, item['connection'], MATE_X + MATE_STEP * index, ROW_Y['body']),
+            _mate_node(mate_id, item['connection'], MATE_X + MATE_STEP * index, ROW_Y['body'],
+                       ground=index == last_index),
             previous.get(mate_id))
         nodes.append(node)
         edges.append(_edge(_assembly_source(item['a'], mate_ids),
@@ -175,12 +180,6 @@ def rewire(graph, spec):
             edges.append(_edge(metadata_id, 'mesh', node_id, 'mesh'))
             if validate_id:
                 edges.append(_edge(validate_id, 'report', node_id, 'report'))
-
-    old_prompt = previous.get('prompt_assemble')
-    if old_prompt:
-        nodes.append(_carry_results(
-            _node('prompt_assemble', 'prompt', 60, 1680, dict(old_prompt.get('params') or {})),
-            old_prompt))
 
     rewired = {'schemaVersion': graph.get('schemaVersion', 1),
                'assetId': graph.get('assetId', ''),
